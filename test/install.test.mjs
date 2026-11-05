@@ -45,6 +45,14 @@ test("install_mod copies every file of the mod and nothing else into the app hom
   assert.match(run.stdout, /herdr-inline-markdown installed in /);
 });
 
+test("a first install_mod puts the mod folder in place whole, mod.json included, and leaves no staging folder", () => {
+  const where = scratch("whole"), run = bash(where, "install_mod");
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(list(join(where.app, "mods")), ["herdr-inline-markdown"]);
+  assert.deepEqual(list(where.app), ["mods"], "the staging folder was renamed, not left beside mods/");
+  assert.equal(JSON.parse(readFileSync(join(installed(where), "mod.json"), "utf8")).place, "none");
+});
+
 test("install_mod removes files the mod no longer has, keeps what Herdr writes, and saves the replaced copy", () => {
   const where = scratch("replace");
   mkdirSync(installed(where), { recursive: true });

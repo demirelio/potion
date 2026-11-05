@@ -36,7 +36,18 @@ install_mod() {
     cp -R "$dst" "$BACKUPS/$stamp/herdr-inline-markdown"
     say "mod: the installed copy differed; saved it under $BACKUPS/$stamp/herdr-inline-markdown"
   fi
-  mkdir -p "$dst"
+  # Herdr docks a mod into the shown layout the first time it sees its folder, unless mod.json says otherwise. A folder
+  # filled file by file can be seen before its mod.json, so a first install appears whole: staged outside mods/, then
+  # renamed into place.
+  if [ ! -d "$dst" ]; then
+    local stage
+    stage="$(mktemp -d "$APP_HOME/.herdr-inline-markdown.XXXXXX")"
+    for f in "$src"/*; do copy "$f" "$stage/$(basename "$f")"; done
+    mkdir -p "$(dirname "$dst")"
+    mv "$stage" "$dst"
+    say "mod: herdr-inline-markdown installed in $dst"
+    return
+  fi
   for f in "$dst"/*; do
     [ -f "$f" ] || continue
     case "$f" in *.d.ts|*/jsconfig.json|*.error|*/.DS_Store) continue ;; esac
