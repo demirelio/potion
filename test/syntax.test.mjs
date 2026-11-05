@@ -43,7 +43,9 @@ for (const { mod, file, label } of modules) {
     const source = code(file, mod).replace(/\/\/.*$/gm, "");
     assert.doesNotMatch(source, /\bsetTimeout\b|\bsetInterval\b/, "use cx.timer");
     assert.doesNotMatch(source, /^await\b/m, "no top-level await");
-    const own = file === "keys.js" ? source.replace(/\bglobalThis\[INSTALLED\]/g, "") : source;
+    // The two exceptions outlive a module on purpose: the key table's flag and the companion's memory of its picker.
+    const allowed = file === "keys.js" ? /\bglobalThis\[INSTALLED\]/g : mod === "herdr-inline-markdown-beside" ? /\bglobalThis\[MEMORY\]/g : null;
+    const own = allowed ? source.replace(allowed, "") : source;
     assert.doesNotMatch(own, /this\.\w*cx\b|\bglobalThis\b/, "a cx is never kept, nothing hangs on globalThis");
   });
 }

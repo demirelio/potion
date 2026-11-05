@@ -6,7 +6,7 @@ import { all, textOf } from "./mocks/element.mjs";
 import { makeCx, fire_timers, space, pane } from "./helpers.mjs";
 
 const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
-const { default: Beside } = await import("../mods/herdr-inline-markdown-beside/main.js");
+const { default: Beside, MEMORY } = await import("../mods/herdr-inline-markdown-beside/main.js");
 
 const json = path => JSON.parse(readFileSync(new URL(`../${path}`, import.meta.url), "utf8"));
 const DIALOG = { kind: "dialog", width: 560, height: 460 };
@@ -19,7 +19,9 @@ const fresh = (more = {}) => reset({
   exec: async () => ({ code: 0, stdout: "plan.md\0", stderr: "" }),
   ...more,
 });
-beforeEach(() => fresh());
+// The companion's memory of the picker it opened lasts as long as Herdr runs; each test is a new run.
+const newRun = () => { delete globalThis[MEMORY]; };
+beforeEach(() => { fresh(); newRun(); });
 
 function start(View, props, first) {
   state.props = props;
@@ -180,14 +182,27 @@ test("cmd-shift-m twice: the second press closes the pane picker the first opene
   assert.deepEqual(h.pickers(), [["overlay-2", "pane"]]);
 });
 
-test("cmd-m then cmd-shift-m: the second key closes the tab picker rather than stack a pane picker on it", async () => {
+test("cmd-shift-m twice closes the picker even when the second press runs in a module of its own, as each copy does in Herdr", async () => {
+  const h = herdr();
+  await h.press("cmd-shift-m");
+  assert.deepEqual(h.pickers(), [["overlay-1", "pane"]]);
+  MODS["herdr-inline-markdown-beside"] = (await import("../mods/herdr-inline-markdown-beside/main.js?copy=2")).default;
+  try {
+    await h.press("cmd-shift-m");
+    assert.deepEqual(h.pickers(), []);
+    assert.equal(calls.openOverlay.length, 1, "no second pane picker");
+  } finally {
+    MODS["herdr-inline-markdown-beside"] = Beside;
+  }
+});
+
+test("cmd-m then cmd-shift-m: the pane picker takes the tab picker's place, one picker open", async () => {
   const h = herdr();
   await h.press("cmd-m");
   assert.deepEqual(h.pickers(), [["key-1", "tab"]]);
   await h.press("cmd-shift-m");
-  assert.deepEqual(h.pickers(), []);
-  assert.equal(calls.openOverlay.length, 0, "no pane picker was opened");
-  assert.equal(state.shared[OPEN_PICKER], null);
+  assert.deepEqual(h.pickers(), [["overlay-1", "pane"]]);
+  assert.equal(state.shared[OPEN_PICKER], "overlay-1");
 });
 
 test("cmd-m twice: Herdr closes the picker it showed, the name goes with it, and cmd-shift-m then opens one", async () => {
@@ -208,13 +223,13 @@ test("cmd-shift-m then cmd-m: the tab picker takes the pane picker's place, and 
   assert.equal(state.shared[OPEN_PICKER], "key-2");
 });
 
-test("the + menu row then cmd-shift-m: the key closes the menu's picker", async () => {
+test("the + menu row then cmd-shift-m: the key's pane picker takes the menu's place", async () => {
   const h = herdr();
   await h.menu();
   assert.deepEqual(h.pickers(), [["overlay-1", "tab"]]);
   await h.press("cmd-shift-m");
-  assert.deepEqual(h.pickers(), []);
-  assert.equal(calls.openOverlay.length, 1);
+  assert.deepEqual(h.pickers(), [["overlay-2", "pane"]]);
+  assert.equal(state.shared[OPEN_PICKER], "overlay-2");
 });
 
 test("the + menu row then cmd-m: the key's picker takes the menu's place", async () => {
@@ -225,15 +240,16 @@ test("the + menu row then cmd-m: the key's picker takes the menu's place", async
   assert.equal(state.shared[OPEN_PICKER], "key-1");
 });
 
-test("a name left by a quit never keeps cmd-shift-m from opening: the press that finds it clears it, even when closing throws", async () => {
+test("a name left by a quit doesn't stop cmd-shift-m: the first press opens the pane picker, and the next closes it", async () => {
   for (const unknown of [() => null, () => { throw new Error("no overlay overlay-gone"); }]) {
     fresh({ shared: { [OPEN_PICKER]: "overlay-gone" }, closeOverlay: id => (id === "overlay-gone" ? unknown() : null) });
+    newRun();
     const h = herdr();
     await h.press("cmd-shift-m");
-    assert.deepEqual(h.pickers(), []);
-    assert.equal(state.shared[OPEN_PICKER], null);
-    await h.press("cmd-shift-m");
     assert.deepEqual(h.pickers(), [["overlay-1", "pane"]]);
+    assert.equal(state.shared[OPEN_PICKER], "overlay-1");
+    await h.press("cmd-shift-m");
+    assert.deepEqual(h.pickers(), []);
   }
 });
 

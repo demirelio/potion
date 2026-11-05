@@ -9,8 +9,8 @@ import { exec, home, props, shared, setShared, settings, theme, readTextFile, wr
 import { FIND_SCRIPT, basename, dirname, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
 import { openMarkdown } from "./open.js";
 
-// A picker that opens closes the one named here, and the cmd-shift-m mod closes it rather than open a second. Shared
-// state is persisted, so a name left by a quit is of an overlay Herdr no longer has.
+// A picker that opens closes the one named here, so one is open at a time; the cmd-shift-m mod reads it to close the
+// picker it opened itself. Shared state is persisted, so a name left by a quit is of an overlay Herdr no longer has.
 const OPEN_PICKER = "herdr-inline-markdown.picker";
 const ROW = 32, ROOM = 8; // a row's height; how many fit before the list has measured itself
 const HINTS = {
