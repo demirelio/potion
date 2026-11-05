@@ -1,0 +1,6 @@
+{
+  "global": {
+    "cmd-m": "my-tabs.markdown:tab",
+    "cmd-shift-m": "my-tabs.markdown:pane"
+  }
+}

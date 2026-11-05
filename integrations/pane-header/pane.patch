@@ -1,0 +1,65 @@
+--- a/main.js
++++ b/main.js
+@@ -3,4 +3,5 @@
+ // Shows the program's icon (the app's program table), the agent's name or
+-// the terminal's title, the folder, and the agent's status; buttons split, zoom and close
+-// this pane. Props from the app: { pane, terminal }. Click: focus the pane.
++// the terminal's title, the folder, and the agent's status; for a Markdown pane, its file's
++// icon and name and the Markdown toggle. Buttons split, zoom and close this pane.
++// Props from the app: { pane, terminal }. Click: focus the pane.
+ 
+@@ -8,4 +9,13 @@
+ import { h_flex } from "gpui-base";
+-import { panes, props, run, theme, home } from "herdr";
++import { panes, props, run, theme, home, shared, setShared } from "herdr";
+ 
++// A Markdown pane (my-markdown) publishes { name, mode } under its pane id, and switches between its page and its source
++// when the toggle raises the counter under its pane. Mods can't import each other, so the names are repeated there.
++const MD_MOD = "my-markdown", MD_HEADS = "my-markdown.heads", MD_TOGGLE = "my-markdown.toggle";
++const MD_ICON = "mods/my-markdown/file-markdown.svg";
++
++function markdownHead(p) {
++  return p.mod === MD_MOD ? shared(MD_HEADS)?.[p.pane] ?? null : null;
++}
++
+ function icon(p, size, color) {
+@@ -42,2 +52,25 @@
+ 
++  markdownToggle(t, pane, on) {
++    return h_flex()
++      .id(`ph-md-${pane}`)
++      .h(22)
++      .flex_none()
++      .px(8)
++      .gap(5)
++      .items_center()
++      .rounded(6)
++      .border_1()
++      .border_color(t.border)
++      .text_size(11.5)
++      .text_color(on ? t.foreground : t.muted)
++      .when(on, (el) => el.bg(t.selected))
++      .when(!on, (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
++      .on_click((_e, cx) => {
++        cx.stop_propagation();
++        setShared(MD_TOGGLE, { pane, n: (shared(MD_TOGGLE)?.n ?? 0) + 1 });
++      })
++      .child(svg("mods/my-markdown/code.svg").size(12).flex_none())
++      .child("Markdown");
++  }
++
+   render(cx) {
+@@ -46,4 +79,5 @@
+     if (!p) return div();
+-    const name = ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
+-    const pic = icon(p.program, 14, t.dim);
++    const md = markdownHead(p);
++    const name = md?.name || ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
++    const pic = md ? image(MD_ICON).w(14).h(14).flex_none() : icon(p.program, 14, t.dim);
+     const st = p.status;
+@@ -64,3 +98,4 @@
+       .child(div().flex_none().truncate().max_w(260).font_medium().text_color(t.foreground).child(name))
+-      .child(div().flex_1().truncate().text_color(t.dim).child(folder(p.cwd)))
++      .when(Boolean(md), (el) => el.child(this.markdownToggle(t, pane, md.mode === "markdown")))
++      .child(div().flex_1().truncate().text_color(t.dim).child(md ? "" : folder(p.cwd)))
+       .when(st === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))

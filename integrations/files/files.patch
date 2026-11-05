@@ -1,0 +1,91 @@
+--- a/main.js
++++ b/main.js
+@@ -3,7 +3,10 @@
+ import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
+-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window } from "herdr";
++import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, shared, setShared, run, openOverlay } from "herdr";
+ 
+-function location() {
++// A mod pane (a Markdown pane) has no folder of its own: while one is focused in the space the panel already shows
++// (`context`, the panel's current one), the panel stays on that folder instead of falling back to the space's.
++function location(context) {
+   const space = spaces().find(s => s.active), f = focused();
+   const pane = f?.pane ? panes().find(p => p.pane === f.pane) : null;
++  if (pane?.mod && context && context.space === space?.id) return { cwd: context.cwd, on: context.on, space: space.id };
+   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
+@@ -11,3 +14,32 @@
+ }
+-const key = () => JSON.stringify(location());
++const key = context => JSON.stringify(location(context));
++
++// Mods can't import each other: isMarkdown is a copy of my-markdown's lib.js, openMarkdown of its open.js
++// (test/integrations.test.mjs of the package checks that the copies act alike).
++const isMarkdown = name => /\.(md|markdown|mdown|mkd|mkdn|mdx)$/i.test(name);
++
++function openMarkdown({ file, machine = null, place, space }) {
++  const MOD = "my-markdown", key = `${machine ?? ""}:${file}`, known = shared(`${MOD}.panes`) ?? {};
++  const all = panes(), mine = all.filter(p => p.mod === MOD), name = file.split("/").pop();
++  const inTab = tab => all.filter(p => p.tab === tab);
++  const ownTab = tab => inTab(tab).length > 0 && inTab(tab).every(p => p.mod === MOD);
++  const spaceOf = tab => spaces().find(s => s.tabs.some(c => c.id === tab));
++  const f = focused(), anchor = place === "pane" ? all.find(p => p.pane === f?.pane) ?? all.find(p => p.tab === f?.tab) : null;
++  if (anchor) {
++    const shown = mine.find(p => p.tab === anchor.tab && known[p.pane] === key);
++    if (shown) run("pane.focus", { pane: shown.pane });
++    else run("pane.split", { direction: "right", pane: anchor.pane, mod: MOD, props: { file, machine } });
++  } else {
++    let tab = mine.find(p => known[p.pane] === key && ownTab(p.tab) && spaceOf(p.tab))?.tab;
++    if (!tab) {
++      const undrawn = spaces().flatMap(s => s.tabs).filter(c => c.name === name && ownTab(c.id) && inTab(c.id).every(p => !(p.pane in known)));
++      if (undrawn.length === 1) tab = undrawn[0].id;
++    }
++    if (tab) { run("space.select", { id: spaceOf(tab).id }); run("tab.select", { id: tab }); }
++    else run("tab.new", { name, ...(space == null ? {} : { space }), mod: MOD, props: { file, machine } });
++  }
++  const recent = shared(`${MOD}.recent`), same = r => r.path === file && (r.machine ?? null) === machine;
++  setShared(`${MOD}.recent`, [{ machine, path: file }, ...(Array.isArray(recent) ? recent.filter(r => !same(r)) : [])].slice(0, 30));
++}
++
+ const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
+@@ -51,3 +83,3 @@
+   current(context) {
+-    return this.context === context && key() === context.key;
++    return this.context === context && key(context) === context.key;
+   }
+@@ -64,3 +96,3 @@
+   refresh(cx) {
+-    const { cwd, on } = location(), next = key();
++    const { cwd, on, space } = location(this.context), next = key(this.context);
+     if (next !== this.context?.key) {
+@@ -68,3 +100,3 @@
+       const saved = this.saved.get(next);
+-      this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
++      this.context = { key: next, cwd, on, space }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
+       this.pending = new Set(); this.marks = {}; this.show(null); this.watched = null; this.error = null; this.limited = false;
+@@ -121,2 +153,12 @@
+ 
++  openMarkdownFile(path, e) {
++    if (e.click_count > 1) return; // the first click of a double-click already opened it
++    openMarkdown({ file: `${this.root}/${path}`, machine: this.on ?? null, place: e.modifiers?.shift ? "tab" : "pane", space: location(this.context).space });
++  }
++
++  openMarkdownMenu(path) {
++    openOverlay({ mod: "my-markdown", kind: "popup", width: 200, height: 44,
++      props: { action: "menu", file: `${this.root}/${path}`, machine: this.on ?? null, space: location(this.context).space } });
++  }
++
+   show(path, cx) {
+@@ -145,5 +187,6 @@
+       if (out.length >= TOTAL) break;
+-      const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
++      const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`], markdown = !entry.dir && isMarkdown(entry.name);
+       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
+-        .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
++        .on_click((e, cx) => entry.dir ? this.toggle(path, cx) : markdown ? this.openMarkdownFile(path, e) : this.show(path, cx))
++        .when(markdown, el => el.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openMarkdownMenu(path); }))
+         .child(entry.dir ? svg(`mods/files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
+@@ -158,3 +201,3 @@
+   render(cx) {
+-    if (key() !== this.context?.key) this.refresh(cx);
++    if (key(this.context) !== this.context?.key) this.refresh(cx);
+     const t = theme();

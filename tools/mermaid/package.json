@@ -1,0 +1,9 @@
+{
+  "name": "herdr-markdown-mermaid",
+  "private": true,
+  "type": "module",
+  "description": "Draws mermaid diagrams to PNG for the my-markdown mod; install.sh installs it",
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "12.2.0"
+  }
+}

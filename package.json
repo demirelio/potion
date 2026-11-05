@@ -1,0 +1,12 @@
+{
+  "name": "herdr-markdown",
+  "private": true,
+  "type": "module",
+  "description": "A Markdown reader and editor mod, with mermaid diagrams, for the Herdr app",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --import ./test/register.mjs --test test/"
+  }
+}
