@@ -4,9 +4,9 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
-// Asset paths in the mod ("mods/my-markdown/plus.svg") start at Herdr's app home, which this folder mirrors.
+// Asset paths in the mod ("mods/herdr-inline-markdown/plus.svg") start at Herdr's app home, which this folder mirrors.
 const root = fileURLToPath(new URL("..", import.meta.url));
-const modDir = join(root, "mods/my-markdown");
+const modDir = join(root, "mods/herdr-inline-markdown");
 
 // dots.svg is the diagram canvas's pattern tile; file-markdown.svg is a full-colour file icon.
 const PATTERN_TILES = ["dots.svg"];
@@ -19,7 +19,7 @@ const svgs = readdirSync(modDir).filter(f => f.endsWith(".svg"));
 function named() {
   const out = new Set();
   for (const [, source] of sources) {
-    for (const [, name] of source.matchAll(/mods\/my-markdown\/([\w.-]+\.svg)/g)) out.add(name);
+    for (const [, name] of source.matchAll(/mods\/herdr-inline-markdown\/([\w.-]+\.svg)/g)) out.add(name);
     for (const [, name] of source.matchAll(/\bICON\("([\w-]+)"\)/g)) out.add(`${name}.svg`);
     for (const [, name] of source.matchAll(/\bicon: "([\w-]+)"/g)) out.add(`${name}.svg`);
   }
@@ -39,7 +39,7 @@ test("every icon in the mod folder is named by a source", () => {
 
 test("the mod draws nothing from another mod's folder, so it works without Herdr's shipped mods", () => {
   for (const [file, source] of sources) {
-    const foreign = [...source.matchAll(/mods\/([\w-]+)\//g)].map(m => m[1]).filter(name => name !== "my-markdown");
+    const foreign = [...source.matchAll(/mods\/([\w-]+)\//g)].map(m => m[1]).filter(name => name !== "herdr-inline-markdown");
     assert.deepEqual(foreign, [], `${file} names another mod's files`);
   }
 });

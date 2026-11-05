@@ -3,17 +3,17 @@ import assert from "node:assert/strict";
 import { state, calls, reset } from "./mocks/herdr.mjs";
 import { space, pane } from "./helpers.mjs";
 
-const { openMarkdown, registerPane, paneOf, rememberRecent } = await import("../mods/my-markdown/open.js");
+const { openMarkdown, registerPane, paneOf, rememberRecent } = await import("../mods/herdr-inline-markdown/open.js");
 
-const PANES = "my-markdown.panes", RECENT = "my-markdown.recent", OLD_TABS = "my-markdown.tabs";
+const PANES = "herdr-inline-markdown.panes", RECENT = "herdr-inline-markdown.recent", OLD_TABS = "herdr-inline-markdown.tabs";
 const tab = (id, more = {}) => ({ id, name: id, active: false, zoomed: false, status: null, ...more });
 const inSpace = (id, ...tabs) => space(id, id, { tabs: tabs.map(t => tab(t)) });
-const mdPane = (id, tabId) => pane(id, tabId, null, { terminal: null, mod: "my-markdown" });
+const mdPane = (id, tabId) => pane(id, tabId, null, { terminal: null, mod: "herdr-inline-markdown" });
 const otherMod = (id, tabId) => pane(id, tabId, null, { terminal: null, mod: "my-files" });
 const shell = (id, tabId) => pane(id, tabId, "/home/user");
 const focus = (tabId, paneId = null) => { state.focused = { space: "s1", tab: tabId, pane: paneId, terminal: null, shown: null, agent: null, cwd: null }; };
 const stored = key => state.shared[key];
-const split = (anchor, file, machine = null) => ["pane.split", { direction: "right", pane: anchor, mod: "my-markdown", props: { file, machine } }];
+const split = (anchor, file, machine = null) => ["pane.split", { direction: "right", pane: anchor, mod: "herdr-inline-markdown", props: { file, machine } }];
 
 beforeEach(() => reset());
 
@@ -112,7 +112,7 @@ test("place pane: a stale entry does not hide a live one for the same file", () 
 
 test("place pane: with nothing to open beside it falls through to a tab", () => {
   openMarkdown({ file: "/a/b.md", place: "pane", space: "s2" });
-  assert.deepEqual(calls.run, [["tab.new", { name: "b.md", space: "s2", mod: "my-markdown", props: { file: "/a/b.md", machine: null } }]], "no focus, no panes");
+  assert.deepEqual(calls.run, [["tab.new", { name: "b.md", space: "s2", mod: "herdr-inline-markdown", props: { file: "/a/b.md", machine: null } }]], "no focus, no panes");
   calls.run.length = 0;
   state.spaces = [inSpace("s1", "tb1")];
   state.panes = [shell("p1", "tb1")];
@@ -151,7 +151,7 @@ test("place pane never writes the pane registry", () => {
 
 test("place tab is the default: a file that is not open yet gets a new tab with its name, space, mod and props, nothing else", () => {
   openMarkdown({ file: "/home/user/notes/plan.md", machine: null, space: "s2" });
-  assert.deepEqual(calls.run, [["tab.new", { name: "plan.md", space: "s2", mod: "my-markdown", props: { file: "/home/user/notes/plan.md", machine: null } }]]);
+  assert.deepEqual(calls.run, [["tab.new", { name: "plan.md", space: "s2", mod: "herdr-inline-markdown", props: { file: "/home/user/notes/plan.md", machine: null } }]]);
   calls.run.length = 0;
   openMarkdown({ file: "/home/user/notes/plan.md", machine: null, place: "tab", space: "s2" });
   assert.deepEqual(calls.run.map(c => c[0]), ["tab.new"]);
@@ -167,11 +167,11 @@ test("place tab ignores the focus and the pane argument: it never splits", () =>
 
 test("tab.new leaves out the space when there is none, and carries the machine", () => {
   openMarkdown({ file: "/home/dev/a.md" });
-  assert.deepEqual(calls.run, [["tab.new", { name: "a.md", mod: "my-markdown", props: { file: "/home/dev/a.md", machine: null } }]]);
+  assert.deepEqual(calls.run, [["tab.new", { name: "a.md", mod: "herdr-inline-markdown", props: { file: "/home/dev/a.md", machine: null } }]]);
   assert.equal("space" in calls.run[0][1], false);
   calls.run.length = 0;
   openMarkdown({ file: "/home/dev/a.md", machine: "devbox", space: null });
-  assert.deepEqual(calls.run, [["tab.new", { name: "a.md", mod: "my-markdown", props: { file: "/home/dev/a.md", machine: "devbox" } }]]);
+  assert.deepEqual(calls.run, [["tab.new", { name: "a.md", mod: "herdr-inline-markdown", props: { file: "/home/dev/a.md", machine: "devbox" } }]]);
 });
 
 test("a file shown by a tab of Markdown panes: select its space, then the tab, and open no new one", () => {

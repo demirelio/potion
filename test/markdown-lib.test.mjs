@@ -10,8 +10,8 @@ import {
   filterFiles, newFileName, uniqueName, fileKey, stats, MODES, modeOf, toggleMode, remember, trimMap,
   markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, isLight, mix, mermaidConfig, diagramKey, DIAGRAM_COLORS, diagramCanvas, sharpName,
   toSource, sourceToDoc, docToSource, sourceSplice, eolOf,
-} from "../mods/my-markdown/lib.js";
-import { diff } from "../mods/my-markdown/blocks.js";
+} from "../mods/herdr-inline-markdown/lib.js";
+import { diff } from "../mods/herdr-inline-markdown/blocks.js";
 
 const sh = promisify(execFile);
 

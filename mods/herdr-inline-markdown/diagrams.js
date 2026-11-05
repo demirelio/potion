@@ -18,10 +18,10 @@ const RECHECK = 10000; // ms: a renderer that was not installed is looked for ag
 const RETRY = 15000; // ms: a run that failed as a whole (not one diagram's own error) is tried again after this long
 
 const why = e => String(e?.message ?? e);
-export const mermaidHome = () => `${home().replace(/\/+$/, "")}/.local/share/herdr-markdown/mermaid`;
-export const cacheDir = () => `${appHome().replace(/\/+$/, "")}/data/my-markdown/diagrams`;
+export const mermaidHome = () => `${home().replace(/\/+$/, "")}/.local/share/herdr-inline-markdown/mermaid`;
+export const cacheDir = () => `${appHome().replace(/\/+$/, "")}/data/herdr-inline-markdown/diagrams`;
 // Where an image() finds the PNG: relative to the app folder.
-export const imagePath = key => `data/my-markdown/diagrams/${key}.png`;
+export const imagePath = key => `data/herdr-inline-markdown/diagrams/${key}.png`;
 
 const result = (key, state, more) => ({ key, state, width: 0, height: 0, scale: 1, error: null, ...more });
 // An error that came from the run, not from the diagram, carries the time (ms) after which get() asks for it again.
@@ -267,7 +267,7 @@ export class Diagrams {
 // A fence longer than any run of backticks in the text, so the text cannot close it.
 const fence = text => "`".repeat((text.match(/`+/g) ?? []).reduce((n, run) => Math.max(n, run.length + 1), 3));
 
-const ICON = name => `mods/my-markdown/${name}.svg`;
+const ICON = name => `mods/herdr-inline-markdown/${name}.svg`;
 
 // The element for one diagram in the page: `d` is what get() answered, `frame` what its frame draws, or null when
 // it draws none: { key, w, h, ml, natW, natH, image, dim, selected, view: { z, x, y, sharp, tools, cursor } }.
@@ -279,7 +279,7 @@ export function diagramBlock({ id, source, d, frame, t, mono }) {
   const out = v_flex().id(id).w_full().gap(8);
   if (d.state === "missing") {
     return out.child(box().child(title("Diagrams need the mermaid renderer", t.foreground))
-      .child(div().text_size(12).text_color(t.muted).child("Run install.sh in the herdr-markdown folder"))
+      .child(div().text_size(12).text_color(t.muted).child("Run install.sh in the herdr-inline-markdown folder"))
       .child(TextView.markdown(`${id}-source`, `${fence(source)}mermaid\n${source}\n${fence(source)}`).selectable(true)));
   }
   if (d.state === "error") {

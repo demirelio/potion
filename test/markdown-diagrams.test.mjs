@@ -5,11 +5,11 @@ import { files } from "./mocks/fs.mjs";
 import { all, find, textOf } from "./mocks/element.mjs";
 import { makeCx, fire_timers } from "./helpers.mjs";
 
-const { Diagrams, diagramBlock, imagePath, mermaidHome, cacheDir } = await import("../mods/my-markdown/diagrams.js");
-const { diagramKey, mermaidConfig, DIAGRAM_COLORS, sharpName, hash } = await import("../mods/my-markdown/lib.js");
+const { Diagrams, diagramBlock, imagePath, mermaidHome, cacheDir } = await import("../mods/herdr-inline-markdown/diagrams.js");
+const { diagramKey, mermaidConfig, DIAGRAM_COLORS, sharpName, hash } = await import("../mods/herdr-inline-markdown/lib.js");
 
-const MERMAID = "/home/user/.local/share/herdr-markdown/mermaid";
-const DIR = "/home/user/.config/herdr-app/data/my-markdown/diagrams";
+const MERMAID = "/home/user/.local/share/herdr-inline-markdown/mermaid";
+const DIR = "/home/user/.config/herdr-app/data/herdr-inline-markdown/diagrams";
 const NODE = "/usr/local/bin/node";
 const VERSION = "mmdc-12.2.0+abcd1234";
 const SRC = "graph TD\nA-->B";
@@ -46,10 +46,10 @@ async function draw(cx, d, source = SRC) {
   return d.get(source, cx);
 }
 
-test("paths: the renderer lives under ~/.local/share/herdr-markdown, the cache under the app folder, images are relative to it", () => {
+test("paths: the renderer lives under ~/.local/share/herdr-inline-markdown, the cache under the app folder, images are relative to it", () => {
   assert.equal(mermaidHome(), MERMAID);
   assert.equal(cacheDir(), DIR);
-  assert.equal(imagePath("abc"), "data/my-markdown/diagrams/abc.png");
+  assert.equal(imagePath("abc"), "data/herdr-inline-markdown/diagrams/abc.png");
   state.home = "/home/user/";
   state.appHome = "/home/user/.config/herdr-app/";
   assert.equal(mermaidHome(), MERMAID, "a trailing slash does not double");
@@ -760,7 +760,7 @@ const frameOf = (more = {}, view = {}) => ({
   ...more, view: { z: 1.25, x: -40.4, y: -120.6, sharp: "", tools: null, cursor: "grab", ...view },
 });
 
-const dotTiles = el => all(el, n => n.kind === "svg" && n.path === "mods/my-markdown/dots.svg");
+const dotTiles = el => all(el, n => n.kind === "svg" && n.path === "mods/herdr-inline-markdown/dots.svg");
 
 test("diagramBlock, ok: a frame on the diagram canvas with its dot grid first, that clips the picture, which is moved and scaled inside it; the edge goes over it", () => {
   const t = { ...theme(), background: "#122738", foreground: "#ffffff" };
@@ -773,7 +773,7 @@ test("diagramBlock, ok: a frame on the diagram canvas with its dot grid first, t
   assert.equal(frame.style.bg, DIAGRAM_COLORS.canvas, "the Live Editor's canvas, whatever the Herdr theme");
   const img = all(el, n => n.kind === "image");
   assert.equal(img.length, 1);
-  assert.equal(img[0].path, "data/my-markdown/diagrams/k1.png");
+  assert.equal(img[0].path, "data/herdr-inline-markdown/diagrams/k1.png");
   assert.deepEqual([img[0].style.absolute, img[0].style.left, img[0].style.top, img[0].style.w, img[0].style.h, img[0].style.opacity], [true, -40, -121, 1000, 500, undefined]);
   const edge = find(el, "md-frame-edge-b7");
   assert.deepEqual([edge.style.inset_0, edge.style.border_1, edge.style.border_color, edge.style.rounded], [true, true, DIAGRAM_COLORS.edge, 8]);
@@ -794,7 +794,7 @@ test("diagramBlock: the dot grid is 240 px tiles of dots.svg in the dot colour, 
   const tiles = dotTiles(dots);
   assert.equal(tiles.length, 10, "5 columns by 2 rows cover 1000 x 300");
   for (const tile of tiles) {
-    assert.deepEqual([tile.path, tile.style.absolute, tile.style.size, tile.style.text_color], ["mods/my-markdown/dots.svg", true, 240, DIAGRAM_COLORS.dot]);
+    assert.deepEqual([tile.path, tile.style.absolute, tile.style.size, tile.style.text_color], ["mods/herdr-inline-markdown/dots.svg", true, 240, DIAGRAM_COLORS.dot]);
   }
   assert.deepEqual([...new Set(tiles.map(n => n.style.left))], [-10, 230, 470, 710, 950], "x -40.4 is 20 px past a grid line, less one 30 px cell");
   assert.deepEqual([...new Set(tiles.map(n => n.style.top))], [-1, 239], "y -120.6 is 29 px past a grid line, less one 30 px cell");
@@ -809,7 +809,7 @@ test("diagramBlock: the sharp picture lies over the base in the same box; a sele
   const sharp = sharpName("k1", "transparent", 4);
   const el = diagramBlock({ id: "x", source: SRC, d, frame: frameOf({ selected: true }, { sharp }), t, mono: "Mono" });
   const frame = find(el, "md-frame-b7"), img = all(el, n => n.kind === "image");
-  assert.deepEqual(img.map(i => i.path), ["data/my-markdown/diagrams/k1.png", `data/my-markdown/diagrams/${sharp}.png`]);
+  assert.deepEqual(img.map(i => i.path), ["data/herdr-inline-markdown/diagrams/k1.png", `data/herdr-inline-markdown/diagrams/${sharp}.png`]);
   assert.deepEqual([img[1].style.left, img[1].style.top, img[1].style.w, img[1].style.h], [img[0].style.left, img[0].style.top, img[0].style.w, img[0].style.h]);
   const tint = find(el, "md-frame-tint-b7");
   assert.deepEqual([tint.style.inset_0, tint.style.bg, tint.style.opacity], [true, "selection", 0.5]);
@@ -826,8 +826,8 @@ test("diagramBlock: the − % + group at the top right while the view says so; a
     [true, 40, 8, 26, 7, true, 12]);
   assert.deepEqual([tools.style.bg, tools.style.border_color, tools.style.text_color], [DIAGRAM_COLORS.node, DIAGRAM_COLORS.edge, DIAGRAM_COLORS.text], "slate on the canvas, whatever the Herdr theme");
   assert.deepEqual(tools.kids.map(k => [k.id, k.style.w]), [["md-frame-out-b7", 26], ["md-frame-pct-b7", 48], ["md-frame-in-b7", 26]]);
-  assert.equal(all(find(el, "md-frame-out-b7"), n => n.kind === "svg")[0].path, "mods/my-markdown/minus.svg");
-  assert.equal(all(find(el, "md-frame-in-b7"), n => n.kind === "svg")[0].path, "mods/my-markdown/plus.svg");
+  assert.equal(all(find(el, "md-frame-out-b7"), n => n.kind === "svg")[0].path, "mods/herdr-inline-markdown/minus.svg");
+  assert.equal(all(find(el, "md-frame-in-b7"), n => n.kind === "svg")[0].path, "mods/herdr-inline-markdown/plus.svg");
   assert.equal(textOf(find(el, "md-frame-pct-b7")), "125%");
   const out = find(el, "md-frame-out-b7"), plus = find(el, "md-frame-in-b7");
   assert.deepEqual([out.style.cursor_pointer, out.hover, out.style.text_color], [true, true, undefined]);
@@ -842,14 +842,14 @@ test("diagramBlock, pending: a 120 px box with the spinner; with a last image th
   assert.match(textOf(box), /Drawing diagram…/);
   assert.equal(all(box, n => n.kind === "image").length, 0);
   const spinner = all(box, n => n.kind === "svg");
-  assert.deepEqual([spinner.length, spinner[0].path, spinner[0].style.spin, spinner[0].style.size], [1, "mods/my-markdown/spinner.svg", 900, 14]);
+  assert.deepEqual([spinner.length, spinner[0].path, spinner[0].style.spin, spinner[0].style.size], [1, "mods/herdr-inline-markdown/spinner.svg", 900, 14]);
   assert.equal(all(box, n => n.style.h === 120).length, 1);
   const pendingBox = all(box, n => n.style.h === 120)[0];
   assert.deepEqual([pendingBox.style.bg, pendingBox.style.border_color, pendingBox.style.text_color], [DIAGRAM_COLORS.canvas, DIAGRAM_COLORS.edge, DIAGRAM_COLORS.line], "the diagram canvas with its edge and line colours");
   const dim = diagramBlock({ id: "md-diagram-0", source: SRC, d: pending, frame: frameOf({ image: "old", dim: true }), t, mono: "Mono" });
   assert.doesNotMatch(textOf(dim), /Drawing diagram/);
   const img = all(dim, n => n.kind === "image");
-  assert.deepEqual([img.length, img[0].path, img[0].style.opacity], [1, "data/my-markdown/diagrams/old.png", 0.5]);
+  assert.deepEqual([img.length, img[0].path, img[0].style.opacity], [1, "data/herdr-inline-markdown/diagrams/old.png", 0.5]);
 });
 
 test("diagramBlock, error: the title in the blocked color, the message in the terminal font, then the last image dimmed in its frame", () => {
@@ -947,7 +947,7 @@ test("diagramBlock, missing renderer: how to install it, and the source as a cod
   const el = diagramBlock({ id: "md-diagram-6", source: SRC, d, last: undefined, width: 700, t, mono: "Mono" });
   assert.match(textOf(el), /Diagrams need the mermaid renderer/);
   assert.equal(all(el, n => n.kids.some(k => k.text === "Diagrams need the mermaid renderer") && n.style.text_color === "foreground").length, 1, "an instruction, not an error: the normal text color");
-  assert.match(textOf(el), /Run install\.sh in the herdr-markdown folder/);
+  assert.match(textOf(el), /Run install\.sh in the herdr-inline-markdown folder/);
   const code = find(el, "md-diagram-6-source");
   assert.equal(code.kind, "textview");
   assert.equal(code.markdown, "```mermaid\ngraph TD\nA-->B\n```");

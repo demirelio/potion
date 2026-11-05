@@ -40,7 +40,7 @@ export const ACTIONS = [...new Set(BINDINGS.map(b => b.action))];
 
 // A flag on globalThis outlives a reload of the mod, which a module variable does not: one table per runtime and
 // version, so a reload that raised VERSION installs its new table.
-const INSTALLED = `my-markdown.keys.${VERSION}`;
+const INSTALLED = `herdr-inline-markdown.keys.${VERSION}`;
 export { INSTALLED };
 
 // -> true when this call installed the table.

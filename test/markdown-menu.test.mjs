@@ -4,9 +4,9 @@ import { state, calls, reset } from "./mocks/herdr.mjs";
 import { all, ids, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, space, pane, must } from "./helpers.mjs";
 
-const { Menu } = await import("../mods/my-markdown/menu.js");
-const { default: MenuDefault } = await import("../mods/my-markdown/menu.js");
-const { default: Markdown } = await import("../mods/my-markdown/main.js");
+const { Menu } = await import("../mods/herdr-inline-markdown/menu.js");
+const { default: MenuDefault } = await import("../mods/herdr-inline-markdown/menu.js");
+const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
 
 const FILE = "/home/user/notes/plan.md";
 
@@ -19,7 +19,7 @@ function mount(extra = {}) {
   return { view, cx, tree: () => view.render(cx) };
 }
 const press = (tree, key) => fire(must(tree, "md-menu"), "on_key_down", { key, keystroke: key, modifiers: {} }, makeCx());
-const TAB = ["tab.new", { name: "plan.md", space: "s1", mod: "my-markdown", props: { file: FILE, machine: null } }];
+const TAB = ["tab.new", { name: "plan.md", space: "s1", mod: "herdr-inline-markdown", props: { file: FILE, machine: null } }];
 
 test("it is both the named and the default export, and a plain class", () => {
   assert.equal(MenuDefault, Menu);
@@ -32,7 +32,7 @@ test("one row: the plus icon and 'Open as new tab', highlighted", () => {
   assert.deepEqual(rows.map(n => n.id), ["md-menu-tab"]);
   const row = rows[0];
   assert.equal(textOf(row).trim(), "Open as new tab");
-  assert.deepEqual(all(tree(), n => n.kind === "svg").map(n => n.path), ["mods/my-markdown/plus.svg"]);
+  assert.deepEqual(all(tree(), n => n.kind === "svg").map(n => n.path), ["mods/herdr-inline-markdown/plus.svg"]);
   assert.deepEqual([row.style.h, row.style.px, row.style.gap, row.style.rounded, row.style.bg], [31, 8, 9, 7, "selected"]);
 });
 
@@ -55,7 +55,7 @@ test("a click closes the popup first, then opens the file in a tab of its own", 
   assert.deepEqual(calls.closeOverlay, ["ov-1"]);
   assert.deepEqual(calls.run, [TAB]);
   assert.deepEqual(calls.order, ["closeOverlay", "run", "setShared"]);
-  assert.deepEqual(calls.setShared[0], ["my-markdown.recent", [{ machine: null, path: FILE }]]);
+  assert.deepEqual(calls.setShared[0], ["herdr-inline-markdown.recent", [{ machine: null, path: FILE }]]);
 });
 
 test("Enter does what the click does", () => {
@@ -77,28 +77,28 @@ test("Escape closes the popup and opens nothing; other keys do nothing", () => {
 test("a file on another machine opens there; the tab goes into the space in the props", () => {
   const { tree } = mount({ file: "/home/dev/Work/a.md", machine: "devbox", space: "s2" });
   fire(must(tree(), "md-menu-tab"), "on_click", {}, makeCx());
-  assert.deepEqual(calls.run, [["tab.new", { name: "a.md", space: "s2", mod: "my-markdown", props: { file: "/home/dev/Work/a.md", machine: "devbox" } }]]);
+  assert.deepEqual(calls.run, [["tab.new", { name: "a.md", space: "s2", mod: "herdr-inline-markdown", props: { file: "/home/dev/Work/a.md", machine: "devbox" } }]]);
   assert.deepEqual(calls.setShared[0][1], [{ machine: "devbox", path: "/home/dev/Work/a.md" }]);
 });
 
 test("no machine in the props means this computer; no space means a tab without one", () => {
   const { tree } = mount({ machine: undefined, space: undefined });
   fire(must(tree(), "md-menu-tab"), "on_click", {}, makeCx());
-  assert.deepEqual(calls.run, [["tab.new", { name: "plan.md", mod: "my-markdown", props: { file: FILE, machine: null } }]]);
+  assert.deepEqual(calls.run, [["tab.new", { name: "plan.md", mod: "herdr-inline-markdown", props: { file: FILE, machine: null } }]]);
 });
 
 test("a file that has a tab of its own gets that tab, not another", () => {
   state.spaces = [space("s1", "herdr", { active: true }), space("s2", "other", { tabs: [{ id: "tb9", name: "plan.md", active: true, zoomed: false, status: null }] })];
-  state.panes = [pane("p9", "tb9", null, { terminal: null, mod: "my-markdown" })];
-  state.shared["my-markdown.panes"] = { p9: `:${FILE}` };
+  state.panes = [pane("p9", "tb9", null, { terminal: null, mod: "herdr-inline-markdown" })];
+  state.shared["herdr-inline-markdown.panes"] = { p9: `:${FILE}` };
   const { tree } = mount();
   fire(must(tree(), "md-menu-tab"), "on_click", {}, makeCx());
   assert.deepEqual(calls.run, [["space.select", { id: "s2" }], ["tab.select", { id: "tb9" }]]);
 });
 
 test("it never splits a pane, even with one focused and the file shown beside it", () => {
-  state.panes = [pane("p1", "s1-tab", "/home/user"), pane("p2", "s1-tab", null, { terminal: null, mod: "my-markdown" })];
-  state.shared["my-markdown.panes"] = { p2: `:${FILE}` };
+  state.panes = [pane("p1", "s1-tab", "/home/user"), pane("p2", "s1-tab", null, { terminal: null, mod: "herdr-inline-markdown" })];
+  state.shared["herdr-inline-markdown.panes"] = { p2: `:${FILE}` };
   state.focused = { space: "s1", tab: "s1-tab", pane: "p1", terminal: "t-p1", shown: null, agent: null, cwd: null };
   const { tree } = mount();
   fire(must(tree(), "md-menu-tab"), "on_click", {}, makeCx());

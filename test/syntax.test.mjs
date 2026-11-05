@@ -17,8 +17,8 @@ function sources(dir, out = []) {
   return out;
 }
 const all = [...sources(join(root, "mods")), ...sources(join(root, "tools")), ...sources(join(root, "test"))];
-const modFiles = readdirSync(join(root, "mods", "my-markdown")).filter(f => f.endsWith(".js"));
-const code = name => readFileSync(join(root, "mods", "my-markdown", name), "utf8");
+const modFiles = readdirSync(join(root, "mods", "herdr-inline-markdown")).filter(f => f.endsWith(".js"));
+const code = name => readFileSync(join(root, "mods", "herdr-inline-markdown", name), "utf8");
 
 test("there are sources to check", () => {
   assert.ok(modFiles.length >= 10 && all.length > modFiles.length);
@@ -46,17 +46,17 @@ for (const file of modFiles) {
 // Key bindings cannot be removed and every reload of a module would add the table again: the one flag on globalThis
 // is the key table's, set inside the function that installs it, never at the top level. It carries the version the
 // contexts carry, so a table whose contexts were renamed is installed on the next reload.
-test("my-markdown hangs one flag on globalThis, the key table's, only inside installKeys and named by the contexts' version", () => {
+test("herdr-inline-markdown hangs one flag on globalThis, the key table's, only inside installKeys and named by the contexts' version", () => {
   const source = code("keys.js").replace(/\/\/.*$/gm, "");
   const body = source.slice(source.indexOf("export function installKeys"));
   assert.equal((source.match(/\bglobalThis\b/g) ?? []).length, 2);
   assert.equal((body.match(/\bglobalThis\[INSTALLED\]/g) ?? []).length, 2, "read and set in installKeys");
   assert.match(source, /^const VERSION = \d+;$/m);
-  assert.match(source, /^const INSTALLED = `my-markdown\.keys\.\$\{VERSION\}`;$/m);
+  assert.match(source, /^const INSTALLED = `herdr-inline-markdown\.keys\.\$\{VERSION\}`;$/m);
   assert.match(source, /^export const TEXT = `MdText\$\{VERSION\}`, RAW = `MdRaw\$\{VERSION\}`, SOURCE = `MdSource\$\{VERSION\}`;$/m);
 });
 
-test("my-markdown names its key contexts only through keys.js, so raising VERSION renames every one", () => {
+test("herdr-inline-markdown names its key contexts only through keys.js, so raising VERSION renames every one", () => {
   for (const file of modFiles.filter(f => f !== "keys.js")) {
     assert.doesNotMatch(code(file).replace(/\/\/.*$/gm, ""), /\bMd(?:Text|Raw|Source)\d/, file);
   }

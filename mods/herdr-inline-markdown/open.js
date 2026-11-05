@@ -1,12 +1,12 @@
 // Opening a markdown file: beside the focused pane in the current tab (place "pane"), or in a tab of its own (place
-// "tab"). Which pane shows which file lives in shared state ("my-markdown.panes": pane id -> fileKey), filed by each
+// "tab"). Which pane shows which file lives in shared state ("herdr-inline-markdown.panes": pane id -> fileKey), filed by each
 // pane's editor the first time it is drawn: panes() does not say what a mod pane shows. Mods cannot import each
 // other, so the files integration carries a copy of openMarkdown (test/integrations.test.mjs checks that the copy
 // acts alike).
 import { spaces, panes, focused, machines, shared, setShared, run } from "herdr";
 import { basename, fileKey, remember } from "./lib.js";
 
-const MOD = "my-markdown", PANES = "my-markdown.panes", RECENT = "my-markdown.recent", RECENT_MAX = 30;
+const MOD = "herdr-inline-markdown", PANES = "herdr-inline-markdown.panes", RECENT = "herdr-inline-markdown.recent", RECENT_MAX = 30;
 
 // place "pane": the pane already showing the file in that tab gets the focus, else the file opens to the right of
 // `pane` (default: the focused one, else the tab's first). With no pane to open beside, it opens as a tab.

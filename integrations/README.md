@@ -32,14 +32,14 @@ layout's `content.mod` entry for the tab bar, the file panel, the pane header or
 name (`my-tabs`, `my-files`, `my-pane`, `my-new-menu`). See Herdr's `AGENTS.md` in the app folder for how
 layouts name their mods.
 
-The clone names matter. The patches and the key bindings spell `my-markdown`, `my-tabs`, `my-new-menu` and
+The clone names matter. The patches and the key bindings spell `herdr-inline-markdown`, `my-tabs`, `my-new-menu` and
 `my-pane`; use other names and the matching strings have to change with them.
 
 ## Mods cannot share code
 
 Herdr refuses a mod that imports another mod's file, so each integration carries what it needs. The `files` patch
 holds a copy of `openMarkdown` (the logic of the mod's `open.js`), and the pane header and the mod repeat the names
-of the two shared-state keys they exchange (`my-markdown.heads`, `my-markdown.toggle`).
+of the two shared-state keys they exchange (`herdr-inline-markdown.heads`, `herdr-inline-markdown.toggle`).
 `test/integrations.test.mjs` checks that the copies of `openMarkdown` act like the original.
 
 ## Undo

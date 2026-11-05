@@ -34,7 +34,7 @@ export class Picker {
     this.folder = start.folder ? normalizePath(start.folder) : this.machine ? "" : normalizePath(home());
     this.home = this.machine ? null : home();
     // A snapshot: the dialog is short-lived, and shared() hands out a new copy on every call.
-    const recent = shared("my-markdown.recent");
+    const recent = shared("herdr-inline-markdown.recent");
     this.recent = (Array.isArray(recent) ? recent : []).filter(r => r && typeof r.path === "string" && (r.machine ?? null) === this.machine);
     this.files = [];
     this.loading = true; this.failure = null; this.problem = null; this.busy = false; this.closed = false;
@@ -70,7 +70,7 @@ export class Picker {
   // else the focused pane's folder, else the space's. The space says which machine the other two are on.
   around() {
     const f = focused(), here = panes().find(p => p.pane === this.anchor), space = spaces().find(s => s.id === this.space);
-    const file = here?.mod === "my-markdown" ? fileOf(shared("my-markdown.panes")?.[here.pane]) : null;
+    const file = here?.mod === "herdr-inline-markdown" ? fileOf(shared("herdr-inline-markdown.panes")?.[here.pane]) : null;
     if (file) return { folder: dirname(file.path), machine: file.machine };
     return { folder: here?.cwd || f?.cwd || space?.folder || "", machine: space?.machine ?? null };
   }
@@ -226,7 +226,7 @@ export class Picker {
         this.at = i;
         cx.notify();
       })
-      .child(svg(file ? "mods/my-markdown/markdown.svg" : "mods/my-markdown/file-plus.svg").size(14).flex_none().text_color(t.muted))
+      .child(svg(file ? "mods/herdr-inline-markdown/markdown.svg" : "mods/herdr-inline-markdown/file-plus.svg").size(14).flex_none().text_color(t.muted))
       .child(div().flex_none().max_w(320).truncate().font_semibold().child(name))
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(hint))
       .when(file && row.entry.recent, el => el.child(div().flex_none().text_size(11).text_color(t.dim).child("recent")));
@@ -251,7 +251,7 @@ export class Picker {
       })
       .child(div().text_size(15).font_semibold().child("Markdown"))
       .child(h_flex().h(36).flex_none().px(10).gap(8).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
-        .child(svg("mods/my-markdown/search.svg").size(15).flex_none().text_color(t.dim))
+        .child(svg("mods/herdr-inline-markdown/search.svg").size(15).flex_none().text_color(t.dim))
         .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .when(Boolean(note), el => el.child(div().id("mdp-note").flex_none().text_size(12).text_color(this.problem ? t.blocked : t.dim).child(note)))
       .child(v_flex().id("mdp-list").flex_1().min_h(0).overflow_hidden()

@@ -35,7 +35,7 @@ export class Menu {
       })
       .child(h_flex().id("md-menu-tab").h(31).flex_none().px(8).gap(9).rounded(7).items_center().text_color(t.foreground).bg(t.selected)
         .on_click(() => this.openTab())
-        .child(svg("mods/my-markdown/plus.svg").size(14).flex_none().text_color(t.muted))
+        .child(svg("mods/herdr-inline-markdown/plus.svg").size(14).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().child("Open as new tab")));
   }
 }

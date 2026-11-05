@@ -17,10 +17,10 @@ import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR,
 
 const SAVE_MS = 700; // quiet time after typing before the file is saved
 const LOCAL_POLL = 4000, REMOTE_POLL = 5000; // looking at the file again when nothing can tell us it changed
-const MODES_KEY = "my-markdown.modes", MODES_MAX = 200;
+const MODES_KEY = "herdr-inline-markdown.modes", MODES_MAX = 200;
 // Shared with the my-pane header of integrations/pane-header (mods can't import each other, so it has the same names).
-const HEADS_KEY = "my-markdown.heads", TOGGLE_KEY = "my-markdown.toggle", HEADER_MOD = "my-pane";
-const MARKDOWN_ICON = "mods/my-markdown/file-markdown.svg";
+const HEADS_KEY = "herdr-inline-markdown.heads", TOGGLE_KEY = "herdr-inline-markdown.toggle", HEADER_MOD = "my-pane";
+const MARKDOWN_ICON = "mods/herdr-inline-markdown/file-markdown.svg";
 const WIDE = 560; // below this width the toggle loses its label
 const BIG = 50000; // a buffer longer than this is counted when it settles, not on every key
 // A text this long is parsed on opening in slices of SLICE_MS, between which the app goes on: one parse of 1 MiB
@@ -59,7 +59,7 @@ const UNDO_ACTIONS = { "mdb-undo": -1, "mdb-redo": 1 }, UNDO_KEYS = { "cmd-z": -
 const SOURCE_TYPING = "source";
 const spliceOf = d => ({ start: d.at, end: d.at + d.removed, insert: d.inserted });
 
-const ICON = name => `mods/my-markdown/${name}.svg`;
+const ICON = name => `mods/herdr-inline-markdown/${name}.svg`;
 const why = e => String(e?.message ?? e);
 // What readTextFile says about a file over its 1 MiB limit is not written down anywhere: go by the usual words.
 const tooBig = e => /mib|too (large|big)|exceed|larger than/i.test(why(e));
@@ -170,7 +170,7 @@ const withInnerLine = (b, value) => {
 // through renderBlock in the root, with block 2 in the field and its slash menu open, the spare field over block 4
 // and the diagram in a frame wider than the column, its − % + group showing.
 const FIXTURE = [
-  "---", "title: my-markdown check fixture", "---",
+  "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
   "A paragraph with **bold**, _emphasis_, `code` and a [link](https://example.com). /", "",
   "Plain words only, so this paragraph can be armed.", "",

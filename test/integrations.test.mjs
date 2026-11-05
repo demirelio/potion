@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { state, calls, reset } from "./mocks/herdr.mjs";
 import { space, pane } from "./helpers.mjs";
 
-const { openMarkdown: original } = await import("../mods/my-markdown/open.js");
+const { openMarkdown: original } = await import("../mods/herdr-inline-markdown/open.js");
 
 // The files integration carries a copy of openMarkdown, because mods cannot import each other. The copy is cut out
 // of the lines its patch adds and loaded against the same mocks as the original.
@@ -42,21 +42,21 @@ function remote() {
 function openElsewhere(file, machine = null) {
   local();
   state.spaces.push(space("s2", "other", { tabs: [{ id: "s2-t7", name: "README.md", active: true, zoomed: false, status: null }] }));
-  state.panes.push(pane("p7", "s2-t7", null, { mod: "my-markdown", terminal: null }));
-  state.shared["my-markdown.panes"] = { p7: `${machine ?? ""}:${file}` };
+  state.panes.push(pane("p7", "s2-t7", null, { mod: "herdr-inline-markdown", terminal: null }));
+  state.shared["herdr-inline-markdown.panes"] = { p7: `${machine ?? ""}:${file}` };
 }
 // A Markdown pane beside the focused terminal in the same tab, registered as showing `file` (unless `registered` is false).
 function openBeside(file, machine = null, registered = true) {
   local();
-  state.panes.push(pane("p7", "s1-tab", null, { mod: "my-markdown", terminal: null }));
-  if (registered) state.shared["my-markdown.panes"] = { p7: `${machine ?? ""}:${file}` };
+  state.panes.push(pane("p7", "s1-tab", null, { mod: "herdr-inline-markdown", terminal: null }));
+  if (registered) state.shared["herdr-inline-markdown.panes"] = { p7: `${machine ?? ""}:${file}` };
 }
 
 // What a mod asked of Herdr: the commands and the shared values it set.
 const asked = () => JSON.parse(JSON.stringify({ run: calls.run, setShared: calls.setShared, shared: state.shared }));
 
-const recent = { "my-markdown.recent": Array.from({ length: 30 }, (_, i) => ({ machine: i % 2 ? "devbox" : null, path: `/n/${i}.md` })) };
-const undrawn = () => { openElsewhere(FILE); delete state.shared["my-markdown.panes"]; };
+const recent = { "herdr-inline-markdown.recent": Array.from({ length: 30 }, (_, i) => ({ machine: i % 2 ? "devbox" : null, path: `/n/${i}.md` })) };
+const undrawn = () => { openElsewhere(FILE); delete state.shared["herdr-inline-markdown.panes"]; };
 const CASES = [
   ["nothing open yet", local, FILE, {}],
   ["on another machine", remote, `${REMOTE}/deploy.md`, {}],
@@ -67,25 +67,25 @@ const CASES = [
   ["two undrawn tabs named after the file", () => {
     undrawn();
     state.spaces[0].tabs.push({ id: "s1-t8", name: "README.md", active: false, zoomed: false, status: null });
-    state.panes.push(pane("p8", "s1-t8", null, { mod: "my-markdown", terminal: null }));
+    state.panes.push(pane("p8", "s1-t8", null, { mod: "herdr-inline-markdown", terminal: null }));
   }, FILE, {}],
-  ["a tab named after the file that shows another file", () => { openElsewhere(FILE); state.shared["my-markdown.panes"] = { p7: ":/elsewhere/README.md" }; }, FILE, {}],
+  ["a tab named after the file that shows another file", () => { openElsewhere(FILE); state.shared["herdr-inline-markdown.panes"] = { p7: ":/elsewhere/README.md" }; }, FILE, {}],
   ["a terminal tab named after the file", () => { undrawn(); state.panes.pop(); state.panes.push(pane("p7", "s2-t7", ROOT)); }, FILE, {}],
   ["a tab named after the file with a terminal pane too", () => { undrawn(); state.panes.push(pane("p8", "s2-t7", ROOT)); }, FILE, {}],
-  ["an undrawn tab on the other machine's path", () => { openElsewhere(FILE, "devbox"); delete state.shared["my-markdown.panes"]; }, FILE, {}],
+  ["an undrawn tab on the other machine's path", () => { openElsewhere(FILE, "devbox"); delete state.shared["herdr-inline-markdown.panes"]; }, FILE, {}],
   ["the file is shown in a pane of this tab", () => openBeside(FILE), FILE, {}],
   ["a pane of this tab that shows another file", () => openBeside(`${ROOT}/other.md`), FILE, {}],
   ["a pane of this tab that no one has filed yet", () => openBeside(FILE, null, false), FILE, {}],
   ["a pane of this tab showing the path on another machine", () => openBeside(FILE, "devbox"), FILE, {}],
-  ["a registry entry for a pane that is gone", () => { local(); state.shared["my-markdown.panes"] = { p7: `:${FILE}` }; }, FILE, {}],
+  ["a registry entry for a pane that is gone", () => { local(); state.shared["herdr-inline-markdown.panes"] = { p7: `:${FILE}` }; }, FILE, {}],
   ["the focused tab's first pane is the one to open beside", () => { local(); state.focused.pane = null; }, FILE, {}],
   ["no pane to open beside", () => { local(); state.panes = []; state.focused = null; }, FILE, {}],
   ["a full recent list", local, FILE, recent],
-  ["the file is already recent", local, FILE, { "my-markdown.recent": [{ machine: null, path: "/x.md" }, { machine: null, path: FILE }] }],
+  ["the file is already recent", local, FILE, { "herdr-inline-markdown.recent": [{ machine: null, path: "/x.md" }, { machine: null, path: FILE }] }],
 ];
 
 for (const [integration, copy] of copies) {
-  test(`the copy of openMarkdown in the ${integration} integration does what open.js in my-markdown does, for a pane and for a tab`, () => {
+  test(`the copy of openMarkdown in the ${integration} integration does what open.js in herdr-inline-markdown does, for a pane and for a tab`, () => {
     const commands = new Set();
     for (const place of ["pane", "tab"]) {
       for (const [name, setup, file, shared] of CASES) {
@@ -109,7 +109,7 @@ test("the patches point at files of the Markdown mod, which exist, and at no oth
   let seen = 0;
   for (const file of ["tabs/tabs.patch", "files/files.patch", "pane-header/pane.patch", "new-menu/new-menu.patch"]) {
     for (const [path, mod] of added(file).matchAll(/mods\/([\w-]+)\/[\w.-]+/g)) {
-      assert.equal(mod, "my-markdown", `${file} adds ${path}`);
+      assert.equal(mod, "herdr-inline-markdown", `${file} adds ${path}`);
       assert.ok(existsSync(new URL(`../${path}`, import.meta.url)), `${path} is missing`);
       seen++;
     }

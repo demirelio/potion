@@ -3,7 +3,7 @@
 @@ -52,3 +52,4 @@
      const choices = [...installed, ...this.agents.filter(a => !a.installed).slice(0, 2)];
 -    return v_flex().min_h(0).w_full().h(Math.min(491, 167 + Math.max(1, choices.length) * 31)).bg(t.popover).p(5).text_size(12.8)
-+    const markdown = () => openOverlay({ mod: "my-markdown", kind: "dialog", width: 560, height: 460, props: { action: "open", place: "tab", space: space.id } });
++    const markdown = () => openOverlay({ mod: "herdr-inline-markdown", kind: "dialog", width: 560, height: 460, props: { action: "open", place: "tab", space: space.id } });
 +    return v_flex().min_h(0).w_full().h(Math.min(522, 198 + Math.max(1, choices.length) * 31)).bg(t.popover).p(5).text_size(12.8)
        .id("new-menu").track_focus(this.handle)
 @@ -56,2 +57,6 @@
@@ -15,5 +15,5 @@
          const agent = /^[1-9]$/.test(e.key) ? installed[Number(e.key) - 1] : null;
 @@ -62,2 +67,3 @@
        .child(this.row("terminal", svg("icons/shell.svg").size(14), "Terminal", () => run("tab.new", { space: space?.id }), shortcut("tab.new")))
-+      .child(this.row("markdown", image("mods/my-markdown/file-markdown.svg").size(14), "Markdown", markdown, shortcut("my-tabs.markdown:tab") || "M", Boolean(space)))
++      .child(this.row("markdown", image("mods/herdr-inline-markdown/file-markdown.svg").size(14), "Markdown", markdown, shortcut("my-tabs.markdown:tab") || "M", Boolean(space)))
        .child(div().px(9).pt(8).pb(4).text_size(11).text_color(t.dim).child("Start an agent"))

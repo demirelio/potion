@@ -5,7 +5,7 @@ import {
   insertBefore, insertAt, mergeIntoPrevious, mergeNext, remove, removeRange, toParagraph, indent, outdent, nest, unnest,
   move, toggleTask, paste, closeFence, fenceGuard, visibleMap, shortcut, codeIndent, FENCE, CLOSE, closes, parseInSteps,
   retype, insertLines,
-} from "../mods/my-markdown/blocks.js";
+} from "../mods/herdr-inline-markdown/blocks.js";
 import { originals, corpus, docs, htmlKinds, docKinds, random, bigDocument, VARIANTS } from "./markdown-corpus.mjs";
 
 const kinds = d => d.blocks.map(b => b.kind);

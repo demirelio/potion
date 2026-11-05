@@ -18,7 +18,7 @@ export const QUOTE_PAD = 14;
 export const BOX = { px: 14, py: 12 };
 export const FRONT_BOX = { px: 12, py: 10 };
 const RULE_H = 24;
-const CHECK = "mods/my-markdown/check.svg";
+const CHECK = "mods/herdr-inline-markdown/check.svg";
 
 // The type of each kind of block: size and line height in px and multiples, the same rendered and in the field.
 export const STYLES = {

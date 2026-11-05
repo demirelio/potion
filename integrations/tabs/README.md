@@ -5,10 +5,10 @@ Changes the **`tabs`** mod (the tab bar) of Herdr 0.1.12. Clone it as `my-tabs`.
 ## What it does
 
 - The tab bar listens for the commands `markdown`, `markdown:tab` and `markdown:pane` and opens the Markdown
-  file picker (the dialog of the `my-markdown` mod) for the active space. `markdown` and `markdown:tab` open the
+  file picker (the dialog of the `herdr-inline-markdown` mod) for the active space. `markdown` and `markdown:tab` open the
   chosen file in a tab of its own, `markdown:pane` beside the focused pane. Bind keys to them with
   [`../keys`](../keys/).
-- A tab whose panes are all Markdown panes shows the file icon of the mod (`mods/my-markdown/file-markdown.svg`)
+- A tab whose panes are all Markdown panes shows the file icon of the mod (`mods/herdr-inline-markdown/file-markdown.svg`)
   and is called "Markdown" while it has no name of its own.
 
 The command loop is `nextCommand()` in the tab bar's `init`: one mod reads the commands sent to it, so if your

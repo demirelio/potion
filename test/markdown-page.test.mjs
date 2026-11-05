@@ -4,10 +4,10 @@ import { reset } from "./mocks/herdr.mjs";
 import { all, find, textOf } from "./mocks/element.mjs";
 import { makeCx } from "./helpers.mjs";
 
-const { parse } = await import("../mods/my-markdown/blocks.js");
-const { Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/my-markdown/page.js");
+const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
+const { Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
-const { TEXT, RAW } = await import("../mods/my-markdown/keys.js");
+const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
 
 beforeEach(() => reset());
 
@@ -171,7 +171,7 @@ test("a drawn diagram is a frame from its block's data and the editor's view: th
   assert.deepEqual(views, [d.key]);
   assert.deepEqual([box.style.ml, box.style.w, box.style.h], [-257, 1230, 208]);
   const img = all(box, n => n.kind === "image")[0];
-  assert.deepEqual([img.path, img.style.absolute, img.style.left, img.style.top, img.style.w, img.style.h], ["data/my-markdown/diagrams/k1.png", true, 12, 12, 1206, 184]);
+  assert.deepEqual([img.path, img.style.absolute, img.style.left, img.style.top, img.style.w, img.style.h], ["data/herdr-inline-markdown/diagrams/k1.png", true, 12, 12, 1206, 184]);
   assert.equal(box.kids.at(-1).id, `md-frame-edge-${d.key}`);
   assert.equal(shown.__node.style.cursor_pointer, true, "the block's own part keeps the pointer: a click on the space above it opens the source");
   const selected = renderBlock(owner, { ...d, selected: true });

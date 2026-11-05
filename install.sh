@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # install.sh: put the Markdown mod and its diagram renderer where Herdr and the mod look for them.
 #
-#   ./install.sh                copy mods/my-markdown into the Herdr app home, then install the diagram renderer
+#   ./install.sh                copy mods/herdr-inline-markdown into the Herdr app home, then install the diagram renderer
 #   ./install.sh --no-mermaid   only the mod: diagrams then show as code blocks
 #   ./install.sh --help
 #
 # Environment:
-#   HERDR_APP_HOME      Herdr's app folder, default ~/.config/herdr-app; the mod goes to its mods/my-markdown
-#   HERDR_MERMAID_HOME  where the renderer goes, default ~/.local/share/herdr-markdown/mermaid. The mod only looks in
+#   HERDR_APP_HOME      Herdr's app folder, default ~/.config/herdr-app; the mod goes to its mods/herdr-inline-markdown
+#   HERDR_MERMAID_HOME  where the renderer goes, default ~/.local/share/herdr-inline-markdown/mermaid. The mod only looks in
 #                       the default place, so set this to try an install somewhere else, not to move it.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
-MERMAID_HOME="${HERDR_MERMAID_HOME:-$HOME/.local/share/herdr-markdown/mermaid}"
-BACKUPS="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-markdown/backups"
+MERMAID_HOME="${HERDR_MERMAID_HOME:-$HOME/.local/share/herdr-inline-markdown/mermaid}"
+BACKUPS="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-inline-markdown/backups"
 # Herdr writes these into every mod folder: never ours, never copied, never removed.
 DIFF_EXCLUDES=(-x '*.d.ts' -x 'jsconfig.json' -x '*.error' -x '.DS_Store')
 
@@ -27,14 +27,14 @@ sha256() { if command -v shasum >/dev/null; then shasum -a 256 "$1"; else sha256
 
 # The mod: its files replace the installed ones. What was there is kept under $BACKUPS when it differed.
 install_mod() {
-  local src="$REPO/mods/my-markdown" dst="$APP_HOME/mods/my-markdown" f stamp
+  local src="$REPO/mods/herdr-inline-markdown" dst="$APP_HOME/mods/herdr-inline-markdown" f stamp
   [ -d "$src" ] || die "$src is missing: run install.sh from a complete checkout"
   [ -d "$APP_HOME" ] || die "no Herdr app home at $APP_HOME: start Herdr once so it creates one, or set HERDR_APP_HOME"
   if [ -d "$dst" ] && ! diff -rq "${DIFF_EXCLUDES[@]}" "$src" "$dst" >/dev/null 2>&1; then
     stamp="$(date +%Y%m%d-%H%M%S)"
     mkdir -p "$BACKUPS/$stamp"
-    cp -R "$dst" "$BACKUPS/$stamp/my-markdown"
-    say "mod: the installed copy differed; saved it under $BACKUPS/$stamp/my-markdown"
+    cp -R "$dst" "$BACKUPS/$stamp/herdr-inline-markdown"
+    say "mod: the installed copy differed; saved it under $BACKUPS/$stamp/herdr-inline-markdown"
   fi
   mkdir -p "$dst"
   for f in "$dst"/*; do
@@ -43,7 +43,7 @@ install_mod() {
     [ -e "$src/$(basename "$f")" ] || rm -f "$f"
   done
   for f in "$src"/*; do copy "$f" "$dst/$(basename "$f")"; done
-  say "mod: my-markdown installed in $dst"
+  say "mod: herdr-inline-markdown installed in $dst"
 }
 
 # puppeteer 25 (inside mermaid-cli) needs Node.js 22.12 or newer.

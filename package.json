@@ -1,5 +1,5 @@
 {
-  "name": "herdr-markdown",
+  "name": "herdr-inline-markdown",
   "private": true,
   "type": "module",
   "description": "A Markdown reader and editor mod, with mermaid diagrams, for the Herdr app",

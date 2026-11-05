@@ -5,8 +5,8 @@ import {
   estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX,
-} from "../mods/my-markdown/geometry.js";
-import { parse, field } from "../mods/my-markdown/blocks.js";
+} from "../mods/herdr-inline-markdown/geometry.js";
+import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 
 const cal = { rowPx: 20, advance: 8, monoAdvance: 7.8 };
 

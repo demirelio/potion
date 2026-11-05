@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 // (HERDR_APP_HOME, HERDR_MERMAID_HOME, XDG_STATE_HOME): nothing here touches a real install.
 const REPO = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const SCRIPT = join(REPO, "install.sh");
-const MOD = join(REPO, "mods/my-markdown");
+const MOD = join(REPO, "mods/herdr-inline-markdown");
 
 const tmp = mkdtempSync(join(tmpdir(), "install-"));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -33,7 +33,7 @@ function scratch(name) {
 }
 const env = where => ({ ...process.env, HERDR_APP_HOME: where.app, HERDR_MERMAID_HOME: where.mermaid, XDG_STATE_HOME: where.state });
 const bash = (where, body) => spawnSync("bash", ["-c", `source "${SCRIPT}"; ${body}`], { env: env(where), encoding: "utf8" });
-const installed = where => join(where.app, "mods/my-markdown");
+const installed = where => join(where.app, "mods/herdr-inline-markdown");
 const list = dir => readdirSync(dir).sort();
 
 test("install_mod copies every file of the mod and nothing else into the app home", () => {
@@ -42,7 +42,7 @@ test("install_mod copies every file of the mod and nothing else into the app hom
   assert.deepEqual(list(installed(where)), list(MOD));
   assert.equal(readFileSync(join(installed(where), "main.js"), "utf8"), readFileSync(join(MOD, "main.js"), "utf8"));
   assert.equal(existsSync(where.state), false, "nothing was there to back up");
-  assert.match(run.stdout, /my-markdown installed in /);
+  assert.match(run.stdout, /herdr-inline-markdown installed in /);
 });
 
 test("install_mod removes files the mod no longer has, keeps what Herdr writes, and saves the replaced copy", () => {
@@ -52,9 +52,9 @@ test("install_mod removes files the mod no longer has, keeps what Herdr writes, 
   const run = bash(where, "install_mod");
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(list(installed(where)), [...list(MOD), "gpui-kit.d.ts", "jsconfig.json", "main.js.error"].sort());
-  const [stamp, ...more] = readdirSync(join(where.state, "herdr-markdown/backups"));
+  const [stamp, ...more] = readdirSync(join(where.state, "herdr-inline-markdown/backups"));
   assert.equal(more.length, 0);
-  assert.ok(existsSync(join(where.state, "herdr-markdown/backups", stamp, "my-markdown/old.js")), "the old copy is kept");
+  assert.ok(existsSync(join(where.state, "herdr-inline-markdown/backups", stamp, "herdr-inline-markdown/old.js")), "the old copy is kept");
   assert.match(run.stdout, /the installed copy differed; saved it under /);
 });
 

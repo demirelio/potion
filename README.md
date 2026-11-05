@@ -1,4 +1,4 @@
-# herdr-markdown
+# herdr-inline-markdown
 
 A Markdown reader and editor for the Herdr app, with mermaid diagrams.
 
@@ -10,7 +10,7 @@ The package holds three things:
 
 | Path | What it is |
 |---|---|
-| `mods/my-markdown/` | The mod: the Markdown pane, the file picker and the right-click popup. Plain JavaScript, no build step |
+| `mods/herdr-inline-markdown/` | The mod: the Markdown pane, the file picker and the right-click popup. Plain JavaScript, no build step |
 | `tools/mermaid/` | The diagram renderer: mermaid-cli driving a headless Chrome. Not a Herdr mod; `install.sh` puts it where the mod looks |
 | `integrations/` | Optional patches that give you ways to open a file: keys, the `+` menu, file panels, the pane header |
 
@@ -31,17 +31,17 @@ The package holds three things:
 ./install.sh --no-mermaid  # the mod only
 ```
 
-The script copies `mods/my-markdown` into `${HERDR_APP_HOME:-~/.config/herdr-app}/mods/` and installs the renderer in
-`~/.local/share/herdr-markdown/mermaid` (`npm ci` there, then the headless browser; the mod reads that exact
+The script copies `mods/herdr-inline-markdown` into `${HERDR_APP_HOME:-~/.config/herdr-app}/mods/` and installs the renderer in
+`~/.local/share/herdr-inline-markdown/mermaid` (`npm ci` there, then the headless browser; the mod reads that exact
 path). It can be run again at any time: files of an older copy of the mod that are gone are removed, a copy that
-differed is saved under `~/.local/state/herdr-markdown/backups/` first, and `npm ci` only runs again when
+differed is saved under `~/.local/state/herdr-inline-markdown/backups/` first, and `npm ci` only runs again when
 `tools/mermaid/package-lock.json` changed. Herdr reloads mods as their files change, so there is nothing to restart.
 
 `HERDR_APP_HOME` and `HERDR_MERMAID_HOME` override the two folders. The mod itself only looks for the renderer in
 the default place, so the second one is for trying an install somewhere else.
 
 The mod places itself nowhere, so installing it alone shows nothing. To open a file, run Herdr's `tab.new` or
-`pane.split` command with `mod: "my-markdown"` and `props: { file: "/absolute/path/note.md" }` (`herdr-app commands`
+`pane.split` command with `mod: "herdr-inline-markdown"` and `props: { file: "/absolute/path/note.md" }` (`herdr-app commands`
 lists the arguments), or add the [integrations](integrations/README.md).
 
 ## Features
@@ -149,7 +149,7 @@ by `install.sh`. Without it the footer says "Diagrams need the mermaid renderer:
 a code block; without Node.js it says "Diagrams need Node.js".
 
 Each diagram is drawn once per text, theme and renderer version, and the picture is kept in
-`~/.config/herdr-app/data/my-markdown/diagrams/` (`.mmd` source, `.png`, `.json` result; the renderer deletes
+`~/.config/herdr-app/data/herdr-inline-markdown/diagrams/` (`.mmd` source, `.png`, `.json` result; the renderer deletes
 entries older than 45 days, and the folder can be emptied by hand at any time). The diagrams of a document are drawn
 together, one Chrome start per batch. A diagram with a syntax error shows mermaid's message in its place, over the
 last good picture if there was one.
@@ -192,8 +192,8 @@ your install, point `HERDR_MERMAID_HOME` at one.
 
 ## Before open-sourcing
 
-- **Rename the mod.** `my-markdown` is a personal prefix. It names the mod folder, the shared-state keys
-  (`my-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`), the cache folder (`data/my-markdown`), the key
+- **Rename the mod.** `herdr-inline-markdown` is a personal prefix. It names the mod folder, the shared-state keys
+  (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`), the cache folder (`data/herdr-inline-markdown`), the key
   contexts (`MdText2`...), the asset paths in the mod, the patches and the tests. The integrations also assume the
   clone names `my-tabs`, `my-files`, `my-pane` and `my-new-menu`. Rename them together, with one search and replace
   and `npm test`.
