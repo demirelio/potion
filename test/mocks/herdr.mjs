@@ -7,7 +7,7 @@ const COLORS = `background surface canvas chrome popover raised hover selected b
   selection working blocked done idle unknown ${Array.from({ length: 16 }, (_, i) => `ansi${i}`).join(" ")}`.split(/\s+/);
 
 export const state = {};
-// `order`: run / closeOverlay / setShared in the order they happened, for "closes first, then acts".
+// `order`: run / openOverlay / closeOverlay / setShared in the order they happened, for "closes first, then acts".
 export const calls = { run: [], openOverlay: [], closeOverlay: [], setShared: [], exec: [], hc: [], readTextFile: [], writeTextFile: [], watchFolder: [], knownAgents: [], notify: [], order: [] };
 
 function makeStorage() {
@@ -31,6 +31,7 @@ export function reset(overrides = {}) {
       state.disk.set(path, text);
       return null;
     },
+    closeOverlay: () => null, // a test that wants an overlay Herdr doesn't know has this throw
     watchFolder: () => new Promise(() => {}), // no change is ever reported
     nextCommand: () => new Promise(() => {}), // no key command ever comes
     knownAgents: async () => [],
@@ -62,8 +63,8 @@ export const props = () => state.props;
 export const shared = key => state.shared[key];
 export const setShared = (key, value) => { calls.order.push("setShared"); calls.setShared.push([key, value]); state.shared[key] = value; return null; };
 export const run = (name, args) => { calls.order.push("run"); calls.run.push([name, args]); return null; };
-export const openOverlay = spec => { calls.openOverlay.push(spec); return `overlay-${calls.openOverlay.length}`; };
-export const closeOverlay = id => { calls.order.push("closeOverlay"); calls.closeOverlay.push(id); return null; };
+export const openOverlay = spec => { calls.order.push("openOverlay"); calls.openOverlay.push(spec); return `overlay-${calls.openOverlay.length}`; };
+export const closeOverlay = id => { calls.order.push("closeOverlay"); calls.closeOverlay.push(id); return state.closeOverlay(id); };
 export const exec = (command, args, options) => { calls.exec.push({ command, args, options }); return state.exec(command, args, options); };
 export const readTextFile = (path, options) => { calls.readTextFile.push({ path, options }); return state.readTextFile(path, options); };
 export const writeTextFile = (path, text, expected) => { calls.writeTextFile.push({ path, text, expected }); return state.writeTextFile(path, text, expected); };

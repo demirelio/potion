@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# install.sh: put the Markdown mod and its diagram renderer where Herdr and the mod look for them.
+# install.sh: put the Markdown mods, their keys and the diagram renderer where Herdr and the mods look for them.
 #
-#   ./install.sh                copy mods/herdr-inline-markdown into the Herdr app home, then install the diagram renderer
-#   ./install.sh --no-mermaid   only the mod: diagrams then show as code blocks
+#   ./install.sh                  copy mods/herdr-inline-markdown and mods/herdr-inline-markdown-beside into the Herdr
+#                                 app home, add the keys of keys.json to yours, then install the diagram renderer
+#   ./install.sh --no-mermaid     no diagram renderer: diagrams then show as code blocks
+#   ./install.sh --no-keys        leave keys.json alone
+#   ./install.sh --replace-keys   also give a key you bound to something else the action keys.json names
 #   ./install.sh --help
 #
+# Keys: one your keys.json lacks is added; one it binds to something else is kept, and named, unless --replace-keys.
+# A keys.json that changes is saved under the backups folder first. This needs node; without it keys.json is left alone.
+#
 # Environment:
-#   HERDR_APP_HOME      Herdr's app folder, default ~/.config/herdr-app; the mod goes to its mods/herdr-inline-markdown
+#   HERDR_APP_HOME      Herdr's app folder, default ~/.config/herdr-app: the mods go to its mods/, the keys to its keys.json
 #   HERDR_MERMAID_HOME  where the renderer goes, default ~/.local/share/herdr-inline-markdown/mermaid. The mod only looks in
 #                       the default place, so set this to try an install somewhere else, not to move it.
 set -euo pipefail
@@ -15,37 +21,37 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
 MERMAID_HOME="${HERDR_MERMAID_HOME:-$HOME/.local/share/herdr-inline-markdown/mermaid}"
 BACKUPS="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-inline-markdown/backups"
+BACKUP="$BACKUPS/$(date +%Y%m%d-%H%M%S)" # this run's, made by the first thing it saves
+MODS=(herdr-inline-markdown herdr-inline-markdown-beside)
 # Herdr writes these into every mod folder: never ours, never copied, never removed.
 DIFF_EXCLUDES=(-x '*.d.ts' -x 'jsconfig.json' -x '*.error' -x '.DS_Store')
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
-usage() { sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; }
 
 copy() { mkdir -p "$(dirname "$2")"; cp -p "$1" "$2"; }
 sha256() { if command -v shasum >/dev/null; then shasum -a 256 "$1"; else sha256sum "$1"; fi | cut -d' ' -f1; }
 
-# The mod: its files replace the installed ones. What was there is kept under $BACKUPS when it differed.
+# mods/<name>: its files replace the installed ones. What was there is kept under $BACKUP when it differed.
 install_mod() {
-  local src="$REPO/mods/herdr-inline-markdown" dst="$APP_HOME/mods/herdr-inline-markdown" f stamp
+  local name="$1" src="$REPO/mods/$1" dst="$APP_HOME/mods/$1" f stage
   [ -d "$src" ] || die "$src is missing: run install.sh from a complete checkout"
   [ -d "$APP_HOME" ] || die "no Herdr app home at $APP_HOME: start Herdr once so it creates one, or set HERDR_APP_HOME"
   if [ -d "$dst" ] && ! diff -rq "${DIFF_EXCLUDES[@]}" "$src" "$dst" >/dev/null 2>&1; then
-    stamp="$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$BACKUPS/$stamp"
-    cp -R "$dst" "$BACKUPS/$stamp/herdr-inline-markdown"
-    say "mod: the installed copy differed; saved it under $BACKUPS/$stamp/herdr-inline-markdown"
+    mkdir -p "$BACKUP"
+    cp -R "$dst" "$BACKUP/$name"
+    say "mod: the installed copy of $name differed; saved it under $BACKUP/$name"
   fi
   # Herdr docks a mod into the shown layout the first time it sees its folder, unless mod.json says otherwise. A folder
   # filled file by file can be seen before its mod.json, so a first install appears whole: staged outside mods/, then
   # renamed into place.
   if [ ! -d "$dst" ]; then
-    local stage
-    stage="$(mktemp -d "$APP_HOME/.herdr-inline-markdown.XXXXXX")"
+    stage="$(mktemp -d "$APP_HOME/.$name.XXXXXX")"
     for f in "$src"/*; do copy "$f" "$stage/$(basename "$f")"; done
     mkdir -p "$(dirname "$dst")"
     mv "$stage" "$dst"
-    say "mod: herdr-inline-markdown installed in $dst"
+    say "mod: $name installed in $dst"
     return
   fi
   for f in "$dst"/*; do
@@ -54,7 +60,30 @@ install_mod() {
     [ -e "$src/$(basename "$f")" ] || rm -f "$f"
   done
   for f in "$src"/*; do copy "$f" "$dst/$(basename "$f")"; done
-  say "mod: herdr-inline-markdown installed in $dst"
+  say "mod: $name installed in $dst"
+}
+
+install_mods() {
+  local name
+  for name in "${MODS[@]}"; do install_mod "$name"; done
+}
+
+# keys.json here into the person's keys.json, by tools/merge-keys.mjs; $1 non-empty replaces keys bound to something
+# else. Only into a keys.json that is there: the one Herdr writes holds its whole default keymap, and a file made here
+# would hold these keys alone. Returns 0 when every key has our action afterwards, KEYS_NOT_BOUND when one does not
+# (it says why), 1 when keys.json could not be written.
+KEYS_NOT_BOUND=2
+merge_keys() {
+  local replace="$1" theirs="$APP_HOME/keys.json"
+  if [ ! -f "$theirs" ]; then
+    say "keys: $APP_HOME has no keys.json, so none was made: run ./install.sh again once Herdr has written one, or add the keys in $REPO/keys.json by hand"
+    return "$KEYS_NOT_BOUND"
+  fi
+  if ! command -v node >/dev/null; then
+    say "keys: node not found, so $theirs was left alone: add the keys in $REPO/keys.json to it by hand, or install Node.js and run ./install.sh again"
+    return "$KEYS_NOT_BOUND"
+  fi
+  node "$REPO/tools/merge-keys.mjs" "$REPO/keys.json" "$theirs" "$BACKUP" ${replace:+--replace}
 }
 
 # puppeteer 25 (inside mermaid-cli) needs Node.js 22.12 or newer.
@@ -114,29 +143,45 @@ install_mermaid() {
 }
 
 main() {
-  local with_mermaid=1 failed=0
+  local with_mermaid=1 with_keys=1 replace_keys="" keys=0 keys_failed=0 mermaid_failed=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --no-mermaid) with_mermaid=0 ;;
+      --no-keys) with_keys=0 ;;
+      --replace-keys) replace_keys=1 ;;
       -h|--help) usage; return 0 ;;
       *) usage >&2; die "unknown option: $1" ;;
     esac
     shift
   done
 
-  install_mod
+  install_mods
+  if [ "$with_keys" = 1 ]; then
+    merge_keys "$replace_keys" || keys=$?
+    [ "$keys" = 0 ] || [ "$keys" = "$KEYS_NOT_BOUND" ] || keys_failed=1
+  else
+    say "keys: skipped (--no-keys); keys.json is as it was"
+  fi
   if [ "$with_mermaid" = 1 ]; then
-    install_mermaid || failed=1
+    install_mermaid || mermaid_failed=1
   else
     say "mermaid: skipped (--no-mermaid); diagrams show as code blocks"
   fi
 
-  say "Herdr reloads mods as their files change, so there is nothing to restart."
-  say "Next: integrations/README.md says how to open Markdown files from the keys, the + menu and the file panels."
-  if [ "$failed" = 1 ]; then
-    say "The mod is installed, the diagram renderer is not: fix the problem above and run ./install.sh again."
-    return 1
+  say "Herdr reloads mods and keys.json as their files change, so there is nothing to restart."
+  if [ "$with_keys" = 1 ] && [ "$keys" = 0 ]; then
+    say "Keys: cmd-m opens the Markdown file picker for a new tab, cmd-shift-m for a pane beside the focused one."
+  elif [ "$keys" = "$KEYS_NOT_BOUND" ]; then
+    say "Keys: cmd-m and cmd-shift-m don't both open the picker yet (see the keys lines above): ./install.sh --replace-keys takes over a key bound to something else, or add the keys in $REPO/keys.json by hand."
   fi
+  say "Next: integrations/README.md adds the + menu row, clicks in the file panel, the pane header and the tab icon."
+  if [ "$keys_failed" = 1 ]; then
+    say "keys.json was not changed: fix the problem above and run ./install.sh again."
+  fi
+  if [ "$mermaid_failed" = 1 ]; then
+    say "The mods are installed, the diagram renderer is not: fix the problem above and run ./install.sh again."
+  fi
+  [ "$keys_failed" = 0 ] && [ "$mermaid_failed" = 0 ]
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi

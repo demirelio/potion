@@ -1,16 +1,16 @@
 # Integrations
 
-The Markdown mod works on its own: it shows whatever file it is given. These integrations are the optional
-pieces that give you ways to open one: keys, the `+` menu, a click in a file panel. Install the mod first
+The Markdown mod works on its own: it shows whatever file it is given, and `../install.sh` gives it its keys
+(`cmd-m`, `cmd-shift-m`). These integrations are optional: more ways to open a file (the `+` menu, a click in a
+file panel), and the Markdown icon and name in the tab bar and the pane header. Install the mod first
 (`../install.sh`), then add the integrations you want.
 
 | Folder | Changes | What you get |
 |---|---|---|
-| [`tabs/`](tabs/) | clone of the shipped `tabs` mod | `markdown`, `markdown:tab` and `markdown:pane` commands that open the file picker; a tab whose panes are all Markdown shows the Markdown icon and is named "Markdown" until it has a name |
+| [`tabs/`](tabs/) | clone of the shipped `tabs` mod | A tab whose panes are all Markdown shows the Markdown icon and is named "Markdown" until it has a name |
 | [`files/`](files/) | clone of the shipped `files` mod | A click on a `.md` file opens it beside the focused pane, shift+click in a tab of its own, right-click offers "Open as new tab" |
 | [`pane-header/`](pane-header/) | clone of the shipped `pane` (pane header) mod | The pane header shows a Markdown pane's file icon and name, and the Markdown toggle |
 | [`new-menu/`](new-menu/) | clone of the shipped `new-menu` mod, and a one-line change to the `tabs` clone | A Markdown row in the `+` menu (key `m`) |
-| [`keys/`](keys/) | your `keys.json` | `cmd-m` opens the picker for a new tab, `cmd-shift-m` for a pane beside the focused one |
 
 ## How to apply a patch
 
@@ -32,15 +32,17 @@ layout's `content.mod` entry for the tab bar, the file panel, the pane header or
 name (`my-tabs`, `my-files`, `my-pane`, `my-new-menu`). See Herdr's `AGENTS.md` in the app folder for how
 layouts name their mods.
 
-The clone names matter. The patches and the key bindings spell `herdr-inline-markdown`, `my-tabs`, `my-new-menu` and
-`my-pane`; use other names and the matching strings have to change with them.
+The clone names matter. The patches spell `herdr-inline-markdown`, `my-tabs`, `my-new-menu` and `my-pane`; use
+other names and the matching strings have to change with them.
 
 ## Mods cannot share code
 
 Herdr refuses a mod that imports another mod's file, so each integration carries what it needs. The `files` patch
-holds a copy of `openMarkdown` (the logic of the mod's `open.js`), and the pane header and the mod repeat the names
-of the two shared-state keys they exchange (`herdr-inline-markdown.heads`, `herdr-inline-markdown.toggle`).
-`test/integrations.test.mjs` checks that the copies of `openMarkdown` act like the original.
+holds a copy of `openMarkdown` (the logic of the mod's `open.js`), the pane header and the mod repeat the names
+of the two shared-state keys they exchange (`herdr-inline-markdown.heads`, `herdr-inline-markdown.toggle`), and
+the `+` menu row opens the picker with the same dialog the mod's `mod.json` gives `mod.open`.
+`test/integrations.test.mjs` checks that the copies of `openMarkdown` act like the original and that the `+` menu's
+dialog matches `mod.json`.
 
 ## Undo
 

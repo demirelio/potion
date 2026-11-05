@@ -1,0 +1,6 @@
+{
+  "global": {
+    "cmd-m": "mod.open:herdr-inline-markdown",
+    "cmd-shift-m": "mod.open:herdr-inline-markdown-beside"
+  }
+}

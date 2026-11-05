@@ -36,11 +36,14 @@ function fakeExec({ git = [], find: found = [], home = "/home/dev", mkdir = 0 } 
 
 beforeEach(() => reset({ spaces: [space("s1", "herdr", { folder: FOLDER, active: true })], exec: fakeExec({ git: FILES }) }));
 
-// Opens the dialog and waits for the listing. `props` adds to (or overrides) what the dialog is given.
+// Opens the dialog and waits for the listing. `props` adds to (or overrides) what the dialog is given. calls.order
+// and calls.setShared start after init, which names the dialog the open picker ("one picker at a time" below).
 async function mount({ folder = FOLDER, machine = null, settle = true, props: extra = {} } = {}) {
   state.props = { action: "open", space: "s1", folder, machine, overlay: "ov-1", ...extra };
   const cx = makeCx(), view = new Picker();
   view.init(state.props, cx);
+  calls.order.length = 0;
+  calls.setShared.length = 0;
   if (settle) await cx.settle();
   return { view, cx, tree: () => view.render(cx) };
 }
@@ -75,6 +78,45 @@ test("a closed dialog does not grab the focus when the timer fires", async () =>
   await fire_timers(cx);
   assert.equal(view.input.focused, false);
   assert.equal(cx.timers[0].cancelled, true);
+});
+
+const OPEN_PICKER = "herdr-inline-markdown.picker";
+
+test("one picker at a time: a dialog names its overlay the open picker, and closes the one named before it", async () => {
+  state.shared[OPEN_PICKER] = "ov-0";
+  await mount();
+  assert.equal(state.shared[OPEN_PICKER], "ov-1");
+  assert.deepEqual(calls.closeOverlay, ["ov-0"]);
+});
+
+test("one picker at a time: a dialog that closes clears the name, unless a newer picker holds it by then", async () => {
+  const first = await mount();
+  first.view.close(first.cx);
+  assert.equal(state.shared[OPEN_PICKER], null);
+  const older = await mount();
+  state.shared[OPEN_PICKER] = "ov-2";
+  older.view.close(older.cx);
+  assert.equal(state.shared[OPEN_PICKER], "ov-2", "Herdr calls close() after the newer picker has started");
+});
+
+test("one picker at a time: a dialog that is already the named one, or has no overlay, closes nothing", async () => {
+  state.shared[OPEN_PICKER] = "ov-1";
+  await mount();
+  assert.deepEqual(calls.closeOverlay, []);
+  state.props = undefined;
+  const cx = makeCx(), view = new Picker();
+  view.init({ action: "open", space: "s1", folder: FOLDER }, cx);
+  view.close(cx);
+  assert.deepEqual(calls.closeOverlay, []);
+  assert.equal(state.shared[OPEN_PICKER], "ov-1", "a picker outside an overlay is not the open one");
+});
+
+test("one picker at a time: a name Herdr no longer has (left by a quit) is passed over, even when closing it throws", async () => {
+  state.shared[OPEN_PICKER] = "ov-gone";
+  state.closeOverlay = id => { if (id === "ov-gone") throw new Error("no overlay ov-gone"); return null; };
+  const { view } = await mount();
+  assert.equal(state.shared[OPEN_PICKER], "ov-1");
+  assert.equal(view.loading, false, "the dialog started all the same");
 });
 
 // --- Listing

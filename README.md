@@ -6,19 +6,24 @@ A **Markdown pane** shows one markdown file, as a rendered page you edit in plac
 you type. It opens beside your terminals in the current tab, or in a tab of its own. It is meant for reading the
 plans an agent writes into a file as they appear, and for writing notes next to your terminals.
 
-The package holds three things:
+The package holds:
 
 | Path | What it is |
 |---|---|
 | `mods/herdr-inline-markdown/` | The mod: the Markdown pane, the file picker and the right-click popup. Plain JavaScript, no build step |
+| `mods/herdr-inline-markdown-beside/` | A small second mod, behind `cmd-shift-m`: it opens the picker for a pane beside the focused one (see [Keys](#keys)) |
+| `keys.json` | The two keys the mods expect; `install.sh` merges them into yours |
 | `tools/mermaid/` | The diagram renderer: mermaid-cli driving a headless Chrome. Not a Herdr mod; `install.sh` puts it where the mod looks |
-| `integrations/` | Optional patches that give you ways to open a file: keys, the `+` menu, file panels, the pane header |
+| `tools/merge-keys.mjs` | What `install.sh` merges `keys.json` with |
+| `integrations/` | Optional patches that give you more ways to open a file and mark Markdown tabs: the `+` menu, file panels, the pane header, the tab bar |
 
 ## Requirements
 
 - **Herdr 0.1.12.** The mod and the patches were built and tested against that version's mod API and shipped mods.
-- **Node.js 22.12 or newer**, only for diagrams (the renderer needs it). Without it the mod works and a diagram
-  shows as a code block. Running the tests needs Node.js 22 or newer.
+- **Node.js**, for two things `install.sh` does. It merges the keys into your `keys.json` with `node`; without it
+  the script leaves that file alone, and the two keys of `keys.json` have to be added by hand. The diagram renderer
+  needs Node.js 22.12 or newer; without it the mod works and a diagram shows as a code block. Running the tests
+  needs Node.js 22 or newer.
 - **Disk for diagrams:** about 440 MB of `node_modules` and about 200 MB for the `chrome-headless-shell` build that
   puppeteer downloads (figures vary by platform), and a few minutes the first time.
 - `git` on the machine of the folder you open files from: the picker lists markdown files with `git ls-files`,
@@ -27,22 +32,59 @@ The package holds three things:
 ## Install
 
 ```sh
-./install.sh               # the mod, then the diagram renderer
-./install.sh --no-mermaid  # the mod only
+./install.sh                 # the two mods, their keys, then the diagram renderer
+./install.sh --no-mermaid    # no diagram renderer
+./install.sh --no-keys       # leave your keys.json alone
+./install.sh --replace-keys  # also take over cmd-m / cmd-shift-m when you bound them to something else
 ```
 
-The script copies `mods/herdr-inline-markdown` into `${HERDR_APP_HOME:-~/.config/herdr-app}/mods/` and installs the renderer in
-`~/.local/share/herdr-inline-markdown/mermaid` (`npm ci` there, then the headless browser; the mod reads that exact
-path). It can be run again at any time: files of an older copy of the mod that are gone are removed, a copy that
-differed is saved under `~/.local/state/herdr-inline-markdown/backups/` first, and `npm ci` only runs again when
-`tools/mermaid/package-lock.json` changed. Herdr reloads mods as their files change, so there is nothing to restart.
+The script copies `mods/herdr-inline-markdown` and `mods/herdr-inline-markdown-beside` into
+`${HERDR_APP_HOME:-~/.config/herdr-app}/mods/`, merges `keys.json` into the `keys.json` there (see [Keys](#keys)),
+and installs the renderer in `~/.local/share/herdr-inline-markdown/mermaid` (`npm ci` there, then the headless
+browser; the mod reads that exact path). It can be run again at any time: files of an older copy of a mod that are
+gone are removed, a copy that differed is saved under `~/.local/state/herdr-inline-markdown/backups/` first, and
+`npm ci` only runs again when `tools/mermaid/package-lock.json` changed. A first install puts each mod folder in
+place whole, so Herdr never sees one without its `mod.json`. Herdr reloads mods and `keys.json` as their files
+change, so there is nothing to restart.
 
 `HERDR_APP_HOME` and `HERDR_MERMAID_HOME` override the two folders. The mod itself only looks for the renderer in
 the default place, so the second one is for trying an install somewhere else.
 
-The mod places itself nowhere, so installing it alone shows nothing. To open a file, run Herdr's `tab.new` or
-`pane.split` command with `mod: "herdr-inline-markdown"` and `props: { file: "/absolute/path/note.md" }` (`herdr-app commands`
-lists the arguments), or add the [integrations](integrations/README.md).
+The mods place themselves nowhere: a file opens from the keys, or from Herdr's `tab.new` or `pane.split` command
+with `mod: "herdr-inline-markdown"` and `props: { file: "/absolute/path/note.md" }` (`herdr-app commands` lists
+the arguments), or from the [integrations](integrations/README.md).
+
+### Keys
+
+| Keys | Action in `keys.json` | What it does |
+|---|---|---|
+| `cmd-m` | `mod.open:herdr-inline-markdown` | Opens the file picker; the chosen file opens in a new tab |
+| `cmd-shift-m` | `mod.open:herdr-inline-markdown-beside` | Opens the same picker; the chosen file opens beside the focused pane |
+
+Herdr's `mod.open` shows a mod as the overlay its `mod.json` describes, and a mod opened that way gets no props but
+the overlay's id, so it can't tell which key opened it. That is why there are two mods. `cmd-m` opens the Markdown
+mod itself, which takes an overlay with nothing else in its props as the picker for a new tab. `cmd-shift-m` opens
+`herdr-inline-markdown-beside`, an empty 2 px popup that, once it has started, closes itself and opens the Markdown
+mod's picker with `place: "pane"`. Both pickers look in the folder of the focused pane, in the active space.
+
+There is one picker at a time. A picker that opens closes any other still open (from the other key or the `+`
+menu), and with a picker open `cmd-shift-m` closes it, as a second `cmd-m` closes the one `cmd-m` opened. The open
+picker is named in the shared key `herdr-inline-markdown.picker`.
+
+`install.sh` merges the keys the way Herdr asks a shared mod's `keys.json` to be merged: a key your `keys.json`
+lacks is added at the end of its section; a key that already has the action stays; a key you bound to something
+else stays yours, and the script names it and how to take it over (`--replace-keys`). Everything else in the file
+stays as it was, byte for byte, and a `keys.json` that changes is saved under the backups folder first. The merge
+needs `node` (without it the script says so and leaves the file alone), and a `keys.json` that is there: Herdr's own
+holds its whole default keymap, so the script never makes one that would hold only these two keys, and says so.
+Its last lines say whether both keys open the picker now, and if not, how to get there.
+
+`cmd-m` is also the macOS shortcut for minimizing a window: Herdr's key wins while it is bound. Bind other keys to
+the two actions in `keys.json` if you want it back, and run `install.sh --no-keys` from then on (otherwise a run
+adds `cmd-m` again when it is unbound).
+
+Coming from the bindings of an earlier version (`cmd-m` and `cmd-shift-m` sent to a `my-tabs` clone), a plain
+`./install.sh` keeps them and says so; `./install.sh --replace-keys` moves them to the two actions above.
 
 ## Features
 
@@ -50,8 +92,9 @@ lists the arguments), or add the [integrations](integrations/README.md).
 
 - By default a file opens as a new pane to the right of the focused pane, so it sits next to the terminal in the same
   tab. The file already shown in a pane of that tab gets the focus instead of a second pane.
-- In a tab of its own it opens from a shift+click, from a right-click and "Open as new tab", or from `cmd-m` (all
-  added by the integrations). A file that already has a Markdown tab goes to that tab, in whichever space it is.
+- In a tab of its own it opens from `cmd-m`, or from a shift+click or a right-click and "Open as new tab" (added by
+  the integrations); `cmd-shift-m` opens one beside the focused pane. A file that already has a Markdown tab goes to
+  that tab, in whichever space it is.
   A tab whose panes are all Markdown is a **Markdown tab**: it renames, moves and closes like any other.
 - **The file picker** lists the markdown files of the folder of the focused pane (from a Markdown pane, its file's
   folder), else of the space's. Type to filter, Up and Down to move, Enter to open; recent files come first.
@@ -172,10 +215,10 @@ and each file's last state (Reading or Markdown).
 
 ## Integrations
 
-[`integrations/`](integrations/README.md) has one folder per optional integration, each with a patch or snippet and a
-README: the tab bar (picker commands, tab icon), the file panel (click a `.md` file), the pane header
-(file name and Markdown toggle), the `+` menu (a Markdown row) and the `cmd-m` / `cmd-shift-m` keys. They patch clones
-of Herdr's shipped mods, because Herdr replaces its own mods on every start.
+[`integrations/`](integrations/README.md) has one folder per optional integration, each with a patch and a README:
+the tab bar (Markdown tab icon and name), the file panel (click a `.md` file), the pane header (file name and
+Markdown toggle) and the `+` menu (a Markdown row). They patch clones of Herdr's shipped mods, because Herdr replaces
+its own mods on every start. The keys need none of them.
 
 ## Tests
 
@@ -186,15 +229,17 @@ npm test    # node 22+, nothing to install; never starts Herdr
 The tests cover the mod's pure functions (`lib.js`), its block model (`blocks.js`, run over the CommonMark and GFM
 spec examples, the documents in `test/fixtures/markdown/docs` and variants of each), the caret, page and
 diagram-frame arithmetic (`geometry.js`), the undo history, the page's drawing, opening a file, the picker, the
-editor, the diagram service, `install.sh`, the assets, and that the files integration's copy of `openMarkdown` acts
-like `open.js`. The renderer's tests run the installed copy and skip when there isn't one; to run them without touching
-your install, point `HERDR_MERMAID_HOME` at one.
+editor, the diagram service, the keys and the companion mod, `install.sh` and its merge of `keys.json`, the assets,
+and that the files integration's copy of `openMarkdown` acts like `open.js`. The renderer's tests run the installed
+copy and skip when there isn't one; to run them without touching your install, point `HERDR_MERMAID_HOME` at one.
+The patch tests apply each patch to Herdr 0.1.12's shipped mods, read from `${HERDR_APP_HOME:-~/.config/herdr-app}`
+(Herdr rewrites them on every start), and skip when the files there are not exactly 0.1.12's.
 
 ## Before open-sourcing
 
-- **Rename the mod.** `herdr-inline-markdown` is a personal prefix. It names the mod folder, the shared-state keys
-  (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`), the cache folder (`data/herdr-inline-markdown`), the key
-  contexts (`MdText2`...), the asset paths in the mod, the patches and the tests. The integrations also assume the
+- **Rename the mod.** `herdr-inline-markdown` is a personal prefix. It names the two mod folders, the shared-state keys
+  (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`, `.picker`), the cache folder (`data/herdr-inline-markdown`), the key
+  contexts (`MdText2`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
   clone names `my-tabs`, `my-files`, `my-pane` and `my-new-menu`. Rename them together, with one search and replace
   and `npm test`.
 - **Choose a license** and add `LICENSE`. `package.json` is `"private": true` and carries no author or license.
@@ -204,7 +249,8 @@ your install, point `HERDR_MERMAID_HOME` at one.
 - **Check the claims about Herdr.** Every patch and the install paths were made for Herdr 0.1.12. The patches were
   checked by applying them to copies of that version's shipped mods, also with the `mods/<name>/` asset paths
   rewritten the way a clone does it (simulated, not cloned by Herdr), and by loading the mod against test mocks;
-  nothing here has been run inside the app or in another version. Say so in the compatibility notes.
+  nothing here has been run inside the app or in another version. The keys rely on `mod.open` showing each mod as
+  its `mod.json` overlay says (the companion's 2 px frameless popup included). Say so in the compatibility notes.
 - **Icon provenance.** Thirteen icons are from lucide-static 1.69.0; four more match the path data of current
   Lucide icons, but the release they were copied from was not recorded. `spinner.svg` and `dots.svg` were drawn for
   this package, and `file-markdown.svg` is the Material Icon Theme's markdown icon.
@@ -215,6 +261,6 @@ your install, point `HERDR_MERMAID_HOME` at one.
   for versions without `module.registerHooks`, and the renderer needs 22.12.
 - **Remote machines are read-only.** A file on another machine opens, but is never edited. Say so near the top,
   or build it.
-- **`cmd-m` is the macOS shortcut for minimizing a window**, so the suggested key binding may shadow it. Pick
-  another default, or leave the keys to the reader.
+- **`cmd-m` is the macOS shortcut for minimizing a window**, and `install.sh` binds it by default (unless it is
+  taken). Pick another default, or make the keys opt-in.
 - **No LICENSE, CHANGELOG, CI or issue templates yet.**

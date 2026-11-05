@@ -1,14 +1,17 @@
 // The dialog behind the Markdown shortcuts and the "Markdown" row of the + menu: find a markdown file in a folder, or
 // make one, and open it beside the focused pane (props.place "pane") or in a tab (place "tab"). main.js starts this
-// class instead of the editor when the dialog's props say action "open" ({ place, space, folder, machine }). Without
-// a folder it looks where the person is: the folder of the Markdown file the focused pane shows, else that pane's
-// folder, else the space's.
+// class instead of the editor when the dialog's props say action "open" ({ place, space, folder, machine }), or when
+// `mod.open` gave it none (a tab, in the active space). Without a folder it looks where the person is: the folder of
+// the Markdown file the focused pane shows, else that pane's folder, else the space's.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { exec, home, props, shared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
+import { exec, home, props, shared, setShared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
 import { FIND_SCRIPT, basename, dirname, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
 import { openMarkdown } from "./open.js";
 
+// A picker that opens closes the one named here, and the cmd-shift-m mod closes it rather than open a second. Shared
+// state is persisted, so a name left by a quit is of an overlay Herdr no longer has.
+const OPEN_PICKER = "herdr-inline-markdown.picker";
 const ROW = 32, ROOM = 8; // a row's height; how many fit before the list has measured itself
 const HINTS = {
   pane: "↑↓ to move · ↵ to open beside · esc to close",
@@ -26,6 +29,8 @@ function fileOf(key) {
 export class Picker {
   init(initProps, cx) {
     const p = props() ?? initProps ?? {};
+    this.overlay = p.overlay ?? null;
+    this.takeOver();
     this.place = p.place === "pane" ? "pane" : "tab";
     this.anchor = focused()?.pane ?? null;
     this.space = p.space ?? spaces().find(s => s.active)?.id;
@@ -62,6 +67,15 @@ export class Picker {
   close() {
     this.closed = true;
     this.refocus?.cancel();
+    // close() comes after the overlay has gone, so the picker that took this one's place may already be named.
+    if (this.overlay && shared(OPEN_PICKER) === this.overlay) setShared(OPEN_PICKER, null);
+  }
+
+  takeOver() {
+    if (!this.overlay) return;
+    const other = shared(OPEN_PICKER);
+    setShared(OPEN_PICKER, this.overlay);
+    if (other && other !== this.overlay) try { closeOverlay(other); } catch {}
   }
 
   // --- Listing
@@ -165,7 +179,7 @@ export class Picker {
 
   // The dialog goes first: the file's pane or tab is what the person looks at next.
   open(file) {
-    closeOverlay((props() ?? {}).overlay);
+    closeOverlay(this.overlay);
     openMarkdown({ file, machine: this.machine, place: this.place, space: this.space, pane: this.anchor });
   }
 
@@ -195,7 +209,7 @@ export class Picker {
   }
 
   dismiss() {
-    closeOverlay((props() ?? {}).overlay);
+    closeOverlay(this.overlay);
   }
 
   // Moves the highlight and the list with it, so it never runs off the visible rows.

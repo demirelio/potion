@@ -9,8 +9,8 @@ Adds a **Markdown** row to the `+` popup. Two patches, because two shipped mods 
 
 ## What it does
 
-- A "Markdown" row under "Terminal" opens the file picker for a new tab. It shows the key bound to
-  `my-tabs.markdown:tab` (see [`../keys`](../keys/)) as its hint, or `M` when none is.
+- A "Markdown" row under "Terminal" opens the file picker for a new tab. It shows the global key bound to
+  `mod.open:herdr-inline-markdown` (`cmd-m`, from the plugin's `keys.json`) as its hint, or `M` when none is.
 - While the menu is open, pressing `m` does the same.
 - The popup is 31 px taller to fit the row.
 - The tab bar's `+` button opens `my-new-menu` instead of `new-menu`.

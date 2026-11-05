@@ -17,11 +17,16 @@ function sources(dir, out = []) {
   return out;
 }
 const all = [...sources(join(root, "mods")), ...sources(join(root, "tools")), ...sources(join(root, "test"))];
-const modFiles = readdirSync(join(root, "mods", "herdr-inline-markdown")).filter(f => f.endsWith(".js"));
-const code = name => readFileSync(join(root, "mods", "herdr-inline-markdown", name), "utf8");
+const MAIN = "herdr-inline-markdown", BESIDE = "herdr-inline-markdown-beside";
+const jsIn = mod => readdirSync(join(root, "mods", mod)).filter(f => f.endsWith(".js"));
+const modFiles = jsIn(MAIN);
+const code = (name, mod = MAIN) => readFileSync(join(root, "mods", mod, name), "utf8");
+// Every module Herdr loads, from both mods: the main mod's by file name, the companion's with its folder.
+const modules = [...modFiles.map(file => ({ mod: MAIN, file, label: file })), ...jsIn(BESIDE).map(file => ({ mod: BESIDE, file, label: `${BESIDE}/${file}` }))];
 
 test("there are sources to check", () => {
   assert.ok(modFiles.length >= 10 && all.length > modFiles.length);
+  assert.deepEqual(modules.filter(m => m.mod === BESIDE).map(m => m.file), ["main.js"]);
 });
 
 for (const file of all) {
@@ -33,9 +38,9 @@ for (const file of all) {
 
 // The mod guide's rules that a test can see in the source. The mod reads and watches the folder of the file it shows,
 // so watchFolder is allowed.
-for (const file of modFiles) {
-  test(`${file} follows the guide: no timers but cx.timer, no top-level await, no kept cx`, () => {
-    const source = code(file).replace(/\/\/.*$/gm, "");
+for (const { mod, file, label } of modules) {
+  test(`${label} follows the guide: no timers but cx.timer, no top-level await, no kept cx`, () => {
+    const source = code(file, mod).replace(/\/\/.*$/gm, "");
     assert.doesNotMatch(source, /\bsetTimeout\b|\bsetInterval\b/, "use cx.timer");
     assert.doesNotMatch(source, /^await\b/m, "no top-level await");
     const own = file === "keys.js" ? source.replace(/\bglobalThis\[INSTALLED\]/g, "") : source;
@@ -73,9 +78,9 @@ const topLevelCalls = source => source.split("\n").filter(l => /^\S/.test(l) && 
 
 // Every file the host loads as a mod module (everything but lib.js, which only node tests and the mod import): a call
 // at the top level would run while the mod loads, before there is a cx.
-for (const file of modFiles.filter(f => f !== "lib.js")) {
-  test(`${file} has no side effects at the top level: only declarations, exports and the class`, () => {
-    assert.deepEqual(topLevelCalls(code(file)), []);
+for (const { mod, file, label } of modules.filter(m => !(m.mod === MAIN && m.file === "lib.js"))) {
+  test(`${label} has no side effects at the top level: only declarations, exports and the class`, () => {
+    assert.deepEqual(topLevelCalls(code(file, mod)), []);
   });
 }
 

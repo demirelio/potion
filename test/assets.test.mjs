@@ -73,6 +73,14 @@ test("the diagram canvas's dot tile is a filled 240x240 pattern, tinted by the f
   }
 });
 
-test("mod.json places the mod nowhere by itself and lets it take the keyboard", () => {
-  assert.deepEqual(JSON.parse(readFileSync(join(modDir, "mod.json"), "utf8")), { place: "none", title: "Markdown", focusable: true });
+test("mod.json places the mod nowhere by itself, lets it take the keyboard, and has mod.open show it as a dialog", () => {
+  assert.deepEqual(JSON.parse(readFileSync(join(modDir, "mod.json"), "utf8")), {
+    place: "none", title: "Markdown", focusable: true, overlay: { kind: "dialog", width: 560, height: 460 },
+  });
+});
+
+test("the companion mod has no assets and names no file of any mod", () => {
+  const dir = join(root, "mods/herdr-inline-markdown-beside"), herdrs = /\.d\.ts$|^jsconfig\.json$|\.error$|^\.DS_Store$/;
+  assert.deepEqual(readdirSync(dir).filter(f => !herdrs.test(f)).sort(), ["main.js", "mod.json"], "besides what Herdr writes into a mod folder");
+  assert.doesNotMatch(readFileSync(join(dir, "main.js"), "utf8"), /mods\//);
 });

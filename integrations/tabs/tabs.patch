@@ -1,49 +1,13 @@
 --- a/main.js
 +++ b/main.js
-@@ -2,3 +2,3 @@
- import { h_flex } from "gpui-base";
--import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
-+import { spaces, panes, run, openOverlay, closeOverlay, nextCommand, theme, window, shared, layout, settings } from "herdr";
- 
-@@ -14,7 +14,29 @@
- export default class Tabs extends View {
--  init() {
-+  init(_props, cx) {
-     this.pressed = null;
-     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
-+    this.picker = null;
-+    // cx is used every turn: a replaced build's loop ends at its next cx use.
-+    cx.spawn(async cx => {
-+      for (;;) {
-+        const command = await nextCommand();
-+        try { this.markdownCommand(command); } catch {}
-+        cx.notify();
-+      }
-+    });
-   }
- 
-+  markdownCommand(command) {
-+    const place = /^\s*markdown(?:[:\s]\s*(tab|pane))?\s*$/i.exec(String(command))?.[1]?.toLowerCase();
-+    if (place === "pane") this.openPicker("pane");
-+    else if (place === "tab" || /^\s*markdown\s*$/i.test(String(command))) this.openPicker("tab");
-+  }
-+
-+  openPicker(place) {
-+    const space = spaces().find(s => s.active);
-+    if (!space) return;
-+    if (this.picker) try { closeOverlay(this.picker); } catch {}
-+    this.picker = openOverlay({ mod: "herdr-inline-markdown", kind: "dialog", width: 560, height: 460, props: { action: "open", place, space: space.id } });
-+  }
-+
-   // The side panel is remembered per space: switching shows that space's choice
-@@ -56,3 +78,5 @@
+@@ -56,3 +56,5 @@
        const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
 -      const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
 +      const inTab = panes().filter(p => p.tab === c.id);
 +      const markdown = inTab.length > 0 && inTab.every(p => p.mod === "herdr-inline-markdown");
 +      const name = /^tb\d+$/.test(c.name) ? markdown ? "Markdown" : program?.name ?? "Terminal" : c.name;
        return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
-@@ -67,2 +91,3 @@
+@@ -67,2 +69,3 @@
          .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
 +        .when(markdown, el => el.child(image("mods/herdr-inline-markdown/file-markdown.svg").size(14)))
          .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))

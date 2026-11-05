@@ -4,15 +4,15 @@ Changes the **`tabs`** mod (the tab bar) of Herdr 0.1.12. Clone it as `my-tabs`.
 
 ## What it does
 
-- The tab bar listens for the commands `markdown`, `markdown:tab` and `markdown:pane` and opens the Markdown
-  file picker (the dialog of the `herdr-inline-markdown` mod) for the active space. `markdown` and `markdown:tab` open the
-  chosen file in a tab of its own, `markdown:pane` beside the focused pane. Bind keys to them with
-  [`../keys`](../keys/).
-- A tab whose panes are all Markdown panes shows the file icon of the mod (`mods/herdr-inline-markdown/file-markdown.svg`)
-  and is called "Markdown" while it has no name of its own.
+A tab whose panes are all Markdown panes shows the file icon of the mod (`mods/herdr-inline-markdown/file-markdown.svg`)
+and is called "Markdown" while it has no name of its own. Nothing else changes: the tab bar opens nothing for the
+Markdown mod. The `cmd-m` and `cmd-shift-m` keys come with the plugin itself (`../../keys.json`, merged by
+`../../install.sh`).
 
-The command loop is `nextCommand()` in the tab bar's `init`: one mod reads the commands sent to it, so if your
-clone already has such a loop, add the `markdownCommand(command)` call to it instead of applying the loop twice.
+A clone patched by an earlier version of this patch also has a `nextCommand()` loop in `init`, with
+`markdownCommand` and `openPicker`, that served the old key bindings. Once `../../install.sh --replace-keys` has
+bound `cmd-m` and `cmd-shift-m` to `mod.open`, nothing sends those commands and that part can go; keep the loop
+itself if other code in your clone reads commands through it.
 
 ## Apply
 
