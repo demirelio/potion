@@ -65,7 +65,6 @@ function locate(text) {
 const lastOf = (list, test) => list.findLast(test) ?? null;
 const indentAt = (text, at) => /^[ \t]*/.exec(text.slice(text.lastIndexOf("\n", at - 1) + 1))[0];
 
-// How the file writes an object: its line ending, one level of indent, and the text between a key and its value.
 function styleOf(text, root) {
   const first = root.members[0];
   const memberIndent = first ? indentAt(text, first.key.start) : "";

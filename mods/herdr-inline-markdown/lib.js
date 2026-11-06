@@ -17,7 +17,7 @@ export function hash(text) {
   return (h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0");
 }
 
-// --- Paths: POSIX, as node's path.posix has them (dirname("a") is ".", basename("/") is "").
+// POSIX paths, as node's path.posix has them (dirname("a") is ".", basename("/") is "").
 
 const trimEnd = path => path.replace(/\/+$/, "") || (path.startsWith("/") ? "/" : "");
 
@@ -30,8 +30,8 @@ export function basename(path) {
   const p = trimEnd(String(path ?? ""));
   return p === "/" ? "" : p.slice(p.lastIndexOf("/") + 1);
 }
-// "." and "//" go, ".." takes the folder before it (above the root of an absolute path it goes, above a relative
-// one it stays). No trailing slash except for "/"; "" becomes ".".
+// ".." above the root of an absolute path goes, above a relative one it stays. No trailing slash except for "/"; ""
+// becomes ".".
 export function normalizePath(path) {
   const p = String(path ?? ""), abs = p.startsWith("/"), out = [];
   for (const part of p.split("/")) {
@@ -56,14 +56,12 @@ export function tildePath(path, home) {
   return p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : path;
 }
 
-// --- Links
-
 const decode = s => {
   try { return decodeURIComponent(s); } catch { return s; }
 };
 const UNKNOWN = { kind: "unknown" };
 
-// What a link in a document means. `file` is the document: a relative link is relative to its folder.
+// `file` is the document the link is in.
 // -> { kind: "web", url } | { kind: "markdown" | "file", path } | { kind: "anchor", id } | { kind: "unknown" }
 export function resolveLink(url, file) {
   let u = String(url ?? "").trim();
@@ -89,11 +87,8 @@ export function resolveLink(url, file) {
   return { kind: isMarkdown(path) ? "markdown" : "file", path };
 }
 
-// --- The picker
-
-// Entries are { path } (relative to the folder). An empty query keeps the order; else the query (blanks ignored) must
-// appear in the path as a subsequence, any case. Order: a match in the file name beats one only in the path,
-// a run of the query beats scattered letters, an earlier match beats a later one, a shorter path breaks ties.
+// Order: a match in the file name beats one only in the path, a run of the query beats scattered letters, an earlier
+// match beats a later one, a shorter path breaks ties.
 export function filterFiles(entries, query, limit = 200) {
   const q = String(query ?? "").toLowerCase().replace(/\s+/g, "");
   if (!q) return entries.slice(0, limit);
@@ -122,7 +117,7 @@ function isSubsequence(text, q) {
   return at === q.length;
 }
 
-// A name typed in the picker -> { name } (relative to the folder, ending in a markdown extension) or { error }.
+// -> { name } (relative to the folder, ending in a markdown extension) or { error }.
 export function newFileName(query) {
   const typed = String(query ?? "").trim();
   if (!typed) return { error: "Type a name" };
@@ -136,7 +131,6 @@ export function newFileName(query) {
   return { name: isMarkdown(name) ? name : `${name}.md` };
 }
 
-// untitled.md, untitled-2.md, untitled-3.md ... the first that `taken` (a Set of names) lacks.
 export function uniqueName(taken, base = "untitled.md") {
   const dot = base.lastIndexOf("."), stem = dot > 0 ? base.slice(0, dot) : base, ext = dot > 0 ? base.slice(dot) : "";
   let name = base;
@@ -160,14 +154,11 @@ function pathsFrom(stdout, cap) {
 export const markdownPathsFromGit = stdout => pathsFrom(stdout, 2000);
 export const markdownPathsFromFind = stdout => pathsFrom(stdout, 1000);
 
-// For a folder that is not in git: markdown files up to 5 levels down, without the places that only hold noise
-// (node_modules, .git, hidden folders, Library, .cache), at most 1000, NUL-separated and without the leading "./".
-// Run as exec("sh", ["-c", FIND_SCRIPT], { cwd }). The pipeline's exit status is tr's, so unreadable folders do not fail it.
+// For a folder that is not in git; skips node_modules, .git, hidden folders, Library and .cache. Run as
+// exec("sh", ["-c", FIND_SCRIPT], { cwd }). The pipeline's exit status is tr's, so unreadable folders do not fail it.
 export const FIND_SCRIPT = "find . -maxdepth 5 \\( -name node_modules -o -name .git -o -name Library -o -name .cache -o -name '.?*' \\) -prune -o -type f \\( "
   + ["md", "markdown", "mdown", "mkd", "mkdn", "mdx"].map(e => `-iname '*.${e}'`).join(" -o ")
   + " \\) -print 2>/dev/null | head -n 1000 | sed 's|^\\./||' | tr '\\n' '\\0'";
-
-// --- Editor state
 
 export const stats = text => {
   const s = String(text ?? "");
@@ -178,17 +169,15 @@ export const stats = text => {
 
 export const MODES = ["reading", "markdown"];
 const OLD_MODES = { read: "reading", edit: "markdown", split: "markdown" };
-// A remembered or commanded mode, the old Read / Edit / Split names included -> "reading" | "markdown" | null.
+// Remembered state may hold the Read / Edit / Split names.
 export const modeOf = stored => (MODES.includes(stored) ? stored : OLD_MODES[stored] ?? null);
 export const toggleMode = mode => (mode === "reading" ? "markdown" : "reading");
 
-// The line end new lines get: the file's first one, else "\n".
 export const eolOf = text => {
   const t = String(text ?? ""), nl = t.indexOf("\n");
   return nl > 0 && t.charCodeAt(nl - 1) === 13 ? "\r\n" : "\n";
 };
 
-// What the Markdown field shows: the document without its BOM and with each CRLF as "\n".
 // -> { value, bom, crlf }: `crlf` is the sorted field offsets of the "\n"s that are "\r\n" in the document.
 export function toSource(text) {
   const t = String(text ?? ""), bom = t.charCodeAt(0) === 0xfeff ? 1 : 0, crlf = [];
@@ -203,7 +192,6 @@ export function toSource(text) {
   return { value: value + t.slice(from), bom, crlf };
 }
 
-// How many entries of the sorted list are below x.
 const below = (list, x) => {
   let lo = 0, hi = list.length;
   while (lo < hi) {
@@ -213,10 +201,9 @@ const below = (list, x) => {
   return lo;
 };
 
-// The document offset of field offset f.
 export const sourceToDoc = (map, f) => f + map.bom + below(map.crlf, f);
 
-// The field offset of document offset d: inside a BOM or a CRLF it is the offset before it.
+// Inside a BOM or a CRLF the field offset is the one before it.
 export function docToSource(map, d) {
   let lo = 0, hi = Math.max(0, d - map.bom);
   while (lo < hi) {
@@ -226,9 +213,9 @@ export function docToSource(map, d) {
   return lo;
 }
 
-// The field changed `removed` characters at `at` into `inserted`; `prev` is the field character before `at`.
-// -> the document splice { start, end, insert }, with each "\n" that has no "\r" before it written as `eol`; `map` is
-// updated in place. A "\r\n" the field keeps whole, as a paste leaves it, is one document line end, mapped 1:1.
+// `prev` is the field character before `at`. -> the document splice { start, end, insert }, with each "\n" that has no
+// "\r" before it written as `eol`; `map` is updated in place. A "\r\n" the field keeps whole, as a paste leaves it, is
+// one document line end, mapped 1:1.
 export function sourceSplice(map, { at, removed, inserted }, eol, prev = "") {
   const start = sourceToDoc(map, at), end = sourceToDoc(map, at + removed);
   const lo = below(map.crlf, at), hi = below(map.crlf, at + removed), delta = inserted.length - removed;
@@ -252,7 +239,6 @@ export function sourceSplice(map, { at, removed, inserted }, eol, prev = "") {
   return { start, end, insert };
 }
 
-// A new list with `item` first, the earlier ones that `same(a, b)` calls equal removed, cut to `max`.
 export const remember = (list, item, same, max) => [item, ...(list ?? []).filter(x => !same(x, item))].slice(0, max);
 
 // The last `max` keys, in insertion order, as a new object.
@@ -261,8 +247,6 @@ export function trimMap(obj, max) {
   return Object.fromEntries(entries.length > max ? entries.slice(entries.length - max) : entries);
 }
 
-// --- Colors
-
 // [r, g, b] from "#rgb", "#rgba", "#rrggbb" or "#rrggbbaa" (the alpha is dropped), else null.
 function channels(color) {
   const m = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(typeof color === "string" ? color.trim() : "");
@@ -270,12 +254,12 @@ function channels(color) {
   const h = m[1].length <= 4 ? m[1].replace(/./g, "$&$&") : m[1];
   return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
 }
-// A background that wants dark text (perceived brightness, 0..255). Colors that are not hex count as dark.
+// Perceived brightness of 128 or more (of 255); a color that is not hex counts as dark.
 export function isLight(color) {
   const c = channels(color);
   return c ? (c[0] * 299 + c[1] * 587 + c[2] * 114) / 1000 >= 128 : false;
 }
-// `a` moved `t` (0..1) of the way to `b`, as "#rrggbb". Either one not hex: `a` as it is.
+// `t` is 0..1. Either color not hex: `a` as it is.
 export function mix(a, b, t) {
   const x = channels(a), y = channels(b);
   if (!x || !y) return a;
@@ -283,22 +267,17 @@ export function mix(a, b, t) {
   return `#${x.map((v, i) => Math.round(v + (y[i] - v) * w).toString(16).padStart(2, "0")).join("")}`;
 }
 
-// --- Diagrams
-
 const DIAGRAMS = ["flowchart", "sequence", "class", "state", "er", "gantt", "pie", "journey", "timeline", "mindmap", "gitGraph", "xyChart"];
-// Mermaid's own "redux-dark-color" theme, as the Mermaid Live Editor draws it. useMaxWidth is off: a PNG comes out at
-// its natural size.
+// Mermaid's "redux-dark-color" theme, as the Mermaid Live Editor draws it. useMaxWidth is off so a PNG comes out at its
+// natural size.
 export const mermaidConfig = () => ({
   theme: "redux-dark-color", htmlLabels: false,
   ...Object.fromEntries(DIAGRAMS.map(d => [d, { useMaxWidth: false }])),
 });
 
-// The frame around a diagram: the Live Editor's dark canvas, and slate for its edge and the controls on it.
-// `dot` is the Live Editor's grid dot, rgba(70, 70, 70, 0.275), laid over the canvas.
+// The Live Editor's dark canvas; `dot` is its grid dot, rgba(70, 70, 70, 0.275), laid over the canvas.
 export const DIAGRAM_COLORS = { canvas: "#020817", dot: "#151924", edge: "#1e293b", node: "#0f172a", line: "#94a3b8", text: "#f8fafc" };
 export const diagramCanvas = () => DIAGRAM_COLORS.canvas;
 
-// A diagram's name in the cache: changes with the renderer version, the theme's config and the source.
 export const diagramKey = (source, configJson, version) => hash(`${version}\0${configJson}\0${source}`);
-// A sharp picture's name: its diagram's key, the colour it is painted on and its scale.
 export const sharpName = (key, background, scale) => `${key}-${hash(background).slice(0, 6)}-x${Math.round(scale * 100)}`;

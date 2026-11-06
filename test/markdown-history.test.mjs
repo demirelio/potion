@@ -271,8 +271,12 @@ test("rebase moves an entry's carets with its offsets", () => {
 test("clear empties both stacks", () => {
   const h = createHistory();
   h.record("", { start: 0, end: 0, insert: "a" });
+  h.record("a", { start: 1, end: 1, insert: "b" });
+  h.undo();
+  assert.deepEqual([h.canUndo, h.canRedo], [true, true]);
   h.clear();
-  assert.equal(h.canUndo, false);
+  assert.deepEqual([h.canUndo, h.canRedo], [false, false]);
+  assert.equal(h.redo(), null);
   assert.equal(h.size, 0);
 });
 

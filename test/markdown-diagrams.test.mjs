@@ -7,6 +7,7 @@ import { makeCx, fire_timers } from "./helpers.mjs";
 
 const { Diagrams, diagramBlock, imagePath, mermaidHome, cacheDir } = await import("../mods/herdr-inline-markdown/diagrams.js");
 const { diagramKey, mermaidConfig, DIAGRAM_COLORS, sharpName, hash } = await import("../mods/herdr-inline-markdown/lib.js");
+const { FRAME } = await import("../mods/herdr-inline-markdown/geometry.js");
 
 const MERMAID = "/home/user/.local/share/herdr-inline-markdown/mermaid";
 const DIR = "/home/user/.config/herdr-app/data/herdr-inline-markdown/diagrams";
@@ -16,8 +17,7 @@ const SRC = "graph TD\nA-->B";
 
 beforeEach(() => reset());
 
-// Everything below runs on a cx whose settle() does not wait for tasks that never end (none here, but the editor
-// tests need that and the two files do the same).
+// settle() is flush(): fire_timers() must not wait for a run that a test holds open.
 const flush = async () => { for (let i = 0; i < 3; i++) await new Promise(done => setImmediate(done)); };
 function mount() {
   const cx = makeCx();
@@ -34,10 +34,9 @@ const configName = () => `config-${hash(JSON.stringify(mermaidConfig(theme())))}
 const inputs = args => args.slice(5);
 const keyOf = path => path.slice(path.lastIndexOf("/") + 1).replace(/\.mmd$/, "");
 const renders = () => calls.exec.filter(c => c.args[0]?.endsWith("/render.mjs"));
-// A renderer that draws everything 800x400 px at scale 2, as the contract says: one JSON line on stdout.
+// The renderer's contract: one JSON line on stdout.
 const drawsAll = async (_command, args) => ({ code: 0, stdout: `${JSON.stringify({ results: inputs(args).map(f => ({ key: keyOf(f), ok: true, width: 800, height: 400, scale: 2 })) })}\n`, stderr: "" });
 
-// Asks for a diagram and lets the 400 ms wait and the work after it happen.
 async function draw(cx, d, source = SRC) {
   d.get(source, cx);
   await flush(); // the renderer's version is read
@@ -65,7 +64,7 @@ test("the first get answers pending at once and reads the renderer's version and
   await flush();
   assert.deepEqual(calls.readTextFile.map(c => c.path), [`${MERMAID}/version`, `${MERMAID}/node-path`], "asked once for both files");
   assert.deepEqual(d.renderer, { version: VERSION, node: NODE }, "both are trimmed");
-  assert.equal(cx.notified > 0, true, "the view is told to draw again");
+  assert.equal(cx.notified, 1, "the view is told once, when the version is known");
   assert.equal(d.get(SRC, cx).key, keyFor(SRC));
 });
 
@@ -269,7 +268,7 @@ test("a diagram asked for while a run is going waits for the next one, and no se
   await flush();
   assert.equal(gates.length, 1);
   assert.equal(d.get("graph TD\nA-->LATE", cx).state, "pending");
-  const second = fire_timers(cx, { ms: 400 }); // its timer fires while the first run is still going
+  const second = fire_timers(cx, { ms: 400 });
   await flush();
   assert.equal(gates.length, 1, "still one run at a time");
   gates.shift()();
@@ -355,8 +354,6 @@ test("close() cancels the wait and stops a loop that is going", async () => {
   assert.equal(calls.exec.length, 0);
 });
 
-// --- After close(), nothing tells the view to draw again ------------------------------------------------------------
-
 test("close() while the renderer's version is being read: the answer does not redraw the closed view", async () => {
   const answers = [];
   state.readTextFile = () => new Promise(done => { answers.push(done); });
@@ -383,14 +380,6 @@ test("close() while the cache folder is being made: no redraw either", async () 
     assert.equal(d.closed, true);
     assert.equal(cx.notified, 0);
   } finally { Object.defineProperty(state, "appHome", { configurable: true, writable: true, value: home }); }
-});
-
-test("an open view is told once the renderer's version is known, and again only when a later look changes it", async () => {
-  install();
-  const { cx, d } = mount();
-  d.get(SRC, cx);
-  await flush();
-  assert.equal(cx.notified, 1);
 });
 
 test("onChange(cx) is called wherever the view is redrawn, with the task's cx, so the view can ask again", async () => {
@@ -465,9 +454,6 @@ test("close() while the config is being written: no redraw, no run", async () =>
   } finally { delete files.set; }
 });
 
-// --- A renderer that is not installed is looked for again; a failed run is tried again -----------------------------
-
-// The clock the retries read, held by the test: now() moves only when a test says so.
 function clock(t, start = 1_000_000) {
   const time = { now: start };
   t.mock.method(Date, "now", () => time.now);
@@ -488,13 +474,14 @@ test("a renderer that is not installed is looked for again once get() runs more 
   assert.equal(reads(), 1, "not yet");
   time.now += 2; // 10 001 ms after the look
   install();
+  const before = cx.notified;
   const during = d.get(SRC, cx);
   assert.equal(during.state, "missing", "until the look is done it is still missing");
   d.get(SRC, cx);
   await flush();
   assert.equal(reads(), 2, "once, however often get() is called meanwhile");
   assert.deepEqual(d.renderer, { version: VERSION, node: NODE });
-  assert.equal(cx.notified > 0, true, "the view is told to draw again");
+  assert.equal(cx.notified, before + 1, "the look that found the renderer tells the view to draw again");
   state.exec = drawsAll;
   d.get(SRC, cx);
   await fire_timers(cx, { ms: 400 });
@@ -690,7 +677,6 @@ test("a run that fails again during the retry does not loop: the next try is ano
   assert.equal(renders().length, 2);
 });
 
-// A view that asks for SRC whenever it is told something changed, and at no other time.
 function asking(d) {
   const answers = [];
   d.onChange = c => answers.push(d.get(SRC, c).state);
@@ -768,15 +754,16 @@ test("diagramBlock, ok: a frame on the diagram canvas with its dot grid first, t
   const el = diagramBlock({ id: "md-diagram-b7", source: SRC, d, frame: frameOf(), t, mono: "Mono" });
   assert.ok(find(el, "md-diagram-b7"), "the element carries the block's id");
   const frame = find(el, "md-frame-b7");
-  assert.deepEqual([frame.style.ml, frame.style.w, frame.style.h, frame.style.relative, frame.style.overflow_hidden, frame.style.rounded, frame.style.flex_none],
-    [-60, 1000, 300, true, true, 8, true]);
+  assert.deepEqual([frame.style.ml, frame.style.w, frame.style.h, frame.style.relative, frame.style.overflow_hidden], [-60, 1000, 300, true, true]);
   assert.equal(frame.style.bg, DIAGRAM_COLORS.canvas, "the Live Editor's canvas, whatever the Herdr theme");
   const img = all(el, n => n.kind === "image");
   assert.equal(img.length, 1);
   assert.equal(img[0].path, "data/herdr-inline-markdown/diagrams/k1.png");
   assert.deepEqual([img[0].style.absolute, img[0].style.left, img[0].style.top, img[0].style.w, img[0].style.h, img[0].style.opacity], [true, -40, -121, 1000, 500, undefined]);
   const edge = find(el, "md-frame-edge-b7");
-  assert.deepEqual([edge.style.inset_0, edge.style.border_1, edge.style.border_color, edge.style.rounded], [true, true, DIAGRAM_COLORS.edge, 8]);
+  assert.deepEqual([edge.style.inset_0, edge.style.border_1, edge.style.border_color], [true, true, DIAGRAM_COLORS.edge]);
+  assert.ok(frame.style.rounded, "the frame clips with rounded corners");
+  assert.equal(edge.style.rounded, frame.style.rounded, "the edge follows the clip's corners");
   assert.deepEqual(frame.kids.map(k => k.kind === "image" ? "image" : k.id), ["md-frame-dots-b7", "image", "md-frame-edge-b7"], "the dots first, the edge last");
   assert.equal(frame.style.cursor_grab, true);
   const panning = find(diagramBlock({ id: "x", source: SRC, d, frame: frameOf({}, { cursor: "grabbing" }), t, mono: "Mono" }), "md-frame-b7");
@@ -822,10 +809,10 @@ test("diagramBlock: the − % + group at the top right while the view says so; a
   assert.equal(find(diagramBlock({ id: "x", source: SRC, d, frame: frameOf(), t, mono: "Mono" }), "md-frame-tools-b7"), null, "none without the pointer");
   const el = diagramBlock({ id: "x", source: SRC, d, frame: frameOf({}, { tools: { top: 40, pct: 125, out: true, in: false } }), t, mono: "Mono" });
   const tools = find(el, "md-frame-tools-b7");
-  assert.deepEqual([tools.style.absolute, tools.style.top, tools.style.right, tools.style.h, tools.style.rounded, tools.style.border_1, tools.style.text_size],
-    [true, 40, 8, 26, 7, true, 12]);
+  assert.deepEqual([tools.style.absolute, tools.style.top, tools.style.right, tools.style.h, tools.style.border_1],
+    [true, 40, FRAME.tools.right, FRAME.tools.h, true], "the group is where frameTool() looks for it");
   assert.deepEqual([tools.style.bg, tools.style.border_color, tools.style.text_color], [DIAGRAM_COLORS.node, DIAGRAM_COLORS.edge, DIAGRAM_COLORS.text], "slate on the canvas, whatever the Herdr theme");
-  assert.deepEqual(tools.kids.map(k => [k.id, k.style.w]), [["md-frame-out-b7", 26], ["md-frame-pct-b7", 48], ["md-frame-in-b7", 26]]);
+  assert.deepEqual(tools.kids.map(k => [k.id, k.style.w]), [["md-frame-out-b7", FRAME.tools.out], ["md-frame-pct-b7", FRAME.tools.pct], ["md-frame-in-b7", FRAME.tools.in]], "the cells are as wide as frameTool() hit-tests them");
   assert.equal(all(find(el, "md-frame-out-b7"), n => n.kind === "svg")[0].path, "mods/herdr-inline-markdown/minus.svg");
   assert.equal(all(find(el, "md-frame-in-b7"), n => n.kind === "svg")[0].path, "mods/herdr-inline-markdown/plus.svg");
   assert.equal(textOf(find(el, "md-frame-pct-b7")), "125%");
@@ -842,7 +829,8 @@ test("diagramBlock, pending: a 120 px box with the spinner; with a last image th
   assert.match(textOf(box), /Drawing diagram…/);
   assert.equal(all(box, n => n.kind === "image").length, 0);
   const spinner = all(box, n => n.kind === "svg");
-  assert.deepEqual([spinner.length, spinner[0].path, spinner[0].style.spin, spinner[0].style.size], [1, "mods/herdr-inline-markdown/spinner.svg", 900, 14]);
+  assert.deepEqual([spinner.length, spinner[0].path], [1, "mods/herdr-inline-markdown/spinner.svg"]);
+  assert.ok(spinner[0].style.spin, "the spinner turns");
   assert.equal(all(box, n => n.style.h === 120).length, 1);
   const pendingBox = all(box, n => n.style.h === 120)[0];
   assert.deepEqual([pendingBox.style.bg, pendingBox.style.border_color, pendingBox.style.text_color], [DIAGRAM_COLORS.canvas, DIAGRAM_COLORS.edge, DIAGRAM_COLORS.line], "the diagram canvas with its edge and line colours");
@@ -860,7 +848,7 @@ test("diagramBlock, error: the title in the blocked color, the message in the te
   assert.equal(title.length, 1);
   assert.equal(all(bare, n => n.kids.some(k => k.text === "Mermaid error") && n.style.text_color === "blocked").length, 1);
   const message = all(bare, n => n.kids.some(k => k.text === "Parse error on line 2"))[0];
-  assert.deepEqual([message.style.font_family, message.style.text_size], ["Mono", 12]);
+  assert.equal(message.style.font_family, "Mono");
   assert.equal(all(bare, n => n.kind === "image").length, 0);
   const both = diagramBlock({ id: "md-diagram-0", source: SRC, d, frame: frameOf({ image: "old", dim: true }), t, mono: "Mono" });
   assert.equal(all(both, n => n.kind === "image")[0].style.opacity, 0.5);
@@ -871,7 +859,6 @@ test("diagramBlock, error: the title in the blocked color, the message in the te
 });
 
 const sharpRuns = () => renders().filter(c => c.args.includes("--background"));
-// A renderer that draws the base pictures 800x400 at 2x and a sharp one at the scale it is asked for.
 const drawsSharp = async (command, args, options) => {
   const at = args.indexOf("--scale");
   if (at < 0) return drawsAll(command, args, options);

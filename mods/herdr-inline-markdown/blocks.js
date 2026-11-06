@@ -1,6 +1,5 @@
-// The block model of a markdown document: CommonMark 0.31 block structure plus GFM tables, task items and footnote
-// definitions, cut into the blocks the page draws and edits. Every edit is one splice of the source, so the bytes
-// outside it never change. Pure: no imports, so node tests load it as it is.
+// CommonMark 0.31 blocks plus GFM tables, task items and footnote definitions. Every edit is one splice of the
+// source, so the bytes outside it never change. No imports, so node tests load it as it is.
 //
 // Offsets are UTF-16 indices into the text. A block's `lines`, `suffix` and `tail` are relative to its `start`;
 // every other offset is absolute.
@@ -57,8 +56,8 @@ export const isText = b => TEXT_KINDS.has(b.kind);
 export const applySplice = (text, s) => text.slice(0, s.start) + s.insert + text.slice(s.end);
 
 const CHUNK = 4096;
-// The common prefix and suffix of `a` and `b`: `a.slice(at, at + removed)` became `inserted`. Compared in chunks of
-// 4096 characters first, so a 1 MiB text costs a few hundred native compares and one short character loop.
+// `a.slice(at, at + removed)` became `inserted`. Compared in chunks first, so a 1 MiB text costs a few hundred native
+// compares and one short character loop.
 export function diff(a, b) {
   const n = Math.min(a.length, b.length);
   let p = 0;
@@ -887,9 +886,8 @@ export function parse(text, opts = {}) {
   return docOf(t, blocks, opts);
 }
 
-// parse, for a text too long to parse in one call: a generator that yields whenever `pause()` is true at the start of
-// a block at the top level (no list, quote or paragraph open there, so the parser starts afresh) and returns the Doc
-// parse returns.
+// A generator for a text too long to parse in one call: it yields whenever `pause()` is true at the start of a
+// top-level block (nothing open there, so the parser starts afresh) and returns the Doc parse returns.
 export function* parseInSteps(text, opts = {}, pause = () => false) {
   const t = String(text ?? ""), blocks = [];
   for (let from = 0; ;) {
@@ -1576,7 +1574,7 @@ export function removeRange(doc, first, last0) {
   return guard(doc, s, [seamBefore(doc, k, s.start + s.insert.length)]);
 }
 
-// toParagraph(doc, b, at): the caret is the paragraph's start, or where `at` (a document offset in b's field) went.
+// The caret is the paragraph's start, or where `at` (a document offset in b's field) went.
 export function toParagraph(doc, b, at) {
   const text = doc.text, eol = doc.eol, l0 = absLine(b, 0), mapped = at !== undefined;
   let s, seams;
@@ -1641,24 +1639,22 @@ function holdingBlock(doc, at) {
   return found < 0 ? null : bl[found];
 }
 
-// The fusion guard at the seams of block b's subtree, after splice s rewrote it.
 function guardBlock(doc, b, s) {
   const after = b.subtreeEnd + s.insert.length - (s.end - s.start), seams = [seamBefore(doc, b.index, after)];
   if (lineStartAt(doc.text, b.start)) seams.push(b.start);
   return guard(doc, s, seams);
 }
 
-// One splice of `text` that does p, then q on what p left.
 function composed(text, p, q) {
   const x = diff(text, applySplice(applySplice(text, p), q));
   return { start: x.at, end: x.at + x.removed, insert: x.inserted, caret: q.caret };
 }
 
-// retype(doc, b, to, at): text block b becomes the text block `to` ({ kind: "paragraph" | "heading" | "item" |
-// "quote", level, list: "bullet" | "ordered" | "task" }) with its text, `at` (a document offset in its field) mapped
-// to the caret. A paragraph gets the marker before its text, and a heading's text on one line; a heading or an item
-// gets another marker; anything else becomes a paragraph first. Null when what it makes is not a `to` block, or the
-// blocks beside it change (an item with nothing on its marker line would take in the block below it).
+// `to` is { kind: "paragraph" | "heading" | "item" | "quote", level, list: "bullet" | "ordered" | "task" }; `at` (a
+// document offset in b's field) is mapped to the caret. A paragraph gets the marker before its text, and a heading's
+// text on one line; a heading or an item gets another marker; anything else becomes a paragraph first. Null when what
+// it makes is not a `to` block, or the blocks beside it change (an item with nothing on its marker line would take in
+// the block below it).
 export function retype(doc, b, to, at) {
   if (!isText(b)) return null;
   const s = retypeIn(doc, b, to, at, 0);
@@ -1746,7 +1742,6 @@ export function mergeIntoPrevious(doc, a, b) {
 // Delete at the end of a makes the same splice as Backspace at the start of b.
 export const mergeNext = mergeIntoPrevious;
 
-// split(doc, b, s, e): the field range [s, e) becomes a line break that starts a new block.
 export function split(doc, b, s, e = s) {
   if (!isText(b)) return null;
   const f = field(doc, b), v = f.value, text = doc.text, eol = doc.eol;
@@ -1800,11 +1795,10 @@ function guardedLines(doc, b, sp, begin, end) {
   const out = seams.length ? guard(doc, sp, seams) : sp;
   return out && neighboursKept(doc, out, b) ? out : null;
 }
-// The seam before block n once splice sp is made, when n starts a line.
 const seamAt = (doc, sp, n) => (n && lineStartAt(doc.text, n.start) ? { at: n.start + (n.start >= sp.end ? sp.insert.length - (sp.end - sp.start) : 0), depth: n.depth } : null);
 
-// paste(doc, b, s, e, clip): clipboard text into the field range [s, e) of b. Lines whose first one starts a block
-// arrive as blocks (insertLines); other lines join the text at the caret.
+// Clipboard text goes into the field range [s, e) of b. Lines whose first one starts a block arrive as blocks
+// (insertLines); other lines join the text at the caret.
 export function paste(doc, b, s, e, clip) {
   const t = String(clip ?? "").replace(/\r\n/g, "\n"), f = field(doc, b);
   if (!isText(b) || !t.includes("\n")) return type(f, f.value.slice(0, s) + t + f.value.slice(e), s);
@@ -1814,10 +1808,10 @@ export function paste(doc, b, s, e, clip) {
   return guardedLines(doc, b, sp, -1, sp && seamAt(doc, sp, doc.blocks[b.index + 1]));
 }
 
-// insertLines(doc, b, s, e, lines): markdown lines as blocks of their own in place of the field range [s, e) of text
-// block b. With nothing left beside the range they replace b, marker included; else b is split there like Enter
-// splits it, the lines between the halves, a blank line apart. They never take an item's sub-blocks: with no text
-// after the range they go after them, and they do not replace an item that has some (null).
+// The lines become blocks of their own in place of the field range [s, e) of text block b. With nothing left beside
+// the range they replace b, marker included; else b is split there like Enter splits it, the lines between the halves,
+// a blank line apart. They never take an item's sub-blocks: with no text after the range they go after them, and they
+// do not replace an item that has some (null).
 export function insertLines(doc, b, s, e, lines) {
   const f = field(doc, b), text = doc.text, eol = doc.eol, bl = doc.blocks, pp = linesPrefix(b), n = bl[b.index + 1];
   const guarded = (sp, begin, end) => guardedLines(doc, b, sp, begin, end), after = (sp, x) => seamAt(doc, sp, x);
@@ -1944,7 +1938,7 @@ export function unnest(doc, b) {
   return rewritten(doc, { start: b.start, end: b.end, insert: out, caret: b.start + removeColumns(first, w).length });
 }
 
-// move(doc, b, dir): b's subtree swaps with the previous (dir < 0) or next sibling's subtree, each with its gap.
+// b's subtree swaps with the previous (dir < 0) or next sibling's subtree, each with its gap.
 export function move(doc, b, dir) {
   if (midLine(doc, b)) return null;
   const other = dir < 0 ? prevSibling(doc, b) : nextSibling(doc, b);

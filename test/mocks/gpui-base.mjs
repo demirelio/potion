@@ -1,4 +1,4 @@
-// gpui-base as the mods import it: flex containers and the read-only code view.
+// gpui-base as the mods import it: flex containers, text fields, and the rich-text and code views.
 import { makeElement } from "./element.mjs";
 
 export const h_flex = () => makeElement("h_flex");
@@ -25,21 +25,15 @@ export const Editor = { new: state => makeElement("editor", { state }) };
 let live = null;
 export function liveFields(on, cx = null) { live = on ? { cx } : null; }
 
-// Text inputs (Input + InputState, Textarea + TextareaState). The state holds the text and the handlers a mod
-// registered with on(); nothing is drawn. A test types with edit(text, cx) (sets the value, then runs the
-// "change" handler, as an edit does) and presses Enter with submit(cx). set_value() and replace() change the
-// text without firing "change" (so a test sees what the mod does by itself), unless fields are live.
-// replace() takes the whole value until set_selected_range() gives the state a selection; from then on it replaces
-// the selection and leaves the caret after what it wrote. `log` lists the calls that change the text or selection.
-// undo(cx) is the field's own Cmd+Z (p2 step3): back to the text before the last edit() or replace(), reported as a
-// change; set_value() clears what it can go back to.
+// set_value() and replace() fire no "change" unless fields are live. replace() takes the whole value until
+// set_selected_range() gives a selection, then replaces it and leaves the caret after what it wrote.
 class TextState {
   static new(options = {}) {
     const state = new this();
     state.options = options;
     state.text = options.value ?? "";
-    state.focused = false; // true once focus() was asked for
-    state.handlers = {}; // event name -> the function given to on()
+    state.focused = false;
+    state.handlers = {};
     state.selection = null;
     state.log = [];
     state.undos = [];
@@ -78,7 +72,6 @@ class TextState {
     this.focused = true;
     if (live && !was) setImmediate(() => this.handlers.focus?.({}, live.cx));
   }
-  // The field losing the keyboard, as a click elsewhere does: "blur" goes to its handler.
   blur(cx) {
     this.focused = false;
     return this.handlers.blur?.({}, cx);
@@ -90,10 +83,9 @@ class TextState {
     this.text = text;
     return this.handlers.change?.({}, cx);
   }
-  // The user puts the caret or a selection somewhere (a click, a drag, an arrow key): nothing is reported.
+  // A click, a drag or an arrow key: nothing is reported to the mod.
   select(start, end = start) { this.selection = { start: Math.min(start, end), end: Math.max(start, end) }; }
-  // The user types `text` over the selection (at the end when there is none); the change is reported as an edit's,
-  // or after the current handler when fields are live.
+  // Types over the selection (at the end when there is none); with live fields the change comes after the current handler.
   type(text, cx) {
     const { start, end } = this.selection ?? { start: this.text.length, end: this.text.length };
     this.undos.push(this.text);
@@ -120,7 +112,6 @@ export class TextareaState extends TextState {
 export const Input = { new: state => makeElement("input", { state }) };
 export const Textarea = { new: state => makeElement("textarea", { state }) };
 
-// Rich text. The element is found by the id TextView.html / .markdown was given and carries what it was given.
 export const TextView = {
   html: (id, html) => makeElement("textview", { id: String(id), html }),
   markdown: (id, markdown) => makeElement("textview", { id: String(id), markdown }),

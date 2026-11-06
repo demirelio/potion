@@ -1,7 +1,5 @@
-// A Markdown pane, alone in a tab or beside others: one file, shown as a page (Reading) or as its source (Markdown).
-// The file on disk is the truth: what is typed is written back a moment later, only over the text this pane last
-// saw there (so nothing another program wrote is overwritten without asking), and a change on disk shows up here as
-// soon as the folder watcher says so.
+// A Markdown pane: one file, shown as a page (Reading) or as its source (Markdown). The file on disk is the truth:
+// typing is saved a moment later, only over the text this pane last saw there, and a change on disk shows up here.
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
@@ -15,16 +13,15 @@ import { Diagrams } from "./diagrams.js";
 import { ACTIONS, SOURCE, installKeys } from "./keys.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 
-const SAVE_MS = 700; // quiet time after typing before the file is saved
-const LOCAL_POLL = 4000, REMOTE_POLL = 5000; // looking at the file again when nothing can tell us it changed
+const SAVE_MS = 700;
+const LOCAL_POLL = 4000, REMOTE_POLL = 5000;
 const MODES_KEY = "herdr-inline-markdown.modes", MODES_MAX = 200;
-// Shared with the my-pane header of integrations/pane-header (mods can't import each other, so it has the same names).
+// Same names as in the my-pane header mod: mods can't import each other.
 const HEADS_KEY = "herdr-inline-markdown.heads", TOGGLE_KEY = "herdr-inline-markdown.toggle", HEADER_MOD = "my-pane";
 const MARKDOWN_ICON = "mods/herdr-inline-markdown/file-markdown.svg";
-const WIDE = 560; // below this width the toggle loses its label
-const BIG = 50000; // a buffer longer than this is counted when it settles, not on every key
-// A text this long is parsed on opening in slices of SLICE_MS, between which the app goes on: one parse of 1 MiB
-// holds the whole app up for a third of a second or more.
+const WIDE = 560;
+const BIG = 50000; // a longer buffer is counted when it settles (a save timer, a load, a mode switch), not on every key
+// Texts this long are parsed in SLICE_MS slices so the app keeps running: one parse of 1 MiB blocks it for 330 ms or more.
 const SLICE_FROM = 200 * 1024, SLICE_MS = 20;
 const SANS = ".SystemUIFont";
 // A character no file holds in practice: the caret readout writes it at the selection and finds it again.
@@ -43,12 +40,11 @@ const CAL_SAMPLE = "abcdefghij klmnopqrst uvwxyzABCD EFGHIJK";
 const CAL_MONO = "0123456789abcdefghijklmnopqrstuvwxyz{}()";
 // A field takes the keyboard once it is drawn: focus is asked for again this long after an activation.
 const REFOCUS_MS = 80;
-// After a mouse-up in the field its caret is read this long after, when the field has placed it.
+// The field places its caret a moment after a mouse-up: it is read only then.
 const READ_AFTER_UP_MS = 30;
-// An armed field that measures further than this from the block it replaced is not used for that block again.
+// px an armed field may measure off from the block it replaced before that block is never armed again.
 const ARM_SLACK = 1;
 const NO_CARET = { start: 0, end: 0, valid: false };
-// Up to this many blocks the Column mounts every block; above it, only those within the margin of the viewport.
 const MOUNT_ALL = 400;
 const WINDOW_MARGIN = 1500, INLINE_MARGIN = 800;
 // The page is laid out before the viewport reports its size: the first window is made for a page this tall.
@@ -131,9 +127,9 @@ const beforeKey = (key, kind) => (doc, text) => {
 };
 const STEPS = { indent, outdent, paragraph: toParagraph, nest, unnest };
 const UNDOES = { indent: "outdent", outdent: "indent", nest: "unnest", unnest: "nest" };
-// Splice `s` of doc, then each step (a name in STEPS, or (doc, block, caret) -> splice) on the block holding the caret
-// the splice before it left: -> { splice (one splice of doc's text), doc (after it), block (the one the steps worked
-// on) }, or null when one of them does not apply.
+// Splice `s` of doc, then each step (a name in STEPS, or (doc, block, caret) -> splice) on the block at the caret the
+// splice before it left. -> { splice (one splice of doc's text), doc (after it), block (the one the steps worked on) },
+// or null when a step does not apply.
 function chain(doc, s, steps) {
   if (!s) return null;
   let d = reparse(doc, s), at = s.caret;
@@ -146,14 +142,12 @@ function chain(doc, s, steps) {
   const x = diff(doc.text, d.text);
   return { splice: { start: x.at, end: x.at + x.removed, insert: x.inserted, caret: at }, doc: d, block: holdingIn(d, at) };
 }
-// What a pending block draws as: the block it would be once written, with no text yet.
 function pendingRecord(key, b) {
   return Object.assign(b.copy(), {
     key, start: -1, end: -1, gapEnd: -1, subtreeEnd: -1, index: -1, lines: [], content: "", render: "", source: "",
     armable: false, image: false, task: b.task ? { checked: false, offset: -1 } : null,
   });
 }
-// Enter on a paragraph holding only these makes a code block or a rule.
 const FENCE_TYPED = /^(```|~~~)[^`\n]*$/;
 const RULE_TYPED = /^(---|\*\*\*|___)$/;
 // The field of a fenced block or front matter with no line between its fences shows an empty one there, so that the
@@ -166,9 +160,8 @@ const withInnerLine = (b, value) => {
   return `${value.slice(0, end)}\n${value.slice(end)}`;
 };
 
-// What `herdr-app check` opens (it gives no props, and every opener passes a file): every kind of block, drawn
-// through renderBlock in the root, with block 2 in the field and its slash menu open, the spare field over block 4
-// and the diagram in a frame wider than the column, its − % + group showing.
+// What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, with block 2 in the
+// field and its slash menu open, the spare field over block 4, and a diagram frame wider than the column.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
@@ -196,9 +189,8 @@ export class Editor {
     this.machine = props?.machine ?? null;
     this.remote = Boolean(this.machine); // a file on another machine is read and followed, never written
     this.mode = "reading";
-    // disk: the text the file had when we last looked (what a save must still find there); text: the buffer;
-    // saving: the text being written now; conflict: what the file holds when it is not what we expected; relook: the
-    // file changed while a write was out, and is looked at again once it answers.
+    // disk: the text the file had when we last looked (what a save must still find there); saving: the text being
+    // written; conflict: what the file holds when it is not what we expected; relook: a look moved `disk` mid-write.
     this.disk = ""; this.text = ""; this.settled = "";
     this.saving = null; this.conflict = null; this.missing = false; this.saveError = null;
     this.loaded = false; this.error = null; this.closed = false; this.locked = null;
@@ -206,50 +198,48 @@ export class Editor {
     this.parsing = false; this.readWhenParsed = false;
     this.saveTask = null; this.pollTask = null;
     this.size = null;
-    this.claimed = null; // the pane this copy is drawn in, once known (see claim)
+    this.claimed = null;
     // The header's last toggle request is old news to a copy that starts after it.
     this.toggleSeen = shared(TOGGLE_KEY)?.n ?? null; this.headSig = null; this.headedFor = undefined; this.headedIs = false;
     this.countsFor = null; this.countList = { words: 0, lines: 0 };
     this.fonts = { sans: SANS, mono: monoFont() };
     this.handle = cx.focus_handle();
-    // Herdr parses every context of the table: in the check fixture a refused table fails `herdr-app check`; an
-    // editor of a file goes on without it, its fields typing as plain text fields do.
+    // Herdr parses every context of the table: a refused table fails `herdr-app check`, while an editor of a file goes
+    // on without it, its fields typing as plain text fields do.
     this.keysBound = true;
     try { installKeys(cx); } catch (e) { if (!this.file) throw e; this.keysBound = false; }
     // Every change of the buffer must reach it, ours as entries and outside ones as a rebase: an entry's offsets are
     // only good for the text it left.
     this.history = createHistory();
 
-    // The Markdown state: the source field shows `srcFor` mapped by `src`; `srcSeen` is its value as we last saw or
-    // set it, `srcCaret` its caret while we know it.
+    // Markdown state: the source field shows `srcFor` mapped by `src`; `srcSeen` is its value as last seen or set,
+    // `srcCaret` its caret while known.
     this.source = TextareaState.new({ value: "" });
     this.source.set_soft_wrap(true);
     this.source.on("change", (_e, cx) => this.sourceChanged(cx));
     this.src = toSource(""); this.srcFor = ""; this.srcSeen = ""; this.srcCaret = null;
     this.viewer = this.remote ? EditorState.new({ language: "markdown", readonly: true, line_numbers: false, folding: false, soft_wrap: true, font_family: monoFont(), font_size: 13.5 }) : null;
 
-    // Reading: the blocks of `doc` (and a pending empty block among them), drawn by one Block entity each inside the
-    // Column entity, in a viewport scrolled by `offset`. `sums` are the block tops from their measured (or estimated)
-    // heights; `at` maps a key to its index in `blocks`; `win` is what the Column mounts of a long page (windowFor).
+    // Reading: one Block entity per block of `doc` (and a pending one) inside the Column entity, scrolled by `offset`.
+    // `sums` are the block tops from measured or estimated heights; `at` maps a key to its index in `blocks`; `win` is
+    // what the Column mounts of a long page (windowFor).
     this.doc = null; this.blocks = []; this.at = new Map(); this.order = []; this.diagramKeys = []; this.data = new Map(); this.entities = new Map();
     this.heights = new Map(); this.estimates = new WeakMap(); this.sums = [0]; this.offset = 0; this.viewport = null; this.reveal = null; this.win = null; this.winTimer = null;
     this.press = null; this.thumb = null; this.pointer = null; this.fieldPress = null; this.fieldHeld = null; this.dragFrom = null; this.linked = false;
     this.diagrams = new Diagrams();
     this.diagrams.onChange = cx => this.diagramsChanged(cx);
     this.shown = new Map(); this.good = new Map(); // block key -> what the diagram answered, and its last image
-    // Diagram frames: `frames` the view ({ z, x, y }) of each frame panned or zoomed (none: its starting view),
-    // `pan` a press on a frame ({ key, from, x0, y0, moved }), `hoverFrame` the frame under the pointer and
-    // `hoverTop` where its − % + group sits, `gesture` the wheel gesture going on, `zoomed` the frames zoomed since
-    // the zoom last rested.
+    // Diagram frames: `frames` the view ({ z, x, y }) of each frame panned or zoomed (none: its starting view), `pan` a
+    // press on a frame ({ key, from, x0, y0, moved }), `hoverTop` where the hovered frame's − % + group sits, `gesture`
+    // the wheel gesture going on, `zoomed` the frames zoomed since the zoom last rested.
     this.frames = new Map(); this.pan = null; this.hoverFrame = null; this.hoverTop = null; this.gesture = null;
     this.zoomed = new Set(); this.settleTimer = null;
 
-    // The block being edited: `field` is its text state and `spare` the one armed over the block under the pointer;
-    // the two trade places when a press lands in the spare. `f` is the block's field map (kept in step by the typing
-    // splice), `seen` the field's value as last seen or set, `opened` its value when the block was opened, `known`
-    // the caret while we know it, `act` the activation's number. `stale` says the text was typed into since `doc`.
-    // `armedValue` is what the spare holds for the armed block; `armedNewText` says that block's text changed while
-    // it was armed, so it has no rendered height for its text.
+    // The edited block: `field` is its text state, `spare` the one armed over the block under the pointer (they trade
+    // places when a press lands in the spare). `f` is its field map, `seen` the field's value as last seen or set,
+    // `opened` its value when the block was opened, `known` the caret while known, `act` the activation number,
+    // `stale` that text was typed since `doc`. `armedValue` is what the spare holds; `armedNewText` that the armed
+    // block's text was replaced while armed, so it has no rendered height for it.
     this.field = TextareaState.new({ value: "" });
     this.spare = TextareaState.new({ value: "" });
     for (const s of [this.field, this.spare]) {
@@ -263,19 +253,18 @@ export class Editor {
     this.f = null; this.seen = ""; this.opened = ""; this.known = NO_CARET; this.act = 0; this.rows = "many";
     this.stale = false; this.reading = 0; this.stored = null; this.disarmed = new Set(); this.focusedState = null;
     this.ownKeyUp = null; this.menuKeyUp = null; this.revealNext = false; this.inbox = []; this.watching = false; this.swapping = false; this.shiftField = null;
-    // `owed`: per field state, the change events still to come for changes already taken in: those of our own
-    // replace() calls, and those of the user's typing that an action took in before its event came. A change that
-    // leaves the value as it was and is none of those is forward Delete at the end of the field.
+    // `owed`: per field state, the change events still to come for changes already taken in (our own replace() calls,
+    // and typing an action took in before its event). An unowed change that leaves the value as it was is forward
+    // Delete at the end of the field.
     this.owed = new Map();
-    // Block selection: `sel` names its two ends by key, `selKeys` are the blocks it covers, `gens` each block's
-    // TextView generation, raised to drop the TextView's own text selection when the block is selected.
+    // `sel` names the selected blocks' two ends by key, `selKeys` the blocks it covers, `gens` each block's TextView
+    // generation, raised to drop the TextView's own text selection when the block is selected.
     this.sel = null; this.selKeys = new Set(); this.gens = new Map();
-    // The slash menu open in the field being edited (slash.js), or null.
     this.slash = null;
 
     // Calibration: `cal` is in use while `calNext` collects a run's measurements; `look` is the theme, fonts and zoom
-    // the page was last drawn in, and a change of them runs calibration again (`calGen` names each run, `calTimed`
-    // the last one whose give-up clock was started).
+    // last drawn in (a change reruns calibration; `calGen` names each run, `calTimed` the last one whose give-up clock
+    // started).
     this.cal = {}; this.calNext = {}; this.calSizes = {}; this.calibrating = true; this.calGen = 0; this.calTimed = 0; this.calStates = {}; this.look = null;
     for (const name of CALIBRATED) {
       const one = TextareaState.new({ value: "Ag" }), three = TextareaState.new({ value: "Ag\nAg\nAg" });
@@ -317,8 +306,8 @@ export class Editor {
     this.rebuild(null, null);
   }
 
-  // The my-pane header shows this pane's file name and the Markdown toggle in place of the toolbar. This copy publishes
-  // { name, mode } under its pane, and the header asks for a toggle by raising a counter under the pane.
+  // This copy publishes { name, mode } under its pane for the my-pane header, which asks for a toggle by raising a
+  // counter under the pane.
   syncHead(cx) {
     const pane = this.claimed;
     if (!pane) return;
@@ -348,9 +337,8 @@ export class Editor {
     return this.headedIs && Boolean(this.claimed);
   }
 
-  // The pane registry (open.js) needs this copy's pane, which only the draw knows: at init panes() does not list the
-  // new pane yet, and Herdr draws a copy only while its tab is shown, so focused().tab is its own tab only then.
-  // The write is a task of its own: a draw writes nothing shared.
+  // Only the draw knows this copy's pane: at init panes() does not list it yet, and Herdr draws a copy only while its
+  // tab is shown, so focused().tab is its own then. The registry is written once per pane, not on every draw.
   claim(cx) {
     if (!this.file) return;
     if (this.claimed && panes().some(p => p.pane === this.claimed)) return;
@@ -383,8 +371,7 @@ export class Editor {
     });
   }
 
-  // A long text is parsed for the page a slice at a time: before the page first shows, or, for one that opens as
-  // its source, in the background (parseAhead). -> its blocks, or null when the tab closed meanwhile.
+  // -> the blocks of `text`, parsed a slice at a time, or null when the tab closed meanwhile.
   async parseInSlices(text, cx) {
     let until = 0;
     const steps = parseInSteps(text, PARSE_OPTS, () => Date.now() >= until);
@@ -397,9 +384,9 @@ export class Editor {
     }
   }
 
-  // The page's parse is of the text as it was when it began; refresh parses in what changed since. A page made
-  // meanwhile (the text got short, and Reading parsed it at once) is the one edits go into, so it stays. A switch to
-  // Reading asked for meanwhile (readWhenParsed) is made once it is done.
+  // The parse covers the text as it was when it began; refresh parses in later changes. A page made meanwhile (the text
+  // got short, and Reading parsed it at once) is the one edits go into, so it stays. A switch to Reading asked for
+  // meanwhile (readWhenParsed) is made once the parse is done.
   parseAhead(cx) {
     if (this.doc || this.parsing || this.text.length < SLICE_FROM) return;
     this.parsing = true;
@@ -414,8 +401,7 @@ export class Editor {
     });
   }
 
-  // Reading waits for its page: a long text not parsed yet shows Loading… in place of its source until it is.
-  // -> true while it waits.
+  // -> true while a long text is not parsed yet: Reading shows Loading… until it is.
   waitForPage(cx) {
     if (this.doc || this.text.length < SLICE_FROM) return false;
     this.sourceCaret();
@@ -432,7 +418,6 @@ export class Editor {
     return this.remote || this.locked ? "reading" : kept ?? "reading";
   }
 
-  // A note with nothing in it opens with an empty paragraph to type in.
   first(text, cx) {
     this.disk = this.text = this.settled = text;
     this.history.clear();
@@ -446,8 +431,7 @@ export class Editor {
   }
 
   // A text from outside becomes the buffer: the file's, or ours with their change merged in (`disk` is then theirs).
-  // The state that shows takes it in at once (the source field with its caret on the same text, Reading by a
-  // re-parse); the other one catches up when it is next shown.
+  // Only the state that shows takes it in at once; the other one catches up when it is next shown.
   apply(text, cx, { disk = text, clear = false } = {}) {
     this.commit(cx);
     if (this.activeKey && !this.pending && !this.known.valid && this.editable()) {
@@ -463,19 +447,18 @@ export class Editor {
     else this.refresh(cx);
   }
 
-  // The buffer changed by an edit of ours. `rec`: history.record's meta, plus the `splice` that made `text` when known;
-  // false when the caller has already put the change in the history (an undo or a redo moved its entry, or
-  // history.amend folded it into the last one). edited() takes `rec` the same way.
+  // `rec`: history.record's meta plus the `splice` that made `text` when known; false when the history already has the
+  // change (undo or redo moved its entry, or history.amend folded it into the last one). edited() takes `rec` too.
   setText(text, cx, rec) {
     this.track(text, rec);
     this.text = text;
-    if (text.length <= BIG) this.settled = text; // a small buffer is counted as it is typed
+    if (text.length <= BIG) this.settled = text;
     this.scheduleSave(cx);
     if (this.mode === "reading") this.refresh(cx);
     cx.notify();
   }
 
-  // The buffer changed by typing in a block's field: nothing is parsed until the block is committed.
+  // Typing in a block's field edits the buffer; nothing is parsed until the block is committed.
   edited(text, cx, rec) {
     this.track(text, rec);
     this.text = text;
@@ -514,7 +497,7 @@ export class Editor {
     this.setText(text, cx, { ...this.typing(SOURCE_TYPING, s.end, s.start + s.insert.length), splice: s });
   }
 
-  // A field value that differs from what we last saw is typing that its change event has not told us about yet.
+  // A value that differs from what we last saw is typing whose change event has not arrived yet.
   syncSource(cx) {
     if (this.mode === "markdown" && !this.remote && !this.locked && this.source.value() !== this.srcSeen) this.sourceChanged(cx);
   }
@@ -545,10 +528,10 @@ export class Editor {
   }
 
   // A change not typed in the field (a disk change, an undo) goes in as a select and a replace, which keep its scroll.
-  // The field's own undo could take that edit back and the autosave would write it over the file: without our key
-  // table, which owns Cmd+Z there, it goes in by set_value, which clears that undo. The caret goes to document offset
-  // `caret`, else follows its text. A "\r\n" pasted into the field is two characters there but one "\n" in the new
-  // value, so the caret is first moved onto the old text as the new value shows it.
+  // Without our key table, which owns Cmd+Z there, set_value is used instead: it clears the field's own undo, which
+  // could take the edit back and let the autosave write it over the file. The caret goes to document offset `caret`,
+  // else follows its text. A pasted "\r\n" is two characters in the field but one "\n" in the incoming value, so the
+  // caret is first moved onto the old text as the incoming value shows it.
   patchSource(caret = null) {
     if (this.remote || this.locked || this.srcFor === this.text) return;
     const old = caret === null ? this.sourceCaret() : null, was = toSource(this.srcFor), map = toSource(this.text), d = diff(was.value, map.value);
@@ -569,15 +552,14 @@ export class Editor {
     });
   }
 
-  // The source field's selection: known from its last change or our last placement, else read out.
   sourceCaret() {
     if (!this.srcCaret) this.srcCaret = this.caretOf(this.source);
     return this.srcCaret;
   }
 
-  // A field's selection, read by writing MARK over it and putting back what it covered: { start, end }, or null when
-  // that failed (the field is then put back whole). Its change events come after we are done, and find the value we
-  // left, which is the one we saw.
+  // A field's selection { start, end }, read by writing MARK over it and putting back what it covered; null when that
+  // failed (the field is then restored whole). Its change events arrive after we are done and find the value we left,
+  // which is the one we saw.
   caretOf(state) {
     let before, range = null;
     this.reading++;
@@ -612,7 +594,6 @@ export class Editor {
     this.owed.set(state, (this.owed.get(state) ?? 0) + 1);
   }
 
-  // -> true when a change event was owed to `state`, which this one then pays.
   paid(state) {
     const n = this.owed.get(state) ?? 0;
     if (n > 0) this.owed.set(state, n - 1);
@@ -655,13 +636,12 @@ export class Editor {
     this.saveTask?.cancel();
     this.saveTask = cx.timer.after(SAVE_MS, cx => {
       this.saveTask = null;
-      this.settled = this.text; // a big buffer's footer counts catch up here
+      this.settled = this.text;
       cx.notify();
       cx.spawn(cx => this.save(cx));
     });
   }
 
-  // One write at a time: typing during a write is saved after it (persist).
   save(cx) {
     this.saveTask?.cancel(); this.saveTask = null;
     if (this.closed || this.saving !== null || !this.writable() || this.text === this.disk) return Promise.resolve();
@@ -696,11 +676,11 @@ export class Editor {
     cx.spawn(cx => this.recheck(cx));
   }
 
-  // A write was refused: look at the file to tell why. The same text there is as good as saved, nothing there means
-  // it was deleted, and the text we expected means the write failed for itself. Other text is somebody else's change:
-  // merged in when it keeps apart from the unsaved edits, else the banner asks.
-  // `expected` is what the refused write was made over: if `disk` is something else by now, a look moved it while the
-  // write was out, the file holds what we now expect, and the save that follows writes the buffer over it.
+  // A write was refused: look at the file to tell why. Our text there is as good as saved, nothing there means it was
+  // deleted, and the text we expected means the write failed for itself. Other text is somebody else's change: merged
+  // in when it keeps apart from the unsaved edits, else the banner asks. `expected` is what the write was made over:
+  // if `disk` differs, a look moved it while the write was out, so the file holds what we expect and the save that
+  // follows writes the buffer over it.
   async explain(e, text, expected, cx) {
     let now;
     try { now = await readTextFile(this.file, { on: this.machine }); } catch { now = undefined; }
@@ -713,7 +693,7 @@ export class Editor {
     else { this.conflict = now; this.missing = false; }
   }
 
-  // Keep mine: the file's text is now the one to replace, so the write goes through.
+  // The file's text becomes the one a write must find there, so the write goes through.
   keepMine(cx) {
     if (this.conflict === null) return;
     this.disk = this.conflict; this.conflict = null;
@@ -731,7 +711,6 @@ export class Editor {
     cx.notify();
   }
 
-  // Save again: the file is gone, make it again with the buffer (it must still not exist).
   saveAgain(cx) {
     if (!this.missing || this.remote || this.saving !== null || this.closed) return;
     cx.spawn(cx => this.recreate(this.text, cx));
@@ -755,8 +734,6 @@ export class Editor {
     cx.spawn(cx => this.save(cx));
   }
 
-  // The watcher (or a poll) says something may have changed. One look at a time; a request that comes in during
-  // a look makes it look once more afterwards.
   async recheck(cx) {
     if (this.checking) { this.again = true; return; }
     this.checking = true;
@@ -768,7 +745,6 @@ export class Editor {
     } finally { this.checking = false; }
   }
 
-  // A change reported while the file is still being read (or parsed) is looked at once it is loaded.
   async compare(cx) {
     if (!this.loaded && !this.error && !this.closed) this.lookAfterLoad = true;
     if (!this.loaded || this.error || this.closed) return;
@@ -792,14 +768,13 @@ export class Editor {
       else if (this.merge(now, cx)) this.conflict = null;
       else this.conflict = now;
     }
-    // What held the autosave back (a deleted file, a conflict) is gone: the unsaved text can go out again.
     if (blocked && this.writable() && this.text !== this.disk) this.scheduleSave(cx);
     if ([this.disk, this.text, this.conflict, this.missing].some((v, i) => v !== before[i])) cx.notify();
   }
 
-  // -> false when the unsaved edits and their change come together (mergeChange), which the banner asks about. Typing
-  // that no change event has reported yet is taken in and parsed first (a commit may still close a fence): the buffer
-  // compared must be the one that is saved, and the field must not be rewritten from a buffer without it.
+  // -> false when the unsaved edits and their change overlap (mergeChange): the banner asks. Typing no change event has
+  // reported yet is taken in and parsed first (a commit may still close a fence), so the buffer compared is the one
+  // that is saved and the field is not rewritten from a buffer without it.
   merge(theirs, cx) {
     if (this.closed || this.remote || this.locked || typeof theirs !== "string") return false;
     this.syncSource(cx);
@@ -838,7 +813,6 @@ export class Editor {
       return;
     }
     if (next === this.mode || (this.locked && next === "markdown")) return;
-    // Whatever is typed goes to the disk before the view changes.
     this.syncSource(cx);
     this.syncField(cx);
     this.history.close();
@@ -851,8 +825,8 @@ export class Editor {
     cx.notify();
   }
 
-  // The source caret goes where the caret of the block being edited was, else to the start of the first block at
-  // the top of the page. The page is not drawn in Markdown, so nothing stays armed and the pointer is not known.
+  // The source caret goes where the edited block's caret was, else to the start of the top block. The page is not
+  // drawn in Markdown, so nothing stays armed and the pointer is unknown.
   toMarkdown(cx) {
     this.disarm(cx);
     this.setSel(null, cx);
@@ -873,8 +847,6 @@ export class Editor {
     this.placeSource(docToSource(this.src, at), cx);
   }
 
-  // The block holding the source caret is opened with the caret on the same character, and its row goes a third of
-  // the way down the page. A caret on a blank line opens nothing.
   toReading(cx) {
     let at = null;
     if (!this.remote && !this.locked) {
@@ -922,7 +894,7 @@ export class Editor {
     this.scrollTo(to, cx);
   }
 
-  // The actions of the key table, which reach md-root along the focus path from the active field or the source.
+  // The key table's actions reach md-root along the focus path from the active field or the source.
   action(name, cx) {
     if (UNDO_ACTIONS[name]) {
       this.closeSlash(cx);
@@ -992,9 +964,8 @@ export class Editor {
     else if (r.kind === "file") notify({ title: `Can't open ${basename(r.path)} here`, level: "info" });
   }
 
-  // The last look: what is typed goes to the disk now if it can (the host allows about 250 ms, so no waiting for a
-  // write in progress). That write is about to leave `saving` in the file, so go over that; if it has not landed yet
-  // the file still has `disk`, so once more over that. Never more than two writes.
+  // The host allows about 250 ms on close, so a write in progress is not awaited: write over `saving` (about to land),
+  // and if it has not landed the file still has `disk`, so once more over that. Never more than two writes.
   async close(cx) {
     if (this.closed) return;
     if (cx) { this.syncSource(cx); this.syncField(cx); this.writeHeld(cx); }
@@ -1009,14 +980,14 @@ export class Editor {
     const { text, disk } = this, first = this.saving ?? disk;
     try { await writeTextFile(this.file, text, first); }
     catch {
-      if (first === disk) return; // nothing left to tell anyone
-      try { await writeTextFile(this.file, text, disk); } catch { /* nor now */ }
+      if (first === disk) return; // already tried over `disk`
+      try { await writeTextFile(this.file, text, disk); } catch { /* both writes refused: nothing more to try */ }
     }
   }
 
-  // `doc` catches up with the buffer (a re-parse of the changed span only), and the blocks with `doc`. The block
-  // being edited is found again: through `place` when given ({ at, kind, caretDoc }: what was typed made it), else
-  // where the change left it. -> the change parsed in, or null.
+  // `doc` catches up with the buffer (a re-parse of the edited span only), and the blocks with `doc`. The edited block
+  // is found again through `place` when given ({ at, kind, caretDoc }: what was typed made it), else where the change
+  // left it. -> the change parsed in, or null.
   refresh(cx, place) {
     const anchor = this.anchor(), editing = this.activeKey && !this.pending;
     const held = place === undefined && editing && this.f ? this.held() : null;
@@ -1034,9 +1005,9 @@ export class Editor {
     return d;
   }
 
-  // What was typed since the last parse is parsed in, and the block stays the one being edited, as whatever it
-  // became, but never a block that begins before it. A block emptied so that nothing of it is left goes with its
-  // blank lines. A fence typed into it that now runs past what was typed is closed at once.
+  // Parses in what was typed since the last parse; the block stays the edited one as whatever it became, never one
+  // that begins before it. A block emptied so that nothing of it is left goes with its blank lines. A fence typed into
+  // it that runs past what was typed is closed at once.
   commit(cx, caretDoc = null) {
     this.syncField(cx);
     if (!this.stale) return;
@@ -1053,16 +1024,15 @@ export class Editor {
     this.setText(applySplice(this.text, g), cx, false);
   }
 
-  // Where the block being edited is in the text now, as document offsets: its start, its field's start, the caret.
+  // The edited block's place in the text as document offsets: its start, its field's start, the caret.
   held() {
     const b = this.blockByKey(this.activeKey), f = this.f;
     if (!b || !f) return null;
     return { kind: b.kind, start: b.start, field: f.start0, caret: this.known.valid ? fieldToDoc(f, this.known.end) : null };
   }
 
-  // Where a change from outside the field leaves the block being edited: the caret (or field start) moved across it,
-  // else the block's start. When the change took both, only a block it wrote in their place can be the one, and
-  // only a block of the same kind.
+  // Where a change from outside the field leaves the edited block: the caret (or field start) moved across it, else the
+  // block's start. When the change took both, only a block it wrote in their place, of the same kind, can be the one.
   mapped(h, d) {
     const p = mapPos(d, h.caret ?? h.field), q = mapPos(d, h.start);
     if (p >= 0) return { at: p, kind: h.kind, caretDoc: null };
@@ -1070,9 +1040,8 @@ export class Editor {
     return { at: d.at + Math.max(0, d.inserted.length - 1), kind: h.kind, caretDoc: null, from: d.inserted ? d.at : Infinity };
   }
 
-  // After a re-parse, the block holding document offset `at` is the one being edited, when it is of kind `kind`
-  // (any when null) and starts at `from` or later. Its field is set only when its value changed: the caret goes to
-  // `caretDoc`, else follows the text it was in.
+  // After a re-parse the block at document offset `at` is the edited one if it is of `kind` (any when null) and starts
+  // at `from` or later. Its field is set only when its value differs: the caret goes to `caretDoc`, else follows its text.
   refind({ at, kind, caretDoc, from = -Infinity }, cx) {
     const b = this.holding(at);
     if (!b || b.start > at || (kind && b.kind !== kind) || b.start < from || !this.editable()) return this.drop();
@@ -1106,9 +1075,8 @@ export class Editor {
     if (this.pan?.key === key) this.pan = null;
   }
 
-  // What each block draws, compared with what it drew: only the blocks whose data changed are redrawn, the Column
-  // only when the blocks are not the same ones in the same order or its window moved. With no cx (the check fixture)
-  // nothing is told.
+  // Only blocks with different data are redrawn, the Column only when the blocks, their order or its window moved.
+  // With no cx (the check fixture) nothing is told.
   rebuild(cx, anchor) {
     const blocks = this.placePending(this.doc.blocks), width = this.textWidth();
     this.blocks = blocks;
@@ -1143,12 +1111,11 @@ export class Editor {
     if (this.offset !== offset && !this.swapping) this.rearm(cx);
   }
 
-  // What the Column mounts: null while it mounts every block, else { order, from, to, extra, gaps, held, split,
-  // above }: blocks [from, to) and the block being edited (`extra`, -1 when it is among them), with spacers of `gaps`
-  // px around them. Blocks drawn for the first time above `held`, the block the eye held when the window was made,
-  // grow upward: [from, split) is drawn from the bottom of a box `above` px tall, so that their heights, not measured
-  // yet, move nothing below them. Every other block keeps its top as it grows. A window stays until the viewport
-  // comes within half the margin of its edge or the blocks change.
+  // What the Column mounts: null while it mounts every block, else { order, from, to, extra, gaps, held, split, above }:
+  // blocks [from, to) plus the edited block (`extra`, -1 when among them), with spacers of `gaps` px around them. Blocks
+  // first drawn above `held` (the block the eye held when the window was made) grow upward: [from, split) is drawn from
+  // the bottom of a box `above` px tall, so their unmeasured heights move nothing below. A window stays until the
+  // viewport comes within half the margin of its edge or the blocks change.
   windowFor(prev) {
     const n = this.blocks.length, s = this.sums, margin = this.inline ? INLINE_MARGIN : WINDOW_MARGIN;
     if (!this.file || s.length !== n + 1 || (!this.inline && n <= MOUNT_ALL)) return null;
@@ -1212,8 +1179,8 @@ export class Editor {
     return parts.filter(Boolean);
   }
 
-  // A change of the offset or of the heights that no handler took to the Column (a reveal while the page is shown
-  // again) is taken there right after this draw, which may not notify.
+  // A draw may not notify: a window change no handler took to the Column (a reveal when the page is shown again) goes
+  // there on a 0 ms timer.
   checkWindow(cx) {
     if (this.winTimer || sameWindow(this.windowFor(this.win), this.win)) return;
     this.winTimer = cx.timer.after(0, cx => {
@@ -1222,8 +1189,8 @@ export class Editor {
     });
   }
 
-  // The page's blocks with the pending one among them, where it will be written. When the text changed under it, it
-  // is worked out again; when it no longer fits there (its block went), editing stops.
+  // The page's blocks with the pending one where it will be written. When the text under it is replaced, its place is
+  // worked out again; when it stops fitting there (its block went), editing stops.
   placePending(blocks) {
     const p = this.pending;
     if (!p) return blocks;
@@ -1246,8 +1213,8 @@ export class Editor {
     return true;
   }
 
-  // The armed block's text changed under it (a reload from disk): the spare takes the new text, or the block draws
-  // its text again when it can no longer be armed.
+  // The armed block's text was replaced under it (a reload from disk): the spare takes the replacement, or the block
+  // draws its text again when it cannot be armed any more.
   updateArmed() {
     const key = this.armedKey;
     if (!key) return;
@@ -1351,7 +1318,7 @@ export class Editor {
     return h;
   }
 
-  // Its lines, each wrapped at `advance` px a character in its column `w` px wide; a table's rows do not wrap so.
+  // Rows of the text, each line wrapped at `advance` px a character in a column `w` px wide; a table's rows do not wrap.
   estimateOf(d, w, advance) {
     if (d.look === "rule") return d.space + RULE_H;
     if (d.look === "diagram") return d.space + (d.frameH ? d.frameH + (d.boxAbove ? DIAGRAM_H + 8 : 0) : DIAGRAM_H);
@@ -1380,9 +1347,9 @@ export class Editor {
     return Math.max(1, Math.round((h - c.y - c.below - (active ? d.padActive : d.padRendered)) / d.row));
   }
 
-  // The block the eye holds on to while heights change, and where on the screen it is: the block being edited while
-  // its caret row is on the page, else the first block whose bottom is below the top of the page. A block drawn
-  // upward is where the blocks below it in its box put it, not its estimated top: the block below the box stands in.
+  // The block the eye holds on to while heights change, and where on the screen it is: the edited block while its
+  // caret row is on the page, else the first block whose bottom is below the page top. A block drawn upward sits where
+  // the blocks below it in its box put it, not at its estimated top: the block below the box stands in.
   anchor() {
     const blocks = this.blocks;
     if (!blocks.length || this.sums.length !== blocks.length + 1) return null;
@@ -1393,8 +1360,6 @@ export class Editor {
     return { key: blocks[j].key, y: COLUMN.padTop + this.sums[j] - this.offset };
   }
 
-  // Block tops from the heights; the offset then follows a pending reveal, or keeps the anchor where it was. A reveal
-  // whose block went away is dropped.
   layout(anchor) {
     const blocks = this.blocks, width = this.textWidth();
     this.sums = prefixSums(blocks.map(b => this.heights.get(b.key) ?? this.estimate(b, width)));
@@ -1410,9 +1375,8 @@ export class Editor {
     this.offset = this.viewport ? clampOffset(this.offset, this.contentH(), this.viewH()) : Math.max(0, this.offset);
   }
 
-  // The size task: blocks report their heights from their own views, which cannot redraw this one, so they wake
-  // this task, whose cx is this view's. One wake takes in every height reported before it runs, and runs the work
-  // the blocks' own handlers handed over.
+  // Blocks report their heights from their own views, which cannot redraw this one, so they wake this task, whose cx is
+  // this view's. One wake takes in every height reported before it runs and runs the work the blocks' handlers handed over.
   watchSizes(cx) {
     this.watching = true;
     cx.spawn(async cx => {
@@ -1441,7 +1405,6 @@ export class Editor {
     if (done) { this.woken = null; done(); } else this.wakeLater = true;
   }
 
-  // Work for this view's cx from a handler that runs in a block's view.
   post(job) {
     if (this.closed || !this.watching) return;
     this.inbox.push(job);
@@ -1449,7 +1412,7 @@ export class Editor {
   }
 
   // An armed block keeps the height it had rendered; an armed field that measures otherwise is not armed again. A
-  // block whose text changed while armed was never measured rendered with that text: the field's height is its height.
+  // block whose text was replaced while armed was never measured rendered with that text: the field's height is its height.
   blockSized(key, size) {
     const h = size.height / zoom();
     if (key === this.armedKey && !this.armedNewText) {
@@ -1467,8 +1430,8 @@ export class Editor {
     this.wake();
   }
 
-  // Puts the row holding document offset `at` a third of the way down, until the page is scrolled. An offset on a
-  // blank line puts the next block there.
+  // Puts the row holding document offset `at` a third of the way down until the page is scrolled; an offset on a blank
+  // line puts the next block there.
   revealOffset(at) {
     const blocks = this.doc?.blocks ?? [];
     let i = blocks.findIndex(b => at < b.gapEnd);
@@ -1485,7 +1448,6 @@ export class Editor {
     this.layout(null);
   }
 
-  // The first block whose first row (below its space) is on the page, else the block the top of the page is in.
   topBlock() {
     const blocks = this.blocks;
     if (!blocks.length || this.sums.length !== blocks.length + 1) return blocks[0] ?? null;
@@ -1524,9 +1486,8 @@ export class Editor {
     cx.notify();
   }
 
-  // A gesture keeps what it began as: with Cmd or Ctrl over a frame it zooms that frame; over a frame whose picture
-  // is wider than it, it pans the frame sideways once it shows it goes sideways; anything else scrolls the page,
-  // through any frame under the pointer whose picture is taller than it.
+  // A gesture keeps what it began as: with Cmd or Ctrl over a frame it zooms that frame; over a frame whose picture is
+  // wider than it, it pans the frame sideways once it shows it goes sideways; anything else scrolls the page.
   wheel(e, cx) {
     this.closeSlash(cx);
     const z = zoom(), m = e?.modifiers ?? {}, phase = e?.touch_phase, now = Date.now(), p = this.point(e) ?? this.pointer;
@@ -1561,7 +1522,6 @@ export class Editor {
     if (dy) this.scrollPage(dy, p, cx);
   }
 
-  // A vertical wheel step: the page, passing through a frame under the pointer whose picture is taller than it.
   scrollPage(dy, p, cx) {
     const f = p ? this.frameAt(p) : null, v = f && this.viewOf(f.block.key);
     if (!v || !overflows(boxOf(f.d), natOf(f.d), v.z).y) return this.scrollTo(this.offset - dy, cx);
@@ -1573,7 +1533,6 @@ export class Editor {
     this.scrollTo(r.offset, cx);
   }
 
-  // Cmd or Ctrl and the wheel: up zooms in, around the picture's point under the pointer.
   zoomWheel(key, dy, p, cx) {
     const d = this.data.get(key), v = this.viewOf(key), i = this.at.get(key);
     if (!v || i === undefined) return;
@@ -1610,8 +1569,8 @@ export class Editor {
     return { x: l.x / z, y: l.y / z };
   }
 
-  // A press the field's own wrapper took also reaches the viewport when events cross the block's view: it is the
-  // same press when it is at the same window position.
+  // A press the field's own wrapper took also reaches the viewport when events cross the block's view: it is the same
+  // press when it is at the same window position.
   tookPress(e, kind) {
     const c = this.fieldPress;
     if (!c || c.kind !== kind || c.x !== e?.position?.x || c.y !== e?.position?.y) return false;
@@ -1619,9 +1578,9 @@ export class Editor {
     return true;
   }
 
-  // A press on the block being edited, beside its field, would take the keyboard from the field: it is given back
-  // now, and again on the mouse-up if the root took it all the same. `beside` is that block's key, `key` the block
-  // pressed, which a drag onto another block selects from. A press clears a block selection, unless Shift extends it.
+  // A press beside the edited block's field would take the keyboard from it: it is given back at once, and again on the
+  // mouse-up if the root took it anyway. `beside` is that block's key, `key` the block pressed, from which a drag
+  // selects blocks.
   viewportDown(e, cx) {
     this.closeSlash(cx);
     this.endThumb(cx);
@@ -1645,9 +1604,8 @@ export class Editor {
   }
 
   // A drag that stayed in a block not being edited selected its rendered text, for a Cmd+C where the press left the
-  // keyboard: the editing goes on, and neither this nor the root's mouse-up gives the field the keyboard back. Any
-  // other press, a pan of a frame among them, leaves the field the keyboard, as a press elsewhere in the pane does
-  // (keepKeyboard).
+  // keyboard: editing goes on, and neither this nor the root's mouse-up gives the field the keyboard back. Any other
+  // press, a frame pan included, leaves the field the keyboard (keepKeyboard).
   viewportUp(e, cx) {
     if (this.endThumb(cx)) return this.keepKeyboard();
     const down = this.press, p = this.point(e), linked = this.linked, panned = this.endPan(cx);
@@ -1660,9 +1618,9 @@ export class Editor {
     this.keepKeyboard();
   }
 
-  // A press beside the field (a task box, a link, the toolbar, the banner, the scrollbar) can take the keyboard from
-  // it, and the root's own keys ignore the page while a block is being edited: the field is given the keyboard back.
-  // A press on the armed block went into the spare field, which takes the editing once its focus event comes.
+  // A press beside the field (a task box, link, toolbar, banner, scrollbar) can take the keyboard from it, and the
+  // root's keys ignore the page while a block is edited, so the field gets it back. A press on the armed block went
+  // into the spare field instead, which takes over once its focus event comes.
   keepKeyboard() {
     if (this.activeKey && !this.armedKey && this.editable() && this.focusedState !== this.field) this.field.focus();
   }
@@ -1691,9 +1649,9 @@ export class Editor {
     this.clickBlock(key, p, cx);
   }
 
-  // A move event says nothing of the buttons: while a press is under way, on the page or in a field, nothing is armed,
-  // and a drag that reaches another block selects whole blocks. With Shift held nothing stays armed, so that a
-  // Shift+click lands on the page and not in a field.
+  // A move event says nothing of the buttons: while a press is under way, on the page or in a field, nothing is armed
+  // and a drag that reaches another block selects whole blocks. With Shift held nothing stays armed, so a Shift+click
+  // lands on the page and not in a field.
   viewportMove(e, cx) {
     if (this.thumb) {
       const g = this.thumbGeometry();
@@ -1756,8 +1714,6 @@ export class Editor {
     return clampView(boxOf(d), natOf(d), { ...kept, z: clamp(kept.z, d.zMin, FRAME.zMax) });
   }
 
-  // What a frame draws besides its block's data: its view, the sharp picture while the zoom needs it, the − % +
-  // group while the pointer is over the frame or pans it, and the cursor.
   frameView(key) {
     const v = this.viewOf(key), d = this.data.get(key);
     if (!v) return null;
@@ -1778,8 +1734,8 @@ export class Editor {
     return i === undefined || !d?.frameW || this.sums.length !== this.blocks.length + 1 ? FRAME.tools.top : toolsTop(d.frameH, this.frameTop(i, d));
   }
 
-  // The frame under the pointer shows its − % + group; the page moving under a resting pointer can change which
-  // frame that is, or where the group must sit to stay on the page.
+  // The page moving under a resting pointer can change which frame it is over, or where that frame's − % + group must
+  // sit to stay on the page.
   updateHover(cx) {
     const key = (this.pointer && this.frameAt(this.pointer)?.block.key) ?? null, top = key ? this.toolsTopOf(key) : null;
     if (key === this.hoverFrame && top === this.hoverTop) return;
@@ -1808,7 +1764,6 @@ export class Editor {
     return true;
   }
 
-  // The picture follows the pointer once it has moved past the click slop, and never arms, selects or clicks.
   panTo(e, cx) {
     const pan = this.pan, w = windowPoint(e);
     if (!w) return;
@@ -1837,7 +1792,6 @@ export class Editor {
     if (z1 !== v.z) this.setView(key, zoomAround(boxOf(d), natOf(d), v, z1, d.frameW / 2, d.frameH / 2), cx);
   }
 
-  // A sharp picture is asked for once the zoom of a frame has rested.
   zoomedNow(key, cx) {
     this.zoomed.add(key);
     this.settleTimer?.cancel();
@@ -1915,7 +1869,6 @@ export class Editor {
     this.selKeys = this.keysIn(range);
   }
 
-  // -> true when the key acted on the selection.
   selectionKey(e, cx) {
     const k = e.keystroke, m = e.modifiers ?? {};
     if (k === "cmd-c" || k === "cmd-x") {
@@ -1952,10 +1905,9 @@ export class Editor {
     this.handle.focus();
   }
 
-  // The block under a viewport point and what on it: a diagram's frame (also where it reaches into the margins) or
-  // a cell of its − % + group, its checkbox, its body, the space below the last block ("end"), or a margin outside
-  // every block ("outside"). x and y are relative to the block's root, fx and fy to the frame. On a page with no
-  // blocks the whole column is the space below the last block.
+  // The block under a viewport point and what on it: a diagram's frame (also where it reaches into the margins), a cell
+  // of its − % + group, a checkbox, a body, the space below the last block ("end"), or a margin outside every block
+  // ("outside"). x and y are relative to the block's root, fx and fy to the frame. A page with no blocks is all "end".
   hit(p) {
     const blocks = this.blocks, n = blocks.length;
     if (this.sums.length !== n + 1) return null;
@@ -1989,9 +1941,8 @@ export class Editor {
     return Boolean(this.file) && this.loaded && !this.error && !this.remote && !this.locked && !this.closed && this.mode === "reading";
   }
 
-  // Block `key` becomes the one being edited, the caret at field offset `caret` (a number or a range). The block
-  // being edited before is left first. `shift` moves the page down by that much; `reveal` keeps the caret row in view,
-  // which a press does not want: the page does not move on a click.
+  // Block `key` becomes the edited one, the caret at field offset `caret` (a number or a range). `shift` moves the page
+  // down by that much; `reveal` keeps the caret row in view, which a press does not want: the page does not move on a click.
   activate(key, caret, cx, { shift = 0, reveal = true } = {}) {
     if (!this.editable()) return false;
     this.setSel(null, cx);
@@ -2033,10 +1984,9 @@ export class Editor {
     cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.act === act && this.activeKey) state.focus(); });
   }
 
-  // The block being edited is left: what was typed is parsed in, a block emptied there goes, and a pending one was
-  // never written unless it holds a marker held back (writeHeld). While its caret row is on the page the block keeps
-  // its top where it is; a pending block, which goes, leaves block `keep` (the one opened next) where it is, else the
-  // block above it.
+  // What was typed is parsed in, an emptied block goes, and a pending one is never written unless it holds a marker held
+  // back (writeHeld). While its caret row is on the page the block keeps its top where it is; a pending block, which
+  // goes, leaves block `keep` (the one opened next) where it is, else the block above it.
   leave(cx, keep = null) {
     if (!this.activeKey) return;
     this.syncField(cx);
@@ -2064,22 +2014,20 @@ export class Editor {
     cx.notify();
   }
 
-  // The block being edited went away under a change: there is nothing left of it to commit.
+  // The edited block went away under a change: nothing is left of it to commit.
   drop() {
     this.release();
     this.handle.focus();
   }
 
   // Editing stops without the rules of leaving (an emptied block goes, a held marker is written, a fence is closed):
-  // an undo, a paste or an op is about to replace the text around the block, and those rules would record entries of
-  // their own.
+  // an undo, paste or op is about to replace the text around the block, and those rules would record entries of their own.
   release() {
     const pending = this.pending;
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null;
     if (pending) this.forget(pending.key);
   }
 
-  // An empty paragraph after the last block, written into the text only once something is typed in it.
   openPending(cx) {
     if (this.pending?.atEnd) { this.focusField(cx); return; }
     this.openPendingWith({ base: atEnd, atEnd: true }, cx);
@@ -2106,9 +2054,9 @@ export class Editor {
   }
 
   // The first text typed into the pending block writes it where it was opened. Spaces alone write nothing, as they
-  // would make no block. A marker alone (`#`, `-`, `1.`, `>`) is held back: the shortcut's space, or any other
-  // character, writes it as typed, and so do Enter and leaving the block (writeHeld). So is a slash that opens the
-  // menu, with what is typed after it, while the menu is open: a pick writes the block it makes instead.
+  // would make no block. A marker alone (`#`, `-`, `1.`, `>`) is held back until the shortcut's space, any other
+  // character, Enter or leaving the block writes it as typed (writeHeld). So is a slash that opens the menu, with what
+  // follows it, while the menu is open: a pick writes the block it makes instead.
   pendingTyped(value, d, own, cx) {
     const k = d.at + d.inserted.length;
     this.seen = value;
@@ -2118,14 +2066,14 @@ export class Editor {
     this.writePending(value, k, cx);
   }
 
-  // The pending block is written where it was opened, holding `value`, with the caret at field offset k. Cmd+Z then
-  // takes it away with the caret back where it was opened. A marker written alone (`held`) makes a block with
-  // nothing in its field, which, being what was typed, stays when it is left so.
+  // Writes the pending block where it was opened, holding `value`, the caret at field offset k; Cmd+Z takes it away with
+  // the caret back where it was opened. A marker written alone (`held`) makes a block with nothing in its field, which,
+  // being what was typed, stays when left so.
   writePending(value, k, cx, held = false, intoStandIn = false) {
     const p = this.pending;
     // Text that makes another block than the stand-in did (`# ` in an item is a heading inside it) can leave the steps
-    // nothing to apply to: it then goes into the block the stand-in wrote, where the empty block is drawn. A marker
-    // the slash menu picked always goes there, as what the block the user sees becomes.
+    // nothing to apply to: it then goes into the block the stand-in wrote, where the empty block is drawn. A marker the
+    // slash menu picked always goes there.
     const w = (intoStandIn ? null : chain(this.doc, p.base(this.doc, value), p.steps))
       ?? chain(this.doc, p.base(this.doc, PLACEHOLDER), [...p.steps, (doc, b) => type(fieldOf(doc, b), value)]);
     if (!w) return false;
@@ -2139,7 +2087,6 @@ export class Editor {
     return true;
   }
 
-  // A marker typed alone and held back is written as typed. -> true when it was.
   writeHeld(cx) {
     if (!this.pending || !this.seen.trim() || !this.editable()) return false;
     return this.writePending(this.seen, this.known.valid ? this.known.end : this.seen.length, cx, true);
@@ -2150,8 +2097,6 @@ export class Editor {
     return b ? fieldToDoc(fieldOf(this.doc, b), o.caret.end) : null;
   }
 
-  // Keys in a block not written yet change what it will be written as. Enter on a marker held back writes it, and
-  // an empty paragraph opens below what it made.
   pendingKey(key, cx) {
     const p = this.pending, item = p.block.kind === "item";
     if (key === "tab") return this.restep(item ? "indent" : "nest", cx);
@@ -2177,10 +2122,10 @@ export class Editor {
     cx.notify();
   }
 
-  // What was typed in the active field goes into the text as one splice of its block's source; nothing is parsed.
-  // A space that completes a markdown shortcut makes the block what its source now says. `event`: the field told us,
-  // rather than an action finding its value moved on. `own`: the change is our own replace(), whose event is owed
-  // already; any other change is the user's, whose event is this one or one still to come.
+  // What was typed in the active field goes into the text as one splice of its block's source; nothing is parsed. A
+  // space that completes a markdown shortcut makes the block what its source says. `event`: the field told us, not an
+  // action finding its value moved on. `own`: our own replace(), whose event is owed already; any other change is the
+  // user's, whose event is this one or one still to come.
   fieldChanged(state, cx, { event = true, own = false } = {}) {
     if (state !== this.field || this.reading || !this.activeKey || !this.editable()) {
       // Nobody types in a field that is not open: its changes are owed ones, such as a readout's made on leaving.
@@ -2247,8 +2192,8 @@ export class Editor {
     if (on && state === this.spare && this.armedKey && this.shiftField !== this.armedKey) this.takeArmed(cx);
   }
 
-  // The rows flag of the active field: one row while it has no line break, measures under 1.5 rows and its text is
-  // estimated to fit, so the flag drops before a wrap is measured.
+  // "one" while the active field has no line break, measures under 1.5 rows and its text is estimated to fit, so the
+  // flag drops before a wrap is measured.
   rowsFlag() {
     const d = this.data.get(this.activeKey);
     if (!d) return this.seen.includes("\n") ? "many" : "one";
@@ -2263,8 +2208,8 @@ export class Editor {
     this.redraw([this.activeKey], cx);
   }
 
-  // The row of the active field's offset `at` (the caret), as a y in the column (block tops are 0-based there), or
-  // null for a block not drawn yet.
+  // The y in the column (block tops are 0-based there) of the row holding the active field's offset `at`, or null for a
+  // block not drawn yet.
   caretTop(i, at = this.known.valid ? this.known.end : 0) {
     const d = this.data.get(this.blocks[i]?.key);
     if (!d) return null;
@@ -2285,8 +2230,7 @@ export class Editor {
     cx?.notify();
   }
 
-  // A click on a block that is not armed: the caret goes where the press estimate puts it, and the clicked line
-  // stays under the pointer when the field shows a fence or dash line above it.
+  // The clicked line stays under the pointer when the field shows a fence or dash line above it.
   clickBlock(key, p, cx) {
     const i = this.at.get(key), b = this.blockByKey(key);
     if (i === undefined || !b) return;
@@ -2295,8 +2239,8 @@ export class Editor {
     this.activate(key, this.pressCaret(b, x, y), cx, { shift: fenced && b.kind !== "mermaid" ? this.data.get(key).row : 0, reveal: false });
   }
 
-  // The field caret a press at (x, y) on block b gives, x from the column's left edge and y from the block's top: the
-  // press estimate of its field as drawn now, rendered or (for the block being edited) the field itself.
+  // The field caret for a press at (x, y) on block b, x from the column's left edge and y from the block's top,
+  // estimated from the field as currently drawn: rendered, or the field itself for the edited block.
   pressCaret(b, x, y) {
     const d = this.data.get(b.key), active = b.key === this.activeKey, c = this.chromeOf(d, active), cal = this.calOf(d.style);
     const value = active ? this.seen : this.openedValue(b);
@@ -2341,8 +2285,8 @@ export class Editor {
     return j;
   }
 
-  // The caret leaves the block being edited for the previous (dir < 0) or next block, rules skipped. Past the end of
-  // a raw block that is the last one, an empty paragraph opens below it.
+  // The caret leaves the edited block for the previous (dir < 0) or next block, rules skipped. Past the end of a raw
+  // block that is the last one, an empty paragraph opens below it.
   cross(dir, cx, column = null) {
     this.syncField(cx);
     const blocks = this.blocks, i = this.at.get(this.activeKey);
@@ -2393,8 +2337,7 @@ export class Editor {
     this.revealCaret(cx);
   }
 
-  // The caret, read 30 ms after a mouse-up in the field, once the field has put it where the press went. It is under
-  // the pointer, so the page stays where it is.
+  // Reads the caret once the field has put it where the press went. It is under the pointer, so the page stays put.
   readLater(cx) {
     const act = this.act;
     cx.timer.after(READ_AFTER_UP_MS, cx => {
@@ -2407,9 +2350,9 @@ export class Editor {
   }
 
   // The field's wrapper lives in the block's view, whose cx cannot redraw this one: what needs a cx goes to the size
-  // task. The press is marked so that the viewport, if it hears it too, leaves it to the field. An armed block is
-  // opened by a mouse-up only when the press began in its field; a press there with Shift selects blocks instead, and
-  // the field's focus is not taken. Any other press clears a block selection.
+  // task. The press is marked so the viewport, if it hears it too, leaves it to the field. An armed block opens on
+  // mouse-up only when the press began in its field; with Shift the press selects blocks and the field's focus is not
+  // taken.
   fieldDown(key, e) {
     this.fieldPress = { kind: "down", x: e?.position?.x, y: e?.position?.y };
     this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e);
@@ -2476,7 +2419,6 @@ export class Editor {
     this.redraw([old, want], cx);
   }
 
-  // The page moved under a resting pointer: the block now under it is armed. A press under way arms nothing.
   rearm(cx) {
     this.updateHover(cx);
     if (this.pointer && !this.press && !this.fieldHeld) this.arm(this.pointer, cx);
@@ -2489,7 +2431,7 @@ export class Editor {
     this.redraw([old], cx);
   }
 
-  // Escape: the caret is kept for Enter to come back to, and editing stops.
+  // The caret is kept (`stored`) for Enter to come back to.
   escape(cx) {
     this.writeHeld(cx);
     this.commit(cx);
@@ -2501,8 +2443,6 @@ export class Editor {
     this.deactivate(cx);
   }
 
-  // Enter with no block being edited: back to the caret kept at Escape when its block is on the page, else to the
-  // start of the first block at the top of the page; a page with no blocks gets an empty paragraph.
   resume(cx) {
     const s = this.stored, i = s ? this.at.get(s.key) : undefined;
     if (i !== undefined && this.onPage(i)) { this.activate(s.key, s.caret, cx); return; }
@@ -2511,7 +2451,7 @@ export class Editor {
     else this.openPending(cx);
   }
 
-  // The caret as the field has it now, for a key that acts on it. `known` can be a native move behind: the key-up that
+  // The caret as the field has it, for a key that acts on it. `known` can be a native move behind: the key-up that
   // reads such a move out may come after the next key's press.
   caretNow() {
     const c = this.caretOf(this.field);
@@ -2523,8 +2463,8 @@ export class Editor {
     return this.f && !this.pending && this.known.valid ? fieldToDoc(this.f, this.known.end) : null;
   }
 
-  // A structural op: an entry of its own in the history, parsed in at once. Then the block holding document offset
-  // `at` (the op's caret) is opened with field caret `caret` (null: where `at` falls in it), or `then` runs instead.
+  // A structural op is an entry of its own in the history, parsed in at once. Then the block at document offset `at`
+  // (the op's caret) is opened with field caret `caret` (null: where `at` falls in it), or `then` runs instead.
   op(s, cx, { at = s?.caret, caret = null, then = null } = {}) {
     if (!s) return false;
     const before = this.caretDoc();
@@ -2560,9 +2500,8 @@ export class Editor {
     this.op(split(this.doc, now, r.start, r.end), cx);
   }
 
-  // Enter in a block with no text. An item moves out a level, or out of its list at the top, where it is an empty
-  // paragraph. Any other block goes for an empty paragraph in its place, unless the file has it with no text (a
-  // heading): then the paragraph opens below it.
+  // An empty item moves out a level, or out of its list at the top as an empty paragraph. A heading the file already
+  // has with no text gets a paragraph below it; any other empty block is replaced by one.
   enterEmpty(b, cx) {
     if (b.kind === "item") {
       this.commit(cx);
@@ -2577,7 +2516,6 @@ export class Editor {
     this.paragraphInPlace(b, cx);
   }
 
-  // Block b goes, emptied by typing or as the file has it, and an empty paragraph not written yet takes its place.
   paragraphInPlace(b, cx) {
     const pos = b.start, depth = b.depth;
     this.leave(cx);
@@ -2586,15 +2524,13 @@ export class Editor {
     this.openPendingWith({ base: this.baseAt(pos, depth) }, cx);
   }
 
-  // A heading, quote or item with no text loses its marker: what is left is a blank line, no block, so the empty
-  // paragraph it becomes is one not written yet, in its place.
+  // With its marker gone a heading, quote or item with no text is a blank line, not a block: the empty paragraph it
+  // becomes is one not written yet.
   emptyInPlace(b, cx) {
     const s = b.subtreeEnd > b.end ? toParagraph(this.doc, b) : remove(this.doc, b);
     return this.op(s, cx, { then: () => this.openPendingWith({ base: this.baseAt(s.caret, b.depth) }, cx) });
   }
 
-  // Where an empty paragraph at depth `depth` goes at document offset `pos`, a line start where a block was: after the
-  // block of that depth that ends there, else before the one that starts there, else after what is there.
   baseAt(pos, depth) {
     const bl = this.doc.blocks, j = bl.findIndex(b => b.start >= pos), next = j < 0 ? null : bl[j];
     let prev = bl[(j < 0 ? bl.length : j) - 1] ?? null;
@@ -2604,10 +2540,8 @@ export class Editor {
     return prev ? afterKey(prev.key, "paragraph") : next ? beforeKey(next.key, "paragraph") : atEnd;
   }
 
-  // Enter on a paragraph holding only a fence (```js) or a rule (---): the commit makes it what its source says. A code
-  // block takes the caret onto its empty line, closed: the commit closes a fence that would take in what follows, in
-  // the typing's own entry, and one that ends the file is closed here, in the same entry. A rule gets an empty
-  // paragraph below it.
+  // The commit makes a paragraph holding only a fence (```js) or a rule (---) what its source says, closing a fence
+  // that would take in what follows in the typing's own entry; one that ends the file is closed here, in the same entry.
   enterTyped(cx) {
     this.commit(cx);
     let b = this.blockByKey(this.activeKey);
@@ -2623,8 +2557,6 @@ export class Editor {
     this.activate(b.key, this.entry(b, this.openedValue(b), 1, null), cx);
   }
 
-  // Enter at the end of a quote whose last paragraph is empty: that paragraph goes, and an empty paragraph opens after
-  // the quote.
   leaveQuote(b, cx) {
     const f = fieldOf(this.doc, b), s = type(f, f.value.replace(/\n+$/, ""));
     this.op(s, cx, {
@@ -2678,10 +2610,8 @@ export class Editor {
     this.op(mergeIntoPrevious(this.doc, p, now), cx);
   }
 
-  // Backspace at the start of a raw block with nothing between its fences, or nothing at all: the block goes and the
-  // caret goes to the end of the block above, past any rules, or to an empty paragraph in its place when nothing but
-  // rules is above it. A block emptied by typing goes as the caret leaves it: a commit would take it away with the
-  // block being edited.
+  // Backspace at the start of an empty raw block removes it. A block emptied by typing goes as the caret leaves it: a
+  // commit would take it away with the block being edited.
   removeEmptyRaw(b, i, cx) {
     const lines = this.seen.split("\n"), fenced = Boolean(b.fence) || b.kind === "frontmatter";
     const inner = fenced ? lines.slice(1, b.closed !== false ? -1 : undefined) : lines;
@@ -2701,8 +2631,7 @@ export class Editor {
   }
 
   // Forward Delete at the end of a block, which the field reports as a change that left its value alone: once a
-  // readout shows the caret there, the next text block joins this one, or the rule after it goes. A raw block takes
-  // nothing in.
+  // readout confirms the caret is there, the next text block joins this one or the rule after it goes.
   deleteAtEnd(cx) {
     if (this.pending || !this.activeKey) return;
     const c = this.caretOf(this.field), end = this.seen.length;
@@ -2736,9 +2665,8 @@ export class Editor {
     this.revealCaret(cx);
   }
 
-  // Page Up / Page Down while editing: the page moves by its height less 40 and the caret a page with it, to the start
-  // of the row there, which is the row now at its place on the screen unless the page could not move that far. Past
-  // the first or last block the caret goes to its start or end.
+  // The page and the caret move a page, the caret to the start of the row at its place on screen unless the page
+  // could not move that far; past the first or last block it goes to that block's start or end.
   pageCaret(dir, cx) {
     this.caretNow();
     const i = this.at.get(this.activeKey), top = i === undefined ? null : this.caretTop(i), blocks = this.blocks;
@@ -2781,13 +2709,12 @@ export class Editor {
     const r = text.includes("\n") ? this.caretNow() : null;
     if (!r) return this.typeText(text, cx);
     if (this.pending) {
-      // Written with a stand-in text where it goes, which the paste then replaces.
       const value = this.seen.slice(0, r.start) + text + this.seen.slice(r.end), p = this.pending;
       const w = chain(this.doc, p.base(this.doc, PLACEHOLDER), [...p.steps, (d, b) => paste(d, b, 0, PLACEHOLDER.length, value)]);
       if (!w) return this.typeText(text, cx);
       return this.pasted({ ...w.splice, caret: w.splice.caret - (value.length - r.start - text.length) }, cx);
     }
-    // A paragraph left with no text is no block once parsed: the lines take its place as it is now.
+    // A paragraph left with no text is no block once parsed: the lines take its place as it is.
     if (b.kind === "paragraph" && !this.seen.trim() && this.f?.text === this.text) {
       const s = type(this.f, text, 0, b.depth > 0 ? b.contPrefix : "");
       return s && this.pasted(s, cx);
@@ -2808,7 +2735,6 @@ export class Editor {
     return typed;
   }
 
-  // Our text goes in at the field's selection and is taken in at once, apart from typing not taken in yet.
   typeOwn(text, cx) {
     this.syncField(cx);
     if (!this.guard(() => this.replaceIn(this.field, text))) return false;
@@ -2822,9 +2748,9 @@ export class Editor {
     this.openAt(s.caret, cx);
   }
 
-  // Cmd+Z (dir < 0) and Cmd+Shift+Z. No commit first: its rules of leaving would record entries that this undo then
-  // took back, and Cmd+Z on a block emptied by typing would seem to do nothing. An empty block that a key opened, and
-  // nothing was typed in yet, is undone by going back to where the key was pressed.
+  // No commit first: its rules of leaving would record entries that this undo then took back, and Cmd+Z on a block
+  // emptied by typing would seem to do nothing. An empty block that a key opened, with nothing typed in yet, is undone
+  // by going back to where the key was pressed.
   undo(dir, cx) {
     if (!this.file || !this.loaded || this.error || this.remote || this.locked) return;
     this.syncSource(cx);
@@ -2856,9 +2782,9 @@ export class Editor {
     if (!this.activate(b.key, caret ?? docToField(fieldOf(this.doc, b), at), cx)) this.handle.focus();
   }
 
-  // The slash menu belongs to one activation of a block that can still be written, and only while its field shows
-  // "/" + query where the menu says: a stale menu draws nothing and takes no key, should a close be missed. The check
-  // fixture has no file and shows its menu all the same.
+  // The menu belongs to one activation of a writable block and only while its field shows "/" + query where the menu
+  // says, so a stale menu draws nothing and takes no key should a close be missed. The check fixture has no file and
+  // shows its menu anyway.
   slashOpen() {
     const s = this.slash;
     return Boolean(s) && s.act === this.act && Boolean(this.activeKey) && (!this.file || this.editable()) && this.seen.slice(s.at, s.end) === `/${s.query}`;
@@ -2884,7 +2810,7 @@ export class Editor {
     cx.notify();
   }
 
-  // In code, tables and diagram source a slash is text, and Enter a new line there. Without the key table Enter is
+  // In code, tables and diagram source a slash is text, and Enter a line break there. Without the key table Enter is
   // the field's own, so nothing could pick a row.
   slashable() {
     if (this.mode !== "reading" || !this.keysBound || !this.editable()) return false;
@@ -2899,15 +2825,13 @@ export class Editor {
     cx?.notify();
   }
 
-  // The caret read out after a key or a press moved it: the menu stays only while the caret is in its query.
   slashCaret(c, cx) {
     const s = this.slash;
     if (s && !(c && c.start === c.end && c.end > s.at && c.end <= s.end)) this.closeSlash(cx);
   }
 
-  // A key of the table while the menu is open. -> true when the menu took it: Up and Down move the highlight, Enter
-  // and Tab pick it, Escape closes the menu. Enter and Tab with no rows, and every other key, close it and then do
-  // what they always do.
+  // -> true when the menu took the key (Up and Down move the highlight, Enter and Tab pick, Escape closes). Enter and
+  // Tab with no rows, and every other key, close it and then do what they always do.
   slashAction(name, cx) {
     const s = this.slash;
     if (name === "mdb-up" || name === "mdb-down") {
@@ -2930,10 +2854,10 @@ export class Editor {
     cx.notify();
   }
 
-  // Command c picked: the block becomes what it names, or its lines go in where the slash was, and "/query" goes.
-  // That is one entry of the history. A block a text style leaves empty goes when it is left so, as one the user
-  // emptied would: it keeps the value it was opened with. A line the commit parses as a raw block (`~~~ /code`)
-  // takes no command, and neither does a block retype refuses: both stay as typed.
+  // Command c picked: the block becomes what it names, or its lines go in where the slash was, and "/query" goes, as one
+  // history entry. A block a text style leaves empty goes when left so, as one the user emptied would: it keeps the
+  // value it was opened with. A line the commit parses as a raw block (`~~~ /code`) takes no command, nor does a block
+  // retype refuses: both stay as typed.
   slashPick(c, cx) {
     this.syncField(cx);
     if (!this.slashOpen()) return;
@@ -2974,8 +2898,7 @@ export class Editor {
     else this.handle.focus();
   }
 
-  // Text picked in a block that holds nothing but the query: an empty paragraph, which is one not written yet, in its
-  // place. An item keeps its sub-items, moved out with it.
+  // Text picked in a block that holds nothing but the query: an item keeps its sub-items, moved out with it.
   emptyParagraphFor(b, unquery, cx) {
     if (b.subtreeEnd === b.end) return this.paragraphInPlace(b, cx);
     const w = chain(this.doc, unquery, ["paragraph"]);
@@ -3003,7 +2926,7 @@ export class Editor {
     if (c.to.kind !== "paragraph" && !same) this.writePending(c.marker, c.marker.length, cx, false, true);
   }
 
-  // Where the menu goes now: over or under the caret row, its edge at the slash. Null while that row has no place.
+  // Where the menu goes: over or under the caret row, its edge at the slash. Null while that row has no place.
   slashPlace() {
     const s = this.slash, key = this.activeKey, i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
@@ -3016,7 +2939,7 @@ export class Editor {
     return { ...place, left: slashX({ col, advance: this.calOf(d.style).advance, fieldW: c.w, fieldX: c.x, viewW }) };
   }
 
-  // The menu, drawn by the root over the page. Its rows take presses and the pointer before anything under them.
+  // Drawn by the root over the page; its rows take presses and the pointer before anything under them.
   slashMenu(t) {
     if (!this.slashOpen()) return null;
     const place = this.slashPlace();
@@ -3045,8 +2968,6 @@ export class Editor {
       .when(Boolean(c.hint), el => el.child(div().flex_none().font_family(this.fonts.mono).text_size(11.5).text_color(t.dim).child(c.hint)));
   }
 
-  // A calibration sample was measured: once all of a style's samples are, its row, field line height and pads follow,
-  // and they are used once every style has them.
   calSized(gen, name, part, size, cx) {
     if (gen !== this.calGen || !this.calibrating) return;
     const z = zoom(), sizes = (this.calSizes[name] ??= {});
@@ -3068,7 +2989,7 @@ export class Editor {
     cx.notify();
   }
 
-  // The theme, the fonts or the zoom changed since the last draw. A draw may not notify, so the work goes to a timer.
+  // A draw may not notify, so a theme, font or zoom change is handled on a timer.
   checkLook(t, cx) {
     const look = [Object.values(t).join(), this.fonts.sans, this.fonts.mono, zoom()].join("|");
     if (this.look === look) return;
@@ -3077,8 +2998,6 @@ export class Editor {
     if (!first) cx.timer.after(0, cx => this.restyle(cx));
   }
 
-  // Every block draws again in the new look, even those not mounted now, the samples are measured again in it, and
-  // each diagram is asked for in the new colours, showing its last image until the new one is drawn.
   restyle(cx) {
     if (this.closed) return;
     ++this.calGen;
@@ -3117,7 +3036,6 @@ export class Editor {
     return strip;
   }
 
-  // A big buffer is counted as of the last time it settled (a save timer, a load, a mode switch), not on every key.
   counts() {
     const text = this.text.length > BIG ? this.settled : this.text;
     if (this.countsFor !== text) { this.countsFor = text; this.countList = stats(text); }

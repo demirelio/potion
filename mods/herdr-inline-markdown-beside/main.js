@@ -1,8 +1,7 @@
-// The cmd-shift-m key of herdr-inline-markdown. A key reaches a mod through `mod.open`, which gives it no props but
-// its overlay, so the Markdown mod can't tell a picker for a pane beside from one for a new tab: this mod, opened as
-// an unseen popup, opens that picker and goes. Pressed again while the picker it opened is still open, it closes it,
-// as cmd-m pressed again does; any other open picker gives way to the new one (picker.js closes it). Mods can't import
-// each other, so the dialog's spec and the shared key picker.js names the open picker under are repeated.
+// A key reaches a mod through `mod.open`, which gives it no props but its overlay, so the Markdown mod can't tell a
+// picker for a pane beside from one for a new tab: this mod (cmd-shift-m), opened as an unseen popup, opens that
+// picker and goes. Mods can't import each other, so the dialog's spec and the shared key picker.js names the open
+// picker under are repeated.
 import { View, div } from "gpui-kit";
 import { props, shared, openOverlay, closeOverlay } from "herdr";
 

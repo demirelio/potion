@@ -1,12 +1,11 @@
-// One undo history for a document: splices in document offsets, shared by Reading and Markdown. Pure: no imports
-// from herdr or gpui-*.
+// Splices in document offsets, shared by Reading and Markdown. No imports from herdr or gpui-*.
 import { applySplice, diff } from "./blocks.js";
 
 export const MAX_ENTRIES = 200;
 export const MAX_BYTES = 2 * 1024 * 1024;
 export const GROUP_MS = 1000;
 
-// The smallest splice that does to `text` what `s` does: the common ends of the removed and inserted text dropped.
+// Drops the common ends of the removed and inserted text.
 export function trim(text, s) {
   const removed = text.slice(s.start, s.end), d = diff(removed, s.insert);
   return { start: s.start + d.at, end: s.start + d.at + d.removed, insert: d.inserted };
@@ -39,8 +38,8 @@ function align(text, g, e) {
   }
 }
 const hasNewline = s => s.includes("\n") || s.includes("\r");
-// Where typing that continues group g goes: its `join` when the group wrote more than was typed (a new block written
-// with its first letter, whose line end follows the caret), else the end of what it inserted.
+// A group that wrote more than was typed (a new block written with its first letter) continues at its `join`, before
+// the line end that follows the caret; else at the end of what it inserted.
 const joinOf = g => g.join ?? g.start + g.inserted.length;
 
 // -> a history. record(text, splice, meta) takes the text before the splice and
@@ -104,8 +103,8 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
 
   return {
     record,
-    // Folds the splice `s`, made on `text` right after the newest entry, into that entry: a fix-up of the same edit (the
-    // fence a commit closes, a shortcut's rewrite of the marker), so that one undo takes back both.
+    // Folds `s`, made on `text` right after the newest entry, into that entry: a fix-up of the same edit (the fence a
+    // commit closes, a shortcut's rewrite of the marker), so that one undo takes back both.
     amend(text, s, meta = {}) {
       const e = done.at(-1);
       if (!e || !matches(text, e.start, e.inserted)) return record(text, s, meta);
@@ -128,7 +127,6 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
       size += bytes(e);
       return e;
     },
-    // Ends the open typing group: a structural op, a paste, a toggle or a block switch does this.
     close() { open = null; },
     // Splits the newest edit off its group into an entry of its own (the space that completed a shortcut).
     isolateLast() {

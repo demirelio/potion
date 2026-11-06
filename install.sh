@@ -33,7 +33,6 @@ usage() { awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "${BA
 copy() { mkdir -p "$(dirname "$2")"; cp -p "$1" "$2"; }
 sha256() { if command -v shasum >/dev/null; then shasum -a 256 "$1"; else sha256sum "$1"; fi | cut -d' ' -f1; }
 
-# mods/<name>: its files replace the installed ones. What was there is kept under $BACKUP when it differed.
 install_mod() {
   local name="$1" src="$REPO/mods/$1" dst="$APP_HOME/mods/$1" f stage
   [ -d "$src" ] || die "$src is missing: run install.sh from a complete checkout"
@@ -138,7 +137,7 @@ install_mermaid() {
     return 1
   fi
   printf '%s' "$node" > "$MERMAID_HOME/node-path"
-  printf '%s' "$(mermaid_version)" > "$MERMAID_HOME/version" # last: a half install reads as not installed
+  printf '%s' "$(mermaid_version)" > "$MERMAID_HOME/version"
   say "mermaid: renderer $(cat "$MERMAID_HOME/version") installed in $MERMAID_HOME"
 }
 

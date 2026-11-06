@@ -1,5 +1,5 @@
-// `fs/promises` as a mod imports it, in memory: `files` maps a path to what was written there; a folder exists
-// while a file is under it. Nothing touches disk. reset() in herdr.mjs empties it.
+// `fs/promises` as a mod imports it, in memory: `files` maps a path to what was written there, and a folder exists
+// while a file is under it.
 
 export const files = new Map();
 

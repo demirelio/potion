@@ -5,7 +5,7 @@ import { space, pane } from "./helpers.mjs";
 
 const { openMarkdown, registerPane, paneOf, rememberRecent } = await import("../mods/herdr-inline-markdown/open.js");
 
-const PANES = "herdr-inline-markdown.panes", RECENT = "herdr-inline-markdown.recent", OLD_TABS = "herdr-inline-markdown.tabs";
+const PANES = "herdr-inline-markdown.panes", RECENT = "herdr-inline-markdown.recent";
 const tab = (id, more = {}) => ({ id, name: id, active: false, zoomed: false, status: null, ...more });
 const inSpace = (id, ...tabs) => space(id, id, { tabs: tabs.map(t => tab(t)) });
 const mdPane = (id, tabId) => pane(id, tabId, null, { terminal: null, mod: "herdr-inline-markdown" });
@@ -243,15 +243,6 @@ test("a stale entry does not hide a live one for the same file", () => {
   assert.deepEqual(calls.run, [["space.select", { id: "s1" }], ["tab.select", { id: "tb2" }]]);
 });
 
-test("the old tab registry is not read", () => {
-  state.spaces = [inSpace("s1", "tb1")];
-  state.panes = [mdPane("p1", "tb1")];
-  state.shared[OLD_TABS] = { tb1: ":/a/b.md" };
-  openMarkdown({ file: "/a/b.md", place: "tab", space: "s1" });
-  assert.deepEqual(calls.run.map(c => c[0]), ["tab.new"]);
-  assert.deepEqual(calls.setShared.map(c => c[0]), [RECENT], "nor written");
-});
-
 test("place tab remembers the file as recent, after the tab command; going to an open tab counts too", () => {
   openMarkdown({ file: "/a/b.md", machine: "devbox", space: "s1" });
   assert.deepEqual(stored(RECENT), [{ machine: "devbox", path: "/a/b.md" }]);
@@ -374,7 +365,7 @@ test("registerPane does not write when nothing would change", () => {
   assert.deepEqual(calls.setShared, []);
 });
 
-test("registerPane never touches the old tab registry", () => {
+test("registerPane writes only the pane registry", () => {
   state.panes = [mdPane("p2", "tb2")];
   registerPane("p2", "/a/b.md", null);
   assert.deepEqual(calls.setShared.map(c => c[0]), [PANES]);

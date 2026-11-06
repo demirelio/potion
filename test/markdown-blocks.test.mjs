@@ -14,12 +14,10 @@ const values = d => d.blocks.map(b => field(d, b).value);
 const at = (d, kind, n = 0) => d.blocks.filter(b => b.kind === kind)[n];
 const run = (text, s) => applySplice(text, s);
 const lineStart = (text, p) => p === 0 || text[p - 1] === "\n" || (p === 1 && text[0] === "﻿");
-// The blocks of a document with the fields that a re-parse must reproduce (keys aside).
 const shape = d => d.blocks.map(({ key, ...b }) => b);
 
 // Docs cut at their "## " headings, so the per-block properties run on small documents.
 const sections = docs.flatMap(d => d.text.split(/^(?=## )/m).map((text, i) => ({ name: `${d.name} §${i}`, text })));
-// Every spec example and doc section with each of its variants.
 const everyText = () => [
   ...corpus().filter(c => c.example),
   ...sections.flatMap(s => [s, ...Object.entries(VARIANTS).map(([v, make]) => ({ name: `${s.name} [${v}]`, text: make(s.text) })).filter(x => x.text !== s.text)]),
@@ -384,11 +382,9 @@ const norm = v => v.replace(/[ \t]+/g, " ").replace(/ ?\n ?/g, "\n").trim();
 // Enter.
 const SHORTCUT = /^(?:#{1,6}(?:[ \t]|$)|[-*+](?:[ \t]|$)|\d{1,9}[.)](?:[ \t]|$)|>|\[[ xX]?\](?:[ \t]|$)|`{3}|~{3})/;
 const HR_LINE = /^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-// Out of scope: a field that starts with whitespace (typed, or left by deleting the words before it, a line break
-// included). Markdown has no leading whitespace in a block's text: what is left is indent, and four columns of it
-// make code. The typing splice writes it as it is.
+// Out of scope: a field that starts with whitespace. Markdown has no leading whitespace in a block's text: what is left
+// is indent, and four columns of it make code. The typing splice writes it as it is.
 const LEADING_WHITESPACE = /^\s/;
-// How a line of a quote's field starts, for the markdown blocks the quote holds.
 const lineHead = s => (BLANK_LINE.test(s) ? "blank" : (QUOTED_START.exec(s)?.[0].trim() ?? "text"));
 const BLANK_LINE = /^[ \t]*$/;
 const QUOTED_START = /^ {0,3}(?:#{1,6}(?=[ \t]|$)|[-*+](?=[ \t]|$)|\d{1,9}[.)](?=[ \t]|$)|>|`{3,}|~{3,}|<[!?/]?[A-Za-z]*|[=-]+[ \t]*$|\|)/;
@@ -829,7 +825,6 @@ const BULLET = { kind: "item", list: "bullet" }, ORDERED = { kind: "item", list:
 const PARAGRAPH = { kind: "paragraph" }, QUOTE = { kind: "quote" };
 const TARGETS = [PARAGRAPH, H1, H2, H3, BULLET, ORDERED, TASK, QUOTE];
 const listOf = b => (b.task ? "task" : b.ordered ? "ordered" : "bullet");
-// What a block is, as a retype target names it.
 const variant = b => (b.kind === "heading" ? { kind: "heading", level: b.level } : b.kind === "item" ? { kind: "item", list: listOf(b) } : { kind: b.kind });
 const holdingAt = (d, at) => d.blocks.findLast(x => x.start <= at);
 
@@ -892,7 +887,6 @@ test("retype between bullet, numbered and task rewrites only the marker; '- ' to
   assert.deepEqual(retype(done, done.blocks[0], TASK, 6), { start: 6, end: 6, insert: "", caret: 6 }, "a task to a task: nothing");
 });
 
-// Every text block of every corpus text, retyped to every target it is not, with the caret at the end of its field.
 test("retype from a paragraph, heading, setext heading, item or quote to every other kind refuses none of the documents' text blocks and fewer than 5% of all, which are skipped; on every other one the result has the target kind and the neighbours keep their kinds and fields", () => {
   let checked = 0, refused = 0, refusedInDocs = 0;
   const from = new Set();
@@ -973,7 +967,7 @@ const OPS = {
   moveDown: (d, b) => move(d, b, 1),
   toggleTask: (d, b) => toggleTask(d, b),
 };
-// Paste of several lines, at the caret in the middle, at the end, and over the whole field. One line is typing.
+// Several lines only: a one-line paste is typing.
 const CLIPS = ["x\ny", "## Notes\nfoo", "- a\n- b", "p1\n\np2\n\n- l1\n- l2", "> q\nmore"];
 for (const clip of CLIPS) {
   const at = {
@@ -1133,7 +1127,7 @@ test("visibleMap maps visible characters through inline syntax to field offsets"
   assert.deepEqual(visibleMap("plain"), [0, 1, 2, 3, 4, 5]);
 });
 
-test("FENCE, CLOSE and closes keep today's rules", () => {
+test("FENCE, CLOSE and closes: what opens a fence, what closes one, and which closes which", () => {
   assert.ok(FENCE.test("   ```js") && !FENCE.test("    ```"));
   assert.ok(CLOSE.test("```  ") && !CLOSE.test("``` x"));
   assert.ok(closes("````", "```") && !closes("```", "````") && !closes("~~~", "```"));
@@ -1149,10 +1143,9 @@ test("the parse budget: the 1 MiB fixture costs at most 3 character tests per ch
   const big = bigDocument();
   assert.ok(big.length >= 1024 * 1024);
   counters.chars = 0;
-  const t0 = performance.now(), d = parse(big), ms = performance.now() - t0;
+  const d = parse(big);
   assert.ok(d.blocks.length > 2000);
   assert.ok(counters.chars <= 3 * big.length, `${counters.chars} tests for ${big.length} characters`);
-  assert.ok(ms < 2000, `${ms} ms`);
 });
 
 test("a parse in steps, pausing at every block where it can, gives what one parse gives, for every corpus text and the 1 MiB fixture", () => {

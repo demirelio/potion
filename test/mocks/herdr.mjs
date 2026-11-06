@@ -1,6 +1,4 @@
 // The `herdr` module for tests: reads one mutable `state` and logs what a mod asks Herdr to do in `calls`.
-// reset() puts both back to a quiet default (one local space-less window, no machines but this one), and empties
-// the in-memory file system of ./fs.mjs.
 import { resetFs } from "./fs.mjs";
 
 const COLORS = `background surface canvas chrome popover raised hover selected border input foreground muted dim accent accent_foreground solid solid_foreground
@@ -15,9 +13,8 @@ function makeStorage() {
   return { getItem: k => (data.has(k) ? data.get(k) : null), setItem: (k, v) => void data.set(k, String(v)), removeItem: k => void data.delete(k), clear: () => data.clear() };
 }
 
-// state.disk is the files Herdr can read and write for a mod: path -> text. readTextFile reads it (null when the
-// path is absent) and writeTextFile compares `expected` with what is there (null = must not exist), stores on a match
-// and rejects with "stale" otherwise. A test overrides state.readTextFile / state.writeTextFile to script an answer.
+// state.disk maps path -> text. writeTextFile compares `expected` with what is there (null: must not exist) and
+// rejects with "stale" when they differ.
 export function reset(overrides = {}) {
   Object.assign(state, {
     spaces: [], machines: [{ name: null, layout: "ready" }], focused: null, panes: [], terminals: [], layout: null,
@@ -32,11 +29,11 @@ export function reset(overrides = {}) {
       return null;
     },
     closeOverlay: () => null, // a test that wants an overlay Herdr doesn't know has this throw
-    watchFolder: () => new Promise(() => {}), // no change is ever reported
-    nextCommand: () => new Promise(() => {}), // no key command ever comes
+    watchFolder: () => new Promise(() => {}),
+    nextCommand: () => new Promise(() => {}),
     knownAgents: async () => [],
-    agents: [], // what agents() lists
-    keys: [], // what keys() lists: [{ section: "global", keys: "cmd-t", action: "tab.new" }]
+    agents: [],
+    keys: [], // [{ section: "global", keys: "cmd-t", action: "tab.new" }]
     hc: async () => { throw new Error("hc: nothing set up for this call"); },
     window: { platform: "macos", titlebar: "none", buttons: false, maximized: false, fullscreen: false, active: true },
     settings: { zoom: 1, font_family: "Mono" },
@@ -73,6 +70,6 @@ export const nextCommand = () => state.nextCommand();
 export const knownAgents = options => { calls.knownAgents.push(options); return state.knownAgents(options); };
 export const agents = () => state.agents;
 export const keys = () => state.keys ?? [];
-// `hc` (herdr-core): what a mod passes is logged as an argv list; state.hc answers it.
+// herdr-core: what a mod passes is an argv list.
 export const hc = args => { calls.hc.push(args); return state.hc(args); };
 export const notify = n => { calls.notify.push(n); return `toast-${calls.notify.length}`; };

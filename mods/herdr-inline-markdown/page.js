@@ -1,6 +1,4 @@
-// The Reading page: the Column and Block nested views and renderBlock, which draws one block the same way for them,
-// for the check fixture and for the tree the editor draws itself when it has no nested views. A nested view gets
-// only {owner, key} as props and reads the rest from its editor through `owners`.
+// A nested view gets only {owner, key} as props and reads the rest from its editor through `owners`.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextView } from "gpui-base";
 import { theme } from "herdr";
@@ -20,7 +18,7 @@ export const FRONT_BOX = { px: 12, py: 10 };
 const RULE_H = 24;
 const CHECK = "mods/herdr-inline-markdown/check.svg";
 
-// The type of each kind of block: size and line height in px and multiples, the same rendered and in the field.
+// `size` is in px and `lh` a multiple of it; the same rendered and in the field.
 export const STYLES = {
   p: { size: 15, weight: 400, lh: 1.6 },
   h1: { size: 28, weight: 700, lh: 1.25 },
@@ -38,7 +36,6 @@ export const CALIBRATED = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "mono", "sma
 const RAW_KINDS = new Set(["code", "mermaid", "table", "html", "frontmatter", "hr", "definition"]);
 export const isRaw = kind => RAW_KINDS.has(kind);
 
-// -> { style, color, look } for a parsed block: `look` says how Reading draws it.
 export function lookOf(b) {
   if (b.kind === "heading") return { style: `h${b.level}`, color: "foreground", look: "text" };
   if (b.kind === "paragraph" && b.image) return { style: "small", color: "dim", look: "lines" };
@@ -52,8 +49,8 @@ export function lookOf(b) {
   return { style: "p", color: "muted", look: "rule" };
 }
 
-// The space above block i of the page (its padding-top, so its measured height includes it). Parent indices point
-// into `tree`, the document's blocks, which the page's own list may not be: it can hold a block not written yet.
+// Padding-top, so the block's measured height includes it. Parent indices point into `tree`, the document's blocks;
+// the page's own list may hold a block not written yet.
 export function spaceBefore(blocks, i, tree = blocks) {
   const b = blocks[i], prev = blocks[i - 1];
   if (!prev) return 0;
@@ -75,8 +72,8 @@ const sameList = (tree, a, b) => {
 };
 
 const BLOCK_START = /^(?:#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|>|`{3}|~{3}|\d{1,9}[.)](?:[ \t]|$)|(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$)/;
-// What a TextView draws for a text block. A heading's text that would start a block of its own is escaped, and
-// continuation lines are indented past anything that could interrupt a paragraph: the source said they continue it.
+// A heading's text that would start a block of its own is escaped, and continuation lines are indented past anything
+// that could interrupt a paragraph: the source said they continue it.
 export function displayText(b) {
   const content = b.content, defs = b.render.slice(content.length);
   if (b.kind === "quote") return b.render;
@@ -145,9 +142,8 @@ function rendered(owner, d, t) {
 
 const frontBox = (t, inner) => div().w_full().rounded(8).bg(t.surface).border_1().border_color(t.border).px(FRONT_BOX.px).py(FRONT_BOX.py).child(inner);
 
-// The active block's field, or the spare one armed over a block, in the block's own type. Its wrapper hands the
-// field's key-ups and presses to the editor itself, whether or not they would reach the editor's own elements, and
-// declares the key context: the field's row count, and whether the slash menu takes Up and Down.
+// The wrapper hands the field's key-ups and presses to the editor itself, whether or not they would reach the editor's
+// own elements, and declares the key context: the field's row count, and whether the slash menu takes Up and Down.
 function field(owner, d, t) {
   const st = STYLES[d.style], { sans, mono } = owner.fonts, raw = isRaw(d.kind);
   const input = Textarea.new(d.mode === "active" ? owner.field : owner.spare).w_full()

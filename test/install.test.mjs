@@ -26,7 +26,7 @@ const sha = file => createHash("sha256").update(readFileSync(join(REPO, "tools/m
 const pin = JSON.parse(readFileSync(join(REPO, "tools/mermaid/package.json"), "utf8")).dependencies["@mermaid-js/mermaid-cli"];
 const VERSION = `mmdc-${pin}+${sha("render.mjs").slice(0, 8)}+${sha("package-lock.json").slice(0, 8)}`;
 
-// A scratch app home, renderer home and state folder; `app` exists as Herdr leaves it after its first start.
+// `app` exists as Herdr leaves it after its first start.
 function scratch(name) {
   const dir = join(tmp, name), where = { app: join(dir, "app"), mermaid: join(dir, "mermaid"), state: join(dir, "state") };
   mkdirSync(join(where.app, "mods"), { recursive: true });
@@ -56,7 +56,6 @@ test("install_mods installs both mods, each a copy of its folder here", () => {
   assert.match(run.stdout, /^mod: herdr-inline-markdown installed in .*\nmod: herdr-inline-markdown-beside installed in /m);
 });
 
-// A bin folder first on PATH whose mv logs "from -> to" before it moves.
 function loggingMv(name) {
   const bin = join(tmp, name, "bin"), log = join(tmp, name, "mv.log");
   mkdirSync(bin, { recursive: true });
@@ -297,7 +296,6 @@ test("mermaid_version names mermaid-cli, render.mjs and the lock file", t => {
   assert.match(VERSION, /^mmdc-\d+\.\d+\.\d+\+[0-9a-f]{8}\+[0-9a-f]{8}$/);
 });
 
-// A folder that tests run install_mermaid in: a bin folder with fake node and npm, first on PATH.
 function fakeTools(name, nodeScript) {
   const bin = join(tmp, name, "bin");
   mkdirSync(bin, { recursive: true });

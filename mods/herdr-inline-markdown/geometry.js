@@ -1,5 +1,4 @@
-// Where a press lands in a block's field, and the page arithmetic of the Reading viewport. Pure: no imports from
-// herdr or gpui-*. Lengths are logical pixels.
+// No imports from herdr or gpui-*. Lengths are logical pixels.
 import { codeIndent, visibleMap } from "./blocks.js";
 
 export const COLUMN = { maxWidth: 780, padX: 32, padTop: 28, padBottom: 160 };
@@ -10,10 +9,9 @@ const MONO = new Set(["code", "mermaid", "frontmatter", "html", "definition", "h
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const WORD = /[\p{L}\p{N}_]/u;
 
-// The field offset a press at (x, y), relative to the block's content box, lands on. `target` is
-// { kind, value, fenced, closed, rows, width, height }: `fenced` when the field's first line is a fence or front
-// matter dashes that Reading does not draw, `rows` the measured row count when known. The code indent Reading does
-// not draw is read off the value. `cal` is { rowPx, advance, monoAdvance }: the row height and the average prose and
+// (x, y) is relative to the block's content box. `target` is { kind, value, fenced, closed, rows, width, height }:
+// `fenced` when the field's first line is a fence or front matter dashes that Reading does not draw, `rows` the
+// measured row count when known. `cal` is { rowPx, advance, monoAdvance }: the row height and the average prose and
 // mono character advances.
 export function pressToField(target, x, y, cal) {
   if (target.kind === "table") return tablePress(target, x, y);
@@ -48,7 +46,6 @@ function monoPress(t, x, y, cal) {
   return 0;
 }
 
-// The nearest offset in `line` where a word starts or ends (or the line's ends).
 export function snapToWord(line, at) {
   let best = 0, gap = Infinity;
   for (let i = 0; i <= line.length; i++) {
@@ -116,8 +113,7 @@ function tablePress(t, x, y) {
   return cells.length ? cells[Math.min(c, cells.length - 1)].start : drawn[r].start;
 }
 
-// The cell after (dir > 0) or before (dir < 0) the one holding `caret`, as { start, end } of its trimmed text, or null
-// past the first or last cell.
+// -> { start, end } of the neighbouring cell's trimmed text, or null past the first or last cell.
 export function nextCell(value, caret, dir) {
   const all = tableCells(value).filter(r => !r.delimiter).flatMap(r => r.cells);
   let at = 0;
@@ -126,8 +122,8 @@ export function nextCell(value, caret, dir) {
   return next ? { start: next.start, end: next.end } : null;
 }
 
-// The visual row of `caret` in a field value: its line index when no line wraps (`rows`, the measured row count, at
-// most the line count); otherwise the measured extra rows shared out over the lines by length.
+// The line index when no line wraps (`rows`, the measured row count, is at most the line count); otherwise the
+// measured extra rows are shared out over the lines by length.
 export function caretRow(value, caret, rows) {
   const lines = value.split("\n");
   let line = 0, col = clamp(caret, 0, value.length);
@@ -148,8 +144,8 @@ export function caretRow(value, caret, rows) {
 export const isOneRow = ({ value, height, rowPx, width, advance }) =>
   !value.includes("\n") && height < 1.5 * rowPx && value.length * advance < 0.9 * width;
 
-// The column's left edge in md-viewport, and the column's x for a pointer x there.
 export const columnLeft = viewportW => Math.max(0, (viewportW - COLUMN.maxWidth) / 2) + COLUMN.padX;
+// `localX` is a pointer x in md-viewport coordinates.
 export const columnX = (localX, viewportW) => localX - columnLeft(viewportW);
 export const maxOffset = (contentH, viewportH) => Math.max(0, contentH - viewportH);
 export const clampOffset = (offset, contentH, viewportH) => clamp(offset, 0, maxOffset(contentH, viewportH));
@@ -178,7 +174,7 @@ export const estimateHeight = (lineCount, rowPx, spaceBefore = 0) => spaceBefore
 
 export const caretY = ({ blockTop, padTop = 0, chromeTop = 0, rowPx, row }) => blockTop + padTop + chromeTop + rowPx * row;
 
-// The offset that keeps [y, y + rowPx] inside [offset + 24, offset + viewportH - 72], moving the least.
+// Keeps [y, y + rowPx] inside the REVEAL margins, moving the least.
 export function revealOffset({ offset, viewportH, y, rowPx, contentH = Infinity }) {
   let o = offset;
   if (y < offset + REVEAL.top) o = y - REVEAL.top;
@@ -205,10 +201,8 @@ export const revealAt = ({ top, rowY = 0, fraction, viewportH, contentH = Infini
 
 export const pageStep = viewportH => Math.max(0, viewportH - PAGE_KEEP);
 
-// A drawn diagram is a frame that can break out of the column, as wide as the pane and at most `maxShare` of the
-// viewport tall, so the whole frame fits on screen with page above and below it; inside it the picture pans and zooms. `dpr` is the backing scale the sharp picture is made
-// for: the API gives none, and 2 is this machine's sharpest screen (a 1x screen only spends memory on it).
-// `sharpBudget` is the most pixels a sharp picture may have.
+// `dpr` is the backing scale the sharp picture is made for: the API gives none, and 2 is this machine's sharpest
+// screen (a 1x screen only spends memory on it). `sharpBudget` is the most pixels a sharp picture may have.
 export const FRAME = {
   margin: 32, pad: 12, minH: 120, maxShare: 0.7, edgeV: 24, readable: 0.75, zMax: 2, zoomPerPx: 0.005, settleMs: 300,
   dpr: 2, sharpBudget: 40e6, maxPx: 16000,
@@ -220,10 +214,9 @@ const SAME_ZOOM = 0.005;
 // Half a pixel: frame sizes are rounded, so content that fits exactly may measure a fraction over.
 const SLACK = 0.5;
 
-// The frame of a diagram whose picture is natW x natH layout px, in a viewport viewW x viewH, for a block whose
-// column part starts at blockLeft (viewport x) and is blockW wide. -> { w, h, left, ml, z0, zMin }: `left` in
-// viewport x, `ml` the margin that moves the frame there from the block's left edge (never positive), `z0` the
-// starting zoom and `zMin` the one that shows the whole picture.
+// natW x natH are the picture's layout px; the block's column part starts at blockLeft (viewport x). -> { w, h, left,
+// ml, z0, zMin }: `left` in viewport x, `ml` the margin that moves the frame there from the block's left edge (never
+// positive), `z0` the starting zoom and `zMin` the one that shows the whole picture.
 export function frameBox({ viewW, viewH, blockLeft, blockW, natW, natH }) {
   const F = FRAME, pageW = Math.max(blockW, viewW - 2 * F.margin), maxH = Math.max(F.minH, Math.floor(viewH * F.maxShare));
   const fitW = (pageW - 2 * F.pad) / natW, fitAll = Math.min(fitW, (maxH - 2 * F.pad) / natH);
@@ -277,8 +270,7 @@ export function zoomAround(box, nat, v, z1, fx, fy) {
   return clampView(box, nat, { z: z1, x: fx - (fx - v.x) * k, y: fy - (fy - v.y) * k });
 }
 
-// The next zoom of the − and + buttons from z (dir < 0 out, > 0 in): the steps and the frame's own z0 and zMin,
-// inside [zMin, zMax]. At an end it stays z.
+// dir < 0 zooms out. The steps include the frame's own z0 and zMin, within [zMin, zMax]; at an end it stays z.
 export function zoomStep(z, dir, z0, zMin) {
   const steps = [...new Set([...ZOOM_STEPS, z0, zMin])].filter(s => s >= zMin - 1e-9 && s <= FRAME.zMax + 1e-9).sort((a, b) => a - b);
   if (dir < 0) return steps.filter(s => s < z - SAME_ZOOM).at(-1) ?? z;
@@ -291,8 +283,7 @@ export const canZoom = (z, dir, zMin) => (dir < 0 ? z > zMin + SAME_ZOOM : z < F
 // right, kept below the top of the page while the frame's top is above it.
 export const toolsTop = (h, screenTop) => clamp(Math.max(FRAME.tools.top, FRAME.edgeV - screenTop), FRAME.tools.top, h - FRAME.tools.h - FRAME.tools.top);
 
-// The cell of the group at frame point (fx, fy) in a frame `w` wide with the group at `top`: "out", "pct", "in" or
-// null. The group's 1 px border counts with the cell beside it.
+// -> "out", "pct", "in" or null. The group's 1 px border counts with the cell beside it.
 export function frameTool(fx, fy, w, top) {
   const T = FRAME.tools, wide = T.out + T.pct + T.in + 2, x = fx - (w - T.right - wide);
   if (fy < top || fy >= top + T.h || x < 0 || x >= wide) return null;
@@ -328,7 +319,6 @@ export function slashX({ col, advance, fieldW, fieldX, viewW }) {
   return Math.max(0, Math.min(viewW - MENU.w - MENU.margin, Math.max(left, left + fieldX + x)));
 }
 
-// A new wheel gesture: a trackpad's "started", or the first event after a pause.
 export const startsGesture = (last, phase, now) => !last || phase === "started" || now - last.at > WHEEL.gapMs;
 
 // The axis of a gesture over a frame that pans sideways, once it has moved far enough to tell: sideways only when

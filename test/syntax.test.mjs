@@ -4,6 +4,9 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { makeCx } from "./helpers.mjs";
+
+const { BINDINGS, INSTALLED, RAW, SOURCE, TEXT, installKeys } = await import("../mods/herdr-inline-markdown/keys.js");
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -29,9 +32,10 @@ test("there are sources to check", () => {
   assert.deepEqual(modules.filter(m => m.mod === BESIDE).map(m => m.file), ["main.js"]);
 });
 
-for (const file of all) {
-  test(`node --check ${file.slice(root.length)}`, () => {
-    const r = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
+// Every other source is imported by a test, so a syntax error in it already fails the suite.
+for (const file of ["tools/mermaid/render.mjs", "test/hooks.mjs"]) {
+  test(`node --check ${file}`, () => {
+    const r = spawnSync(process.execPath, ["--check", join(root, file)], { encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
   });
 }
@@ -50,17 +54,19 @@ for (const { mod, file, label } of modules) {
   });
 }
 
-// Key bindings cannot be removed and every reload of a module would add the table again: the one flag on globalThis
-// is the key table's, set inside the function that installs it, never at the top level. It carries the version the
-// contexts carry, so a table whose contexts were renamed is installed on the next reload.
-test("herdr-inline-markdown hangs one flag on globalThis, the key table's, only inside installKeys and named by the contexts' version", () => {
-  const source = code("keys.js").replace(/\/\/.*$/gm, "");
-  const body = source.slice(source.indexOf("export function installKeys"));
-  assert.equal((source.match(/\bglobalThis\b/g) ?? []).length, 2);
-  assert.equal((body.match(/\bglobalThis\[INSTALLED\]/g) ?? []).length, 2, "read and set in installKeys");
-  assert.match(source, /^const VERSION = \d+;$/m);
-  assert.match(source, /^const INSTALLED = `herdr-inline-markdown\.keys\.\$\{VERSION\}`;$/m);
-  assert.match(source, /^export const TEXT = `MdText\$\{VERSION\}`, RAW = `MdRaw\$\{VERSION\}`, SOURCE = `MdSource\$\{VERSION\}`;$/m);
+// Key bindings cannot be removed and a reload runs the module again: only a flag on globalThis tells that the table is in.
+test("installKeys binds the table once per run, under a flag that carries the version of the contexts", () => {
+  assert.equal(INSTALLED in globalThis, false, "importing keys.js installs nothing");
+  const cx = makeCx(), version = name => /\d+$/.exec(name)?.[0];
+  try {
+    assert.equal(installKeys(cx), true);
+    assert.deepEqual(cx.bound, [BINDINGS]);
+    assert.equal(installKeys(cx), false, "a reload does not add the table again");
+    assert.equal(cx.bound.length, 1);
+  } finally { delete globalThis[INSTALLED]; }
+  assert.ok(version(TEXT), "the contexts end in a version");
+  for (const name of [RAW, SOURCE, INSTALLED]) assert.equal(version(name), version(TEXT), name);
+  for (const { context } of BINDINGS) assert.equal(/^Md(?:Text|Raw|Source)(\d+)/.exec(context)?.[1], version(TEXT), context);
 });
 
 test("herdr-inline-markdown names its key contexts only through keys.js, so raising VERSION renames every one", () => {

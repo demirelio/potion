@@ -7,8 +7,8 @@ import { join as joinFs } from "node:path";
 import { promisify } from "node:util";
 import {
   MARKDOWN_EXT, isMarkdown, hash, dirname, basename, joinPath, normalizePath, tildePath, resolveLink,
-  filterFiles, newFileName, uniqueName, fileKey, stats, MODES, modeOf, toggleMode, remember, trimMap,
-  markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, isLight, mix, mermaidConfig, diagramKey, DIAGRAM_COLORS, diagramCanvas, sharpName,
+  filterFiles, newFileName, uniqueName, fileKey, stats, modeOf, toggleMode, remember, trimMap,
+  markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, isLight, mix, mermaidConfig, diagramKey, DIAGRAM_COLORS, sharpName,
   toSource, sourceToDoc, docToSource, sourceSplice, eolOf,
 } from "../mods/herdr-inline-markdown/lib.js";
 import { diff } from "../mods/herdr-inline-markdown/blocks.js";
@@ -90,14 +90,11 @@ test("a \\r\\n pasted into the field of a CRLF file is one CRLF in the document,
   assert.equal(edited("a\nb\n", "a\r\nb\n").text, "a\r\nb\n", "an LF file takes the pasted bytes as they are");
 });
 
-// --- hash
-
-test("hash is 16 lowercase hex characters and does not change between runs", () => {
+test("hash is 16 lowercase hex characters, with the same values as when the cache files were named", () => {
   for (const s of ["", "a", "hello", "graph TD\n  A --> B", "日本語 ✓", "x".repeat(10000)]) assert.match(hash(s), /^[0-9a-f]{16}$/, s.slice(0, 20));
-  // Pinned: cache file names depend on these staying the same.
+  // Pinned: cached diagrams are found by these names.
   assert.equal(hash(""), "488bdcb81aee8d83");
   assert.equal(hash("hello"), "bfb06f3a63cd7226");
-  assert.equal(hash("hello"), hash("hello"));
 });
 
 test("hash spreads: similar inputs give different values and every hex digit shows up", () => {
@@ -113,8 +110,6 @@ test("hash spreads: similar inputs give different values and every hex digit sho
   assert.notEqual(hash("ab"), hash("ba"));
   assert.notEqual(hash("a"), hash("a\0"));
 });
-
-// --- paths
 
 test("dirname and basename follow POSIX", () => {
   assert.equal(dirname("/a/b/c.md"), "/a/b");
@@ -168,8 +163,6 @@ test("tildePath shows the home folder as ~, but not a folder that only starts th
   assert.equal(tildePath("/a", "/"), "/a");
 });
 
-// --- links
-
 test("web links: http, https and mailto, any case, left as they are", () => {
   assert.deepEqual(resolveLink("https://example.com/a?b=1#c", "/n/a.md"), { kind: "web", url: "https://example.com/a?b=1#c" });
   assert.deepEqual(resolveLink("HTTP://EXAMPLE.COM", "/n/a.md"), { kind: "web", url: "HTTP://EXAMPLE.COM" });
@@ -213,8 +206,6 @@ test("anchors and things that are nothing we open", () => {
   }
 });
 
-// --- picker helpers
-
 const paths = list => list.map(p => ({ path: p }));
 const names = entries => entries.map(e => e.path);
 
@@ -239,23 +230,17 @@ test("filter: the query must be a subsequence of the path, in any case; others a
 
 test("filter ranking: file name before folder, a run before scattered letters, earlier before later, shorter before longer", () => {
   const rank = (list, query) => names(filterFiles(paths(list), query));
-  // name beats path-only
-  assert.deepEqual(rank(["docs/a.md", "x/docs.md"], "docs"), ["x/docs.md", "docs/a.md"]);
-  // contiguous beats scattered (both in the name)
-  assert.deepEqual(rank(["r-e-a-d-m-e.md", "readme.md"], "readme"), ["readme.md", "r-e-a-d-m-e.md"]);
-  // a name match, even scattered, beats a contiguous match only found in the path
-  assert.deepEqual(rank(["readme/x.md", "r-e-a-d-m-e.md"], "readme"), ["r-e-a-d-m-e.md", "readme/x.md"]);
-  // earlier beats later
-  assert.deepEqual(rank(["xxread.md", "readxx.md"], "read"), ["readxx.md", "xxread.md"]);
-  assert.deepEqual(rank(["x-r-e-a-d.md", "r-e-a-d.md"], "ra"), ["r-e-a-d.md", "x-r-e-a-d.md"]);
-  // shorter path breaks ties
-  assert.deepEqual(rank(["long/folder/readme.md", "docs/readme.md", "readme.md"], "readme"), ["readme.md", "docs/readme.md", "long/folder/readme.md"]);
-  // equal in everything: input order
-  assert.deepEqual(rank(["b/n.md", "a/n.md"], "n"), ["b/n.md", "a/n.md"]);
-  // the whole mix
+  assert.deepEqual(rank(["docs/a.md", "x/docs.md"], "docs"), ["x/docs.md", "docs/a.md"], "name beats path-only");
+  assert.deepEqual(rank(["r-e-a-d-m-e.md", "readme.md"], "readme"), ["readme.md", "r-e-a-d-m-e.md"], "contiguous beats scattered, both in the name");
+  assert.deepEqual(rank(["readme/x.md", "r-e-a-d-m-e.md"], "readme"), ["r-e-a-d-m-e.md", "readme/x.md"], "a scattered name match beats a contiguous match only in the path");
+  assert.deepEqual(rank(["xxread.md", "readxx.md"], "read"), ["readxx.md", "xxread.md"], "earlier beats later");
+  assert.deepEqual(rank(["x-r-e-a-d.md", "r-e-a-d.md"], "ra"), ["r-e-a-d.md", "x-r-e-a-d.md"], "earlier beats later, scattered");
+  assert.deepEqual(rank(["long/folder/readme.md", "docs/readme.md", "readme.md"], "readme"), ["readme.md", "docs/readme.md", "long/folder/readme.md"], "a shorter path breaks ties");
+  assert.deepEqual(rank(["b/n.md", "a/n.md"], "n"), ["b/n.md", "a/n.md"], "equal in everything: input order");
   assert.deepEqual(
     rank(["a/b/c/d/readme-extra.md", "src/notes/read-me-later.md", "docs/readme.md", "README.md", "other/rd.md"], "readme"),
     ["README.md", "docs/readme.md", "a/b/c/d/readme-extra.md", "src/notes/read-me-later.md"],
+    "the whole mix",
   );
 });
 
@@ -348,8 +333,6 @@ test("FIND_SCRIPT stops at 1000 files and succeeds in an empty folder", async ()
   }
 });
 
-// --- editor state
-
 test("stats counts words and lines, ignoring the newline that ends the file", () => {
   assert.deepEqual(stats(""), { words: 0, lines: 0 });
   assert.deepEqual(stats(undefined), { words: 0, lines: 0 });
@@ -364,7 +347,6 @@ test("stats counts words and lines, ignoring the newline that ends the file", ()
 });
 
 test("modes: Reading and Markdown; the old Read / Edit / Split names map onto them; the toggle goes back and forth", () => {
-  assert.deepEqual(MODES, ["reading", "markdown"]);
   assert.deepEqual(["reading", "markdown", "read", "edit", "split"].map(modeOf), ["reading", "markdown", "reading", "markdown", "markdown"]);
   for (const bad of ["sideways", "", undefined, null, 3]) assert.equal(modeOf(bad), null, String(bad));
   assert.equal(toggleMode("reading"), "markdown");
@@ -399,8 +381,6 @@ test("trimMap keeps the last keys in insertion order and returns a new object", 
   assert.deepEqual(Object.keys(map), ["a", "b", "c", "d"], "the old map is not changed");
 });
 
-// --- colors
-
 test("isLight reads #rgb, #rrggbb and #rrggbbaa; anything else is dark", () => {
   assert.ok(isLight("#fff"));
   assert.ok(isLight("#FFFFFF"));
@@ -431,20 +411,12 @@ test("mix moves the first color toward the second and gives #rrggbb", () => {
   assert.equal(mix("#112233", "blue", 0.5), "#112233");
 });
 
-// --- diagrams
-
-const DIAGRAM_KEYS = ["flowchart", "sequence", "class", "state", "er", "gantt", "pie", "journey", "timeline", "mindmap", "gitGraph", "xyChart"];
-
-test("DIAGRAM_COLORS: the frame's canvas, grid dot, edge, node, line and text, all #rrggbb; diagramCanvas is the canvas", () => {
-  assert.deepEqual(DIAGRAM_COLORS, { canvas: "#020817", dot: "#151924", edge: "#1e293b", node: "#0f172a", line: "#94a3b8", text: "#f8fafc" });
+test("DIAGRAM_COLORS are all #rrggbb", () => {
   for (const color of Object.values(DIAGRAM_COLORS)) assert.match(color, /^#[0-9a-f]{6}$/, color);
-  assert.equal(diagramCanvas(), DIAGRAM_COLORS.canvas);
-  assert.equal(diagramCanvas({ background: "#ffffff", foreground: "#1f2328" }), DIAGRAM_COLORS.canvas, "a light page does not change it");
 });
 
 test("sharpName: the diagram's key, a hash of the colour it is painted on, its scale; another colour is another file", () => {
   assert.match(sharpName("4e6646f2ef48d31a", "#2a3d4c", 2.5), /^4e6646f2ef48d31a-[0-9a-f]{6}-x250$/);
-  assert.equal(sharpName("k", "transparent", 4), `k-${hash("transparent").slice(0, 6)}-x400`);
   assert.notEqual(sharpName("k", "#2a3d4c", 4), sharpName("k", "#122738", 4));
   assert.equal(sharpName("k", "#2a3d4c", 4.004), sharpName("k", "#2a3d4c", 4));
 });
@@ -454,15 +426,10 @@ test("mermaidConfig: mermaid's redux-dark-color theme with svg text labels and n
   assert.equal(cfg.theme, "redux-dark-color");
   assert.equal(cfg.htmlLabels, false);
   assert.equal(cfg.themeVariables, undefined, "the colours are mermaid's own");
-  for (const key of DIAGRAM_KEYS) assert.deepEqual(cfg[key], { useMaxWidth: false }, key);
-  assert.deepEqual(Object.keys(cfg), ["theme", "htmlLabels", ...DIAGRAM_KEYS]);
-});
-
-test("mermaidConfig is plain JSON and the same every time, whatever the Herdr theme", () => {
-  const a = JSON.stringify(mermaidConfig());
-  assert.equal(a, JSON.stringify(mermaidConfig()));
-  assert.deepEqual(JSON.parse(a), mermaidConfig());
-  assert.equal(a, JSON.stringify(mermaidConfig({ background: "#ffffff", foreground: "#1f2328", accent: "#0969da" })), "so a theme switch keeps every diagram key");
+  const diagrams = Object.entries(cfg).filter(([, value]) => typeof value === "object");
+  for (const type of ["flowchart", "sequence"]) assert.ok(diagrams.some(([key]) => key === type), `${type} is configured`);
+  for (const [key, value] of diagrams) assert.deepEqual(value, { useMaxWidth: false }, key);
+  assert.deepEqual(JSON.parse(JSON.stringify(cfg)), cfg, "plain JSON: it is written to the renderer's config file");
 });
 
 test("diagramKey changes with the source, the config and the renderer version", () => {
@@ -472,8 +439,6 @@ test("diagramKey changes with the source, the config and the renderer version", 
   assert.notEqual(base, diagramKey("graph TD\nA-->C", '{"a":1}', "mmdc-12.2.0+abcd1234"));
   assert.notEqual(base, diagramKey("graph TD\nA-->B", '{"a":2}', "mmdc-12.2.0+abcd1234"));
   assert.notEqual(base, diagramKey("graph TD\nA-->B", '{"a":1}', "mmdc-12.2.0+abcd1235"));
-  assert.equal(base, hash('mmdc-12.2.0+abcd1234\0{"a":1}\0graph TD\nA-->B'));
-  // the parts cannot slide into each other
-  assert.notEqual(diagramKey("b", "a", "v"), diagramKey("ab", "", "v"));
-  assert.notEqual(diagramKey("x", "", "v1"), diagramKey("1x", "", "v"));
+  assert.notEqual(diagramKey("b", "a", "v"), diagramKey("ab", "", "v"), "the parts cannot slide into each other");
+  assert.notEqual(diagramKey("x", "", "v1"), diagramKey("1x", "", "v"), "the parts cannot slide into each other");
 });

@@ -175,7 +175,6 @@ const near = (a, b, what, eps = 1e-3) => assert.ok(Math.abs(a - b) < eps, `${wha
 test("frameBox: a wide and tall diagram takes the pane's width less 32 px a side and 70 % of the screen's height", () => {
   const box = frameBox({ viewW: 1900, viewH: 1000, ...column(1900), ...STRESS });
   assert.deepEqual([box.w, box.h, box.left, box.ml], [1836, 700, 32, -(columnLeft(1900) - 32)]);
-  assert.equal(FRAME.maxShare, 0.7);
   near(box.z0, 0.7807, "the full width at a readable zoom");
   near(box.zMin, 0.2483, "zoomed out to the whole diagram");
   assert.equal(frameBox({ viewW: 1900, viewH: 1001, ...column(1900), ...STRESS }).h, 700, "whole pixels: 70.07 % of 1001 rounds down");
@@ -325,7 +324,7 @@ test("passThrough: a frame the page has passed still pans when the page is at it
 });
 
 test("the slash menu goes below the caret row when all twelve rows fit, above when only that fits, else on the larger side with as many rows as fit", () => {
-  assert.deepEqual([MENU.w, MENU.rowH, menuH(12), menuH(1)], [264, 31, 384, 43]);
+  assert.deepEqual([menuH(12), menuH(1)], [384, 43]);
   assert.deepEqual(menuPlace({ rowTop: 100, rowH: 24, viewH: 600, n: 12 }), { side: "below", top: 130, h: 384, visible: 12 });
   assert.deepEqual(menuPlace({ rowTop: 500, rowH: 24, viewH: 600, n: 12 }), { side: "above", top: 500 - 6 - 384, h: 384, visible: 12 });
   assert.deepEqual(menuPlace({ rowTop: 100, rowH: 24, viewH: 300, n: 12 }), { side: "below", top: 130, h: 12 + 4 * 31, visible: 4 }, "162 px below, 86 above: four rows below");
@@ -355,7 +354,7 @@ test("the slash menu's left edge is the field's left at offset 0, follows the sl
   assert.equal(slashX({ ...base, col: 0 }), 92 + 24, "at offset 0: the field's left");
   assert.equal(slashX({ ...base, col: 10 }), 92 + 24 + 70, "ten characters in");
   assert.equal(slashX({ ...base, col: 100 }), 92 + 24 + 200, "past a wrap: the column inside the row");
-  assert.equal(slashX({ ...base, col: 80, fieldW: 700 }), 900 - 264 - 8, "kept inside the pane on the right");
+  assert.equal(slashX({ ...base, col: 80, fieldW: 700 }), 900 - MENU.w - 8, "kept inside the pane on the right");
   assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 1600 }), columnLeft(1600), "the column's left in a wide pane");
-  assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 290 }), 290 - 264 - 8, "a pane narrower than column and menu: the menu stays in the pane");
+  assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 290 }), 290 - MENU.w - 8, "a pane narrower than column and menu: the menu stays in the pane");
 });

@@ -8,7 +8,6 @@ import { join } from "node:path";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const modDir = join(root, "mods/herdr-inline-markdown");
 
-// dots.svg is the diagram canvas's pattern tile; file-markdown.svg is a full-colour file icon.
 const PATTERN_TILES = ["dots.svg"];
 const FULL_COLOUR = ["file-markdown.svg"];
 

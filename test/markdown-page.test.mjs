@@ -2,10 +2,11 @@ import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { reset } from "./mocks/herdr.mjs";
 import { all, find, textOf } from "./mocks/element.mjs";
+import { div } from "./mocks/gpui-kit.mjs";
 import { makeCx } from "./helpers.mjs";
 
 const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
-const { Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
+const { BOX, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
 const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
 
@@ -84,8 +85,9 @@ test("the nested views read their editor through `owners`; once it is gone they 
   const column = new Column(), block = new Block();
   column.init({ owner: id });
   block.init({ owner: id, key: "k1" });
-  owners.set(id, { columnElement: () => find(drawn("x\n", 0).el, null) ?? drawn("x\n", 0).el, blockData: key => (key === "k1" ? drawn("hello\n", 0).d : null), ...drawn("hello\n", 0).owner });
-  assert.ok(column.render(cx));
+  const live = div().id("col-live");
+  owners.set(id, { columnElement: () => live, blockData: key => (key === "k1" ? drawn("hello\n", 0).d : null), ...drawn("hello\n", 0).owner });
+  assert.equal(column.render(cx).__node.id, "col-live", "the editor's column");
   assert.equal(all(block.render(cx), n => n.kind === "textview")[0].markdown, "hello");
   const other = new Block();
   other.init({ owner: id, key: "k9" });
@@ -111,13 +113,13 @@ test("the active field: the shared field state in the block's own type and calib
   const { el, owner, d } = drawn("## Title\n", 0, { mode: "active", ratio: 1.2954, padActive: 0.5, rows: "one" });
   const wrap = find(el, `md-field-${d.key}`), input = all(wrap, n => n.kind === "textarea")[0];
   assert.equal(input.state, owner.field);
-  assert.deepEqual([input.style.font_family, input.style.text_size, input.style.font_weight, input.style.line_height, input.style.text_color], [".SystemUIFont", 22, 700, 1.2954, "foreground"]);
+  assert.deepEqual([input.style.font_family, input.style.text_size, input.style.font_weight, input.style.line_height, input.style.text_color], [".SystemUIFont", STYLES.h2.size, STYLES.h2.weight, 1.2954, "foreground"]);
   assert.deepEqual([wrap.style.key_context, wrap.style.pb], [`${TEXT} rows=one`, 0.5]);
   const menu = drawn("## Title\n", 0, { mode: "active", rows: "many", menu: true });
   assert.equal(find(menu.el, `md-field-${menu.d.key}`).style.key_context, `${TEXT} rows=many menu=open`, "the slash menu open: Up and Down are the menu's");
-  assert.equal(input.style.line_through, undefined, "a Textarea draws no line-through");
   const item = drawn("- [x] done\n", 0, { mode: "active" });
   assert.ok(find(item.el, `md-task-${item.d.key}`), "the item keeps its box while editing");
+  assert.equal(all(item.el, n => n.style.line_through).length, 0, "a ticked task's field is not struck through");
   const heard = [];
   Object.assign(owner, { fieldKeyUp: (...a) => heard.push(["up", ...a]), fieldDown: (...a) => heard.push(["down", ...a]), fieldUp: (...a) => heard.push(["press-up", ...a]) });
   const cx = makeCx();
@@ -137,13 +139,13 @@ test("the armed field: the spare state, drawn the same, without the block keys",
 test("raw blocks edit in a monospace field on the code background; front matter keeps its own box", () => {
   const code = drawn("```js\nx\n```\n", 0, { mode: "active" });
   const box = code.el.__node.kids[0];
-  assert.deepEqual([box.style.bg, box.style.border_1, box.style.rounded, box.style.px, box.style.py], ["surface", true, 8, 14, 12]);
+  assert.deepEqual([box.style.bg, box.style.border_1, box.style.px, box.style.py], ["surface", true, BOX.px, BOX.py]);
   const wrap = find(code.el, `md-field-${code.d.key}`), input = all(wrap, n => n.kind === "textarea")[0];
   assert.deepEqual([wrap.style.key_context, input.style.font_family, input.style.text_size], [`${RAW} rows=many`, "Mono", 13]);
   assert.equal(all(code.el, n => n.style.absolute).length, 0, "no language label while editing");
   const front = drawn("---\na: 1\n---\n", 0, { mode: "active" });
   const fbox = front.el.__node.kids[0];
-  assert.deepEqual([fbox.style.px, fbox.style.py, fbox.style.bg], [12, 10, "surface"]);
+  assert.deepEqual([fbox.style.px, fbox.style.py, fbox.style.bg], [FRONT_BOX.px, FRONT_BOX.py, "surface"]);
   const rule = drawn("***\n", 0, { mode: "active" });
   assert.equal(all(rule.el, n => n.kind === "textarea")[0].style.text_color, "muted");
 });

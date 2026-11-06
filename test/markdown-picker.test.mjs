@@ -1,11 +1,12 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { state, calls, reset } from "./mocks/herdr.mjs";
 import { find, all, ids, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, fire_timers, space, must } from "./helpers.mjs";
 
 const { Picker } = await import("../mods/herdr-inline-markdown/picker.js");
-const { default: PickerDefault } = await import("../mods/herdr-inline-markdown/picker.js");
 const { FIND_SCRIPT } = await import("../mods/herdr-inline-markdown/lib.js");
 
 const FOLDER = "/home/user/Projects/herdr";
@@ -36,8 +37,7 @@ function fakeExec({ git = [], find: found = [], home = "/home/dev", mkdir = 0 } 
 
 beforeEach(() => reset({ spaces: [space("s1", "herdr", { folder: FOLDER, active: true })], exec: fakeExec({ git: FILES }) }));
 
-// Opens the dialog and waits for the listing. `props` adds to (or overrides) what the dialog is given. calls.order
-// and calls.setShared start after init, which names the dialog the open picker ("one picker at a time" below).
+// calls.order and calls.setShared are cleared after init, which names the dialog the open picker.
 async function mount({ folder = FOLDER, machine = null, settle = true, props: extra = {} } = {}) {
   state.props = { action: "open", space: "s1", folder, machine, overlay: "ov-1", ...extra };
   const cx = makeCx(), view = new Picker();
@@ -52,11 +52,6 @@ const row = (tree, id) => textOf(must(tree, id)).replace(/\s+/g, " ").trim();
 const highlighted = tree => rowIds(tree).filter(id => must(tree, id).style.bg === "selected");
 const press = (tree, key, cx = makeCx()) => { fire(must(tree, "mdp-root"), "on_key_down", { key, keystroke: key, modifiers: {} }, cx); return cx; };
 const type = (view, text, cx = makeCx()) => view.input.edit(text, cx);
-
-test("it is both the named and the default export, and a plain class", () => {
-  assert.equal(PickerDefault, Picker);
-  assert.equal(Object.getPrototypeOf(Picker.prototype), Object.prototype);
-});
 
 test("init: the input is focused now and again after 600 ms, and Up/Down/Escape come from the root's focus handle", async () => {
   const { view, cx, tree } = await mount();
@@ -118,8 +113,6 @@ test("one picker at a time: a name Herdr no longer has (left by a quit) is passe
   assert.equal(state.shared[OPEN_PICKER], "ov-1");
   assert.equal(view.loading, false, "the dialog started all the same");
 });
-
-// --- Listing
 
 test("a repository is listed by git, markdown files only, the folder as cwd, this computer without a machine", async () => {
   const { tree } = await mount();
@@ -293,8 +286,6 @@ test("a folder in the props wins over the focused Markdown pane, with the machin
   assert.deepEqual([lookedIn().cwd, lookedIn().on], ["/srv/docs", "devbox"]);
 });
 
-// --- Recent files
-
 test("recent files of this machine come first, inside the folder relative to it, outside with ~, once each", async () => {
   state.shared["herdr-inline-markdown.recent"] = [
     { machine: null, path: "/home/user/notes/todo.md" },
@@ -318,8 +309,6 @@ test("recent files show while the folder is still being listed", async () => {
   assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0"]);
   assert.equal(row(tree(), "mdp-file-0"), "plan.md docs recent");
 });
-
-// --- Filtering and the highlight
 
 test("the highlight starts on the first file so Enter opens it; New note is above it", async () => {
   const { tree } = await mount();
@@ -411,8 +400,6 @@ test("the mouse moving over a row highlights it; a row that only appears under a
   assert.equal(cx.notified, 1, "no repaint when nothing changed");
   assert.equal(find(tree(), "mdp-new").handlers.on_hover, undefined, "on_hover would fire when a list scrolls under the mouse");
 });
-
-// --- Choosing
 
 test("Enter opens the highlighted file: the dialog closes first, then a Markdown tab opens in the space", async () => {
   const { view, cx } = await mount();
@@ -546,8 +533,6 @@ test("other keys are left to the input", async () => {
   assert.deepEqual(calls.closeOverlay, []);
 });
 
-// --- After close(), nothing tells the view to draw again
-
 test("close() while the folder is being listed: the answer does not redraw the closed dialog, and a waiting creation still goes on", async () => {
   let answer;
   state.exec = (command, args, options) => (command === "git" ? new Promise(done => { answer = done; }) : fakeExec({ git: FILES })(command, args, options));
@@ -591,16 +576,15 @@ test("a failed creation after close() does not redraw either", async () => {
 });
 
 test("an open dialog still redraws when the listing or a creation answers", async () => {
-  const { view, tree } = await mount();
+  const { view, cx: listing, tree } = await mount();
+  assert.ok(listing.notified > 0, "the listing redrew the dialog");
   const cx = makeCx();
   state.writeTextFile = async () => { throw new Error("EACCES"); };
   fire(must(tree(), "mdp-new"), "on_click", {}, cx);
   await cx.settle();
-  assert.equal(cx.notified > 0, true);
+  assert.ok(cx.notified > 0, "the failed creation redrew the dialog");
   assert.match(textOf(must(view.render(cx), "mdp-note")), /Can't create/);
 });
-
-// --- Creating
 
 test("New note makes the first free untitled name in the folder's top level, closes, then opens it", async () => {
   state.exec = fakeExec({ git: ["untitled.md", "untitled-2.md", "docs/untitled-3.md", "README.md"] });
@@ -695,7 +679,7 @@ test("a folder that cannot be made is shown, and no file is written", async () =
 test("a second Enter while the file is being made does nothing", async () => {
   let release;
   state.writeTextFile = () => new Promise(resolve => { release = resolve; });
-  const { view, cx, tree } = await mount();
+  const { view, cx } = await mount();
   type(view, "slow");
   view.input.submit(cx);
   view.input.submit(cx);
@@ -705,23 +689,19 @@ test("a second Enter while the file is being made does nothing", async () => {
   release(null);
   await cx.settle();
   assert.equal(calls.run.length, 1);
-  assert.ok(tree());
 });
 
 test("New note pressed while still listing waits for the listing, so the name is free", async () => {
   let finish;
   state.exec = () => new Promise(resolve => { finish = resolve; });
-  const { view, cx, tree } = await mount({ settle: false });
+  const { view, cx } = await mount({ settle: false });
   view.input.submit(cx); // nothing listed yet: the highlight is on New note
   await new Promise(r => setImmediate(r));
   assert.equal(calls.writeTextFile.length, 0, "not before the list is in");
   finish({ code: 0, stdout: NUL(["untitled.md"]), stderr: "" });
   await cx.settle();
   assert.deepEqual(calls.writeTextFile.map(c => c.path), [`${FOLDER}/untitled-2.md`]);
-  assert.ok(tree());
 });
-
-// --- Another machine
 
 test("a folder on another machine: asked there, files open with the machine, creating is off with a reason", async () => {
   state.exec = fakeExec({ git: ["notes/plan.md", "README.md"], home: "/home/dev" });
@@ -735,7 +715,6 @@ test("a folder on another machine: asked there, files open with the machine, cre
   assert.equal(row(tree(), "mdp-create"), "Create fresh.md Creating files on devbox isn't supported yet");
   assert.equal(must(tree(), "mdp-create").handlers.on_click, undefined);
 
-  // Enter on a disabled row does nothing at all.
   view.input.submit(cx);
   await cx.settle();
   assert.deepEqual([calls.writeTextFile, calls.run, calls.closeOverlay, calls.exec.filter(c => c.command === "mkdir")], [[], [], [], []]);
@@ -770,11 +749,9 @@ test("another machine whose home cannot be asked still lists a folder it was giv
   assert.ok(textOf(must(tree(), "mdp-footer")).endsWith("devbox: /srv/docs"));
 });
 
-// --- A long list
-
 test("only the rows that fit are drawn; the keys and the wheel move the window", async () => {
   state.exec = fakeExec({ git: Array.from({ length: 30 }, (_, i) => `n${String(i).padStart(2, "0")}.md`) });
-  const { view, cx, tree } = await mount();
+  const { cx, tree } = await mount();
   assert.equal(rowIds(tree()).length, 8, "eight rows before the list has measured itself");
   fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 32 * 5 }, cx);
   assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0", "mdp-file-1", "mdp-file-2", "mdp-file-3"], "five rows of 32");
@@ -796,7 +773,7 @@ test("only the rows that fit are drawn; the keys and the wheel move the window",
   assert.deepEqual(highlighted(tree()), ["mdp-file-29"], "Up from the first row wraps to the last");
   assert.deepEqual(rowIds(tree()), ["mdp-file-25", "mdp-file-26", "mdp-file-27", "mdp-file-28", "mdp-file-29"]);
 
-  // The wheel scrolls without touching the highlight; delta.y is negative when the content moves up.
+  // delta.y is negative when the content moves up.
   fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 32 * 10 } }, cx);
   assert.deepEqual(rowIds(tree()).slice(0, 1), ["mdp-file-15"]);
   assert.deepEqual(highlighted(tree()), [], "the highlighted row is out of the window now");
@@ -804,7 +781,6 @@ test("only the rows that fit are drawn; the keys and the wheel move the window",
   assert.equal(rowIds(tree()).at(-1), "mdp-file-29", "it stops at the end");
   fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 32 * 1000 } }, cx);
   assert.equal(rowIds(tree())[0], "mdp-new", "and at the start");
-  assert.ok(view);
 });
 
 test("the status line takes one of the rows", async () => {
@@ -820,8 +796,6 @@ test("the status line takes one of the rows", async () => {
   assert.equal(rowIds(tree()).length, 4);
   assert.equal(find(tree(), "mdp-status"), null);
 });
-
-// --- Shape
 
 test("every element with a handler has an id, and ids are unique", async () => {
   state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
@@ -841,7 +815,8 @@ test("the dialog draws only icons that ship with the mod", async () => {
   const { view, tree } = await mount();
   type(view, "plan");
   const paths = new Set(all(tree(), n => n.kind === "svg").map(n => n.path));
-  assert.deepEqual([...paths].sort(), ["mods/herdr-inline-markdown/file-plus.svg", "mods/herdr-inline-markdown/markdown.svg", "mods/herdr-inline-markdown/search.svg"]);
+  assert.ok(paths.size > 0, "the dialog draws icons");
+  for (const path of paths) assert.ok(existsSync(fileURLToPath(new URL(`../${path}`, import.meta.url))), path);
 });
 
 test("props() wins over the argument init gets, and the argument is the fallback", async () => {

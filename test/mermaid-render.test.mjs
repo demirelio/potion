@@ -27,7 +27,6 @@ const BAD = "flowchart TD\n  A[Start] --> B{Broken\n  B -->| C[\n  ??? --> -->\n
 // 15 steps in a row: far wider than the 1200 px viewport the page starts with.
 const WIDE = "flowchart LR\n" + Array.from({ length: 14 }, (_, i) => `  N${i}[Step number ${i}] --> N${i + 1}[Step number ${i + 1}]`).join("\n") + "\n";
 
-// A scratch folder with the config and one <key>.mmd per entry; returns what a run needs.
 function workdir(name, sources) {
   const dir = join(tmp, name);
   mkdirSync(join(dir, "out"), { recursive: true });

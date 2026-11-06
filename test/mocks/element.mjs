@@ -58,7 +58,6 @@ export function makeElement(kind, extra = {}) {
     hover: fn => { node.hover = true; fn(makeElement("hover")); },
     on_mouse_down: (button, fn) => { refuse("on_mouse_down"); node.handlers[`on_mouse_down:${button}`] = fn; },
     on_mouse_up: (button, fn) => { refuse("on_mouse_up"); node.handlers[`on_mouse_up:${button}`] = fn; },
-    // One handler per action name, found as `on_action:<name>`.
     on_action: (name, fn) => { refuse("on_action"); node.handlers[`on_action:${name}`] = fn; },
     track_focus: handle => { node.focus = handle; },
   };
@@ -89,8 +88,6 @@ export function makeElement(kind, extra = {}) {
   return proxy;
 }
 
-// --- Looking inside a rendered tree.
-
 const asNode = el => nodeOf(el) ?? el;
 
 export function walk(el, fn) {
@@ -109,7 +106,6 @@ export const textOf = el => {
   walk(el, n => { if (n.kind === "text") parts.push(n.text); });
   return parts.join(" ");
 };
-// Fires a recorded handler the way Herdr would, with a fake event and cx.
 export function fire(target, name, event = {}, cx) {
   const node = asNode(target);
   const fn = node.handlers[name];

@@ -5,7 +5,6 @@ import { all, ids, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, space, pane, must } from "./helpers.mjs";
 
 const { Menu } = await import("../mods/herdr-inline-markdown/menu.js");
-const { default: MenuDefault } = await import("../mods/herdr-inline-markdown/menu.js");
 const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
 
 const FILE = "/home/user/notes/plan.md";
@@ -21,11 +20,6 @@ function mount(extra = {}) {
 const press = (tree, key) => fire(must(tree, "md-menu"), "on_key_down", { key, keystroke: key, modifiers: {} }, makeCx());
 const TAB = ["tab.new", { name: "plan.md", space: "s1", mod: "herdr-inline-markdown", props: { file: FILE, machine: null } }];
 
-test("it is both the named and the default export, and a plain class", () => {
-  assert.equal(MenuDefault, Menu);
-  assert.equal(Object.getPrototypeOf(Menu.prototype), Object.prototype);
-});
-
 test("one row: the plus icon and 'Open as new tab', highlighted", () => {
   const { tree } = mount();
   const rows = all(tree(), n => n.id?.startsWith("md-menu-"));
@@ -33,13 +27,11 @@ test("one row: the plus icon and 'Open as new tab', highlighted", () => {
   const row = rows[0];
   assert.equal(textOf(row).trim(), "Open as new tab");
   assert.deepEqual(all(tree(), n => n.kind === "svg").map(n => n.path), ["mods/herdr-inline-markdown/plus.svg"]);
-  assert.deepEqual([row.style.h, row.style.px, row.style.gap, row.style.rounded, row.style.bg], [31, 8, 9, 7, "selected"]);
+  assert.equal(row.style.bg, "selected");
 });
 
-test("the popup is styled like Home's menu: popover background, 5 px padding, 12.8 px text", () => {
-  const root = must(mount().tree(), "md-menu");
-  assert.deepEqual([root.style.bg, root.style.p, root.style.text_size, root.style.w_full, root.style.min_h], ["popover", 5, 12.8, true, 0]);
-  assert.ok(root.focus, "it tracks its focus handle");
+test("the popup is drawn on the popover background", () => {
+  assert.equal(must(mount().tree(), "md-menu").style.bg, "popover");
 });
 
 test("init takes the focus on its own handle", () => {

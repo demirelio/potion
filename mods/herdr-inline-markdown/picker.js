@@ -1,8 +1,3 @@
-// The dialog behind the Markdown shortcuts and the "Markdown" row of the + menu: find a markdown file in a folder, or
-// make one, and open it beside the focused pane (props.place "pane") or in a tab (place "tab"). main.js starts this
-// class instead of the editor when the dialog's props say action "open" ({ place, space, folder, machine }), or when
-// `mod.open` gave it none (a tab, in the active space). Without a folder it looks where the person is: the folder of
-// the Markdown file the focused pane shows, else that pane's folder, else the space's.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, home, props, shared, setShared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
@@ -78,10 +73,8 @@ export class Picker {
     if (other && other !== this.overlay) try { closeOverlay(other); } catch {}
   }
 
-  // --- Listing
-
-  // Where the person is, when nobody said: the folder (and machine) of the file the focused Markdown pane shows,
-  // else the focused pane's folder, else the space's. The space says which machine the other two are on.
+  // The folder of the file the focused Markdown pane shows, else the pane's, else the space's; the space says which
+  // machine the last two are on.
   around() {
     const f = focused(), here = panes().find(p => p.pane === this.anchor), space = spaces().find(s => s.id === this.space);
     const file = here?.mod === "herdr-inline-markdown" ? fileOf(shared("herdr-inline-markdown.panes")?.[here.pane]) : null;
@@ -117,8 +110,8 @@ export class Picker {
     this.files = markdownPathsFromFind(r.stdout);
   }
 
-  // What can be picked: the recent files first (also those outside the folder), then the folder's files.
-  // `path` is what the row shows and the query matches: relative to the folder when inside it, else with "~".
+  // Recent files come first, also those outside the folder. `path` is what the row shows and the query matches:
+  // relative to the folder when inside it, else with "~".
   entries() {
     const c = this.cache;
     if (c && c.files === this.files && c.folder === this.folder && c.home === this.home) return c;
@@ -135,7 +128,6 @@ export class Picker {
     return this.cache;
   }
 
-  // New note, then the matching files, then Create <name> unless the query already names a listed file.
   rows() {
     const { list } = this.entries(), query = this.query, c = this.shown;
     if (c && c.list === list && c.query === query) return c.rows;
@@ -147,7 +139,7 @@ export class Picker {
     return rows;
   }
 
-  // The highlighted row. Until the person moves it, it is the best file (so Enter opens it), else Create, else New note.
+  // Until the person moves it: the best file (so Enter opens it), else Create, else New note.
   cursor(rows) {
     const first = rows.findIndex(r => r.kind === "file"), create = rows.findIndex(r => r.kind === "create");
     return clamp(this.at ?? (first >= 0 ? first : Math.max(create, 0)), 0, rows.length - 1);
@@ -160,12 +152,9 @@ export class Picker {
     return null;
   }
 
-  // Rows that fit in the list (the status line takes one of them).
   room() {
     return Math.max(1, Math.floor((this.listHeight ?? ROW * ROOM) / ROW) - (this.status() ? 1 : 0));
   }
-
-  // --- Acting
 
   disabled(row) {
     return Boolean(this.machine) && row.kind !== "file";
@@ -183,7 +172,6 @@ export class Picker {
     openMarkdown({ file, machine: this.machine, place: this.place, space: this.space, pane: this.anchor });
   }
 
-  // `name` null: a note called untitled.md (or the first free untitled-N.md). A file that already exists is just opened.
   make(name, cx) {
     this.busy = true;
     this.problem = null;
@@ -212,7 +200,6 @@ export class Picker {
     closeOverlay(this.overlay);
   }
 
-  // Moves the highlight and the list with it, so it never runs off the visible rows.
   move(step) {
     const rows = this.rows(), at = (this.cursor(rows) + step + rows.length) % rows.length, room = this.room();
     let top = Math.floor(this.scroll / ROW);
@@ -221,8 +208,6 @@ export class Picker {
     this.at = at;
     this.scroll = top * ROW;
   }
-
-  // --- Drawing
 
   row(t, row, on) {
     const off = this.disabled(row), file = row.kind === "file";

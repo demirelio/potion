@@ -1,4 +1,3 @@
-// Shared test helpers: a fake cx and small data builders.
 import { find, ids } from "./mocks/element.mjs";
 
 // A cx like the one Herdr hands a callback. spawn() starts the body at once and keeps its promise;
@@ -6,7 +5,6 @@ import { find, ids } from "./mocks/element.mjs";
 export function makeCx() {
   const tasks = [], cx = {
     notified: 0, stopped: 0, clipboard: [], timers: [], handles: [], opened: [],
-    // Retained nested views made with new(), and the ones notify(entity) asked to redraw, in order.
     entities: [], notifiedEntities: [],
     notify(target) {
       if (target === undefined) cx.notified++;
@@ -15,8 +13,7 @@ export function makeCx() {
         if (target) target.drawn = null;
       }
     },
-    // An entity as Herdr hands one back: its view is made and initialised now, and a test renders it with entity.cx.
-    // `drawn` is what it rendered last (mocks/element.mjs keeps it until the entity is notified).
+    // `drawn` is what the entity rendered last; mocks/element.mjs keeps it until the entity is notified.
     new(Class, props) {
       const view = new Class(props);
       view.init?.(props, cx);
@@ -28,19 +25,17 @@ export function makeCx() {
       cx.entities.push(entity);
       return entity;
     },
-    // Key bindings a mod installed, one list per bind_keys call; the answer is how many, as Herdr's.
+    // One list per bind_keys call; the answer is how many keys, as Herdr's.
     bound: [],
     bind_keys(list) { cx.bound.push(list); return list.length; },
     stop_propagation() { cx.stopped++; },
     propagate() {},
-    // A test sets the clipboard through `clipboardText` or `held`; both work.
     clipboardText: undefined,
     write_to_clipboard(text) { cx.clipboard.push(text); cx.clipboardText = text; },
-    // What the clipboard holds now: `clipboardText` (the last write, or text a test set), else the last text written,
-    // else `held` (text a test put there beforehand).
+    // A read gives `clipboardText` (the last write, or text a test set), else the last text written, else `held` (text a
+    // test put there beforehand).
     held: undefined,
     read_from_clipboard() { return cx.clipboardText ?? (cx.clipboard.length ? cx.clipboard.at(-1) : cx.held); },
-    // The urls the mod asked to open in the browser.
     open_url(url) { cx.opened.push(url); },
     focus_handle() { const h = { focused: false, focus() { h.focused = true; } }; cx.handles.push(h); return h; },
     spawn(body) {
@@ -53,7 +48,7 @@ export function makeCx() {
     // (fire_timers() below runs the `after` ones). Both hand back a task, as Herdr does; cancel() marks the entry.
     timer: {
       every(ms, fn) { return timerTask(cx.timers, { ms, fn }); },
-      // A timer that waits is marked `once` and `after`; a test may look for either.
+      // Marked both `once` and `after`: tests look for either.
       after(ms, fn) { return timerTask(cx.timers, { ms, fn, once: true, after: true }); },
     },
     async settle() { while (tasks.length) await Promise.all(tasks.splice(0)); },
@@ -81,7 +76,6 @@ export const space = (id, name, more = {}) => ({
 });
 export const pane = (id, tab, cwd, more = {}) => ({ pane: id, terminal: `t-${id}`, tab, cwd, focused: false, ...more });
 
-// The element for an id, failing loudly (with the ids that do exist) when it is missing.
 export function must(el, id) {
   const found = find(el, id);
   if (!found) throw new Error(`no element ${id}; have: ${ids(el).join(", ")}`);

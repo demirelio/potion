@@ -1,8 +1,5 @@
-// Mermaid diagrams for the Markdown view. A fence is turned into a PNG by the renderer that install.sh installs
-// (a node script that opens one headless Chrome per batch); the PNGs and what they said are kept in the app folder, so
-// a diagram is drawn once for its source, the renderer's version and the theme. get() never waits: it answers
-// "pending" and a timer does the work, then redraws the view and calls `onChange(cx)`, where the view asks again.
-// A diagram zoomed in past its picture's scale can have one sharper picture as well (sharp()).
+// get() never waits: it answers "pending" and a timer does the work, then redraws the view and calls `onChange(cx)`,
+// where the view asks again.
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { home, appHome, readTextFile, exec, theme } from "herdr";
@@ -12,7 +9,7 @@ import { FRAME } from "./geometry.js";
 
 const WAIT = 400; // ms: diagrams that show up together go out together
 const SHARP_BACKGROUND = "transparent";
-const MAX_BATCH = 8; // inputs per renderer run
+const MAX_BATCH = 8;
 const NODE_MISSING = "Diagrams need Node.js";
 const RECHECK = 10000; // ms: a renderer that was not installed is looked for again after this long
 const RETRY = 15000; // ms: a run that failed as a whole (not one diagram's own error) is tried again after this long
@@ -30,8 +27,8 @@ const stale = known => known.retryAt !== undefined && Date.now() >= known.retryA
 export class Diagrams {
   constructor() {
     this.renderer = undefined; // undefined: not asked yet, null: not installed, else { version, node }
-    this.checked = 0; // when the renderer was last looked for
-    this.nodeMissing = false; // the last run could not start node
+    this.checked = 0;
+    this.nodeMissing = false;
     this.known = new Map(); // key -> what get() answers once it is settled
     this.want = new Map(); // key -> source, waiting for the next batch
     this.keys = new Map(); // source -> key, for the current config and renderer
@@ -59,8 +56,8 @@ export class Diagrams {
     this.reminders.add(task);
   }
 
-  // The renderer's version and node, read once: a missing version file means it was never installed. Not installed is
-  // looked at again 10 s later, so install.sh takes effect without reopening the tab.
+  // A missing version file means the renderer was never installed; it is looked for again after RECHECK, so install.sh
+  // takes effect without reopening the tab.
   start(cx) {
     if (this.starting || (this.renderer !== undefined && !(this.renderer === null && Date.now() - this.checked >= RECHECK))) return;
     this.starting = true;
@@ -83,7 +80,6 @@ export class Diagrams {
     });
   }
 
-  // A new theme means new colors in every diagram, so new keys; the old results stay valid for the old theme.
   sync(t) {
     const sig = Object.values(t).join();
     if (sig === this.sig) return;
@@ -94,8 +90,8 @@ export class Diagrams {
     this.want = new Map();
   }
 
-  // -> { key, state: "pending" | "ok" | "error" | "missing", width, height, scale, error }. Cheap: the view calls it
-  // for every diagram whenever its blocks change and whenever it is told something changed here.
+  // state: "pending" | "ok" | "error" | "missing". Cheap: the view calls it for every diagram whenever its blocks
+  // change and whenever it is told something changed here.
   get(source, cx) {
     this.start(cx);
     this.sync(theme());
@@ -119,9 +115,8 @@ export class Diagrams {
     return known ?? result(key, "pending");
   }
 
-  // A picture of the diagram `key` (drawn from `source`) at `scale`, laid over the base one: transparent like it, so the
-  // canvas's dots show through, and the shapes' solid fills hide the base under them. <key>-<background's hash>-x<scale·100>.
-  // -> what sharpOf answers.
+  // Laid over the base picture: transparent like it, so the canvas's dots show through, and the shapes' solid fills hide
+  // the base under them.
   sharp(key, source, scale, cx) {
     if (!this.renderer || !this.config || this.sharps.has(key)) return this.sharpOf(key);
     const name = sharpName(key, SHARP_BACKGROUND, scale);
@@ -229,9 +224,8 @@ export class Diagrams {
     return null;
   }
 
-  // One renderer run. false when node could not start (every key of the chunk is failed then), else true.
-  // Nothing about the run is final: node missing, a nonzero exit and "Timed out" are asked for again after a while.
-  // What mermaid says about one diagram is final for that diagram.
+  // false when node could not start, else true. Node missing, a nonzero exit and "Timed out" are asked for again after
+  // a while; what mermaid says about one diagram is final.
   async draw(keys, config, dir) {
     const base = mermaidHome();
     let r;
@@ -269,10 +263,9 @@ const fence = text => "`".repeat((text.match(/`+/g) ?? []).reduce((n, run) => Ma
 
 const ICON = name => `mods/herdr-inline-markdown/${name}.svg`;
 
-// The element for one diagram in the page: `d` is what get() answered, `frame` what its frame draws, or null when
-// it draws none: { key, w, h, ml, natW, natH, image, dim, selected, view: { z, x, y, sharp, tools, cursor } }.
-// `image` is the picture that is ready, or the last one (`dim`) while a changed diagram is drawn again or when it
-// cannot be drawn.
+// `d` is what get() answered; `frame` is what its frame draws, or null when it draws none:
+// { key, w, h, ml, natW, natH, image, dim, selected, view: { z, x, y, sharp, tools, cursor } }. `image` is the picture
+// that is ready, or the last one (`dim`) while an edited diagram is drawn again or when it cannot be drawn.
 export function diagramBlock({ id, source, d, frame, t, mono }) {
   const box = () => v_flex().w_full().gap(6).p(12).rounded(8).bg(t.surface).border_1().border_color(t.border);
   const title = (text, color) => div().text_size(12.5).font_medium().text_color(color).child(text);

@@ -1,6 +1,3 @@
-// The slash menu: the commands it offers, which of them a query matches, where a typed `/` opens it, and how it
-// follows the changes typed after it. Pure: no imports. Offsets are field offsets of the block being edited.
-
 const MERMAID = ["```mermaid", "flowchart TD", "  A[Start] --> B[End]", "```"];
 const TABLE = ["| Column 1 | Column 2 | Column 3 |", "| --- | --- | --- |", "|  |  |  |"];
 
@@ -25,9 +22,6 @@ const words = name => name.split(/[\s-]+/);
 
 const SPACE = /\s/;
 
-// The commands for `query`, in tiers: a name or alias that starts with it, a word of the name that does, then a name
-// or alias that holds it; the table's order within a tier. Any case; an empty query lists them all, and one that
-// starts with a space none.
 export function matches(query) {
   if (!query) return COMMANDS;
   if (SPACE.test(query[0])) return [];
@@ -41,8 +35,7 @@ export function matches(query) {
   return tiers.flat();
 }
 
-// A `/` at field offset `at` opens the menu when it stands alone: at the start or after whitespace, before the end or
-// whitespace, and outside a code span (an even number of backticks before it on its line).
+// `at` is a field offset. Outside a code span means an even number of backticks before the `/` on its line.
 export function opensAt(value, at) {
   if (value[at] !== "/") return false;
   if (at > 0 && !SPACE.test(value[at - 1])) return false;
@@ -53,8 +46,7 @@ export function opensAt(value, at) {
 
 const sameItems = (a, b) => a.length === b.length && a.every((c, i) => c === b[i]);
 
-// The menu after the field range [a, a + r) became `ins` and the field holds `value`, or null when that closes it.
-// The menu is { at, end, query, items, index, first, ... }: [at, end) holds "/" + query.
+// [at, end) of the menu holds "/" + query. Returns null when the edit of field range [a, a + r) into `ins` closes it.
 export function track(menu, { a, r, ins }, value) {
   const grow = ins.length - r;
   let { at, end } = menu;
@@ -69,14 +61,12 @@ export function track(menu, { a, r, ins }, value) {
   return { ...menu, at, end, query, items, index: same ? menu.index : 0, first: same ? menu.first : 0 };
 }
 
-// The first row drawn of n when `visible` of them fit, moved as little as it takes to show row `index`.
 export function follow(first, index, visible, n) {
   const v = Math.max(1, Math.min(visible, n));
   const f = index < first ? index : index >= first + v ? index - v + 1 : first;
   return Math.max(0, Math.min(f, n - v));
 }
 
-// The highlight one row up (dir < 0) or down, wrapping, with the drawn window following it.
 export function step(menu, dir, visible = menu.items.length) {
   const n = menu.items.length;
   if (!n) return menu;

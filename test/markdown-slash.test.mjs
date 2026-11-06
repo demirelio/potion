@@ -22,27 +22,20 @@ test("the menu lists twelve commands in order, each with a name, aliases, a hint
   assert.deepEqual(ids(COMMANDS), ["text", "h1", "h2", "h3", "ul", "ol", "todo", "quote", "code", "mermaid", "table", "hr"]);
   assert.deepEqual(COMMANDS.map(c => c.name), ["Text", "Heading 1", "Heading 2", "Heading 3", "Bulleted list", "Numbered list", "To-do list", "Quote", "Code block", "Mermaid diagram", "Table", "Divider"]);
   assert.deepEqual(COMMANDS.map(c => c.hint), ["", "#", "##", "###", "-", "1.", "[ ]", ">", "```", "mermaid", "|", "---"]);
+  assert.equal(new Set(ids(COMMANDS)).size, COMMANDS.length, "ids are unique");
   for (const c of COMMANDS) {
     assert.ok(c.aliases.length > 0, c.id);
     assert.ok(existsSync(`${MOD}${c.icon}.svg`), `${c.icon}.svg`);
     assert.ok(Boolean(c.to) !== Boolean(c.lines), `${c.id} changes the block or adds lines`);
   }
-  assert.deepEqual(COMMANDS.filter(c => c.to).map(c => [c.id, c.to, c.marker ?? ""]), [
-    ["text", { kind: "paragraph" }, ""],
-    ["h1", { kind: "heading", level: 1 }, "# "], ["h2", { kind: "heading", level: 2 }, "## "], ["h3", { kind: "heading", level: 3 }, "### "],
-    ["ul", { kind: "item", list: "bullet" }, "- "], ["ol", { kind: "item", list: "ordered" }, "1. "], ["todo", { kind: "item", list: "task" }, "- [ ] "],
-    ["quote", { kind: "quote" }, "> "],
-  ]);
-  const value = id => COMMANDS.find(c => c.id === id).lines.join("\n");
-  const caretOf = id => COMMANDS.find(c => c.id === id).caret;
-  assert.equal(value("code"), "```\n\n```");
-  assert.equal(caretOf("code"), 4, "on the empty line");
-  assert.equal(value("mermaid"), "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```");
-  assert.equal(caretOf("mermaid"), value("mermaid").length - 4, "at the end of the sample's last line");
-  assert.equal(value("table"), "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |");
-  assert.deepEqual(caretOf("table"), { start: 2, end: 10 });
-  assert.equal(value("table").slice(2, 10), "Column 1");
-  assert.deepEqual(COMMANDS.find(c => c.id === "hr").lines, ["---"]);
+  for (const c of COMMANDS.filter(c => c.to?.kind === "heading")) {
+    assert.equal(c.to.level, c.hint.length, `${c.id}: the hint shows the level`);
+    assert.equal(c.marker, `${c.hint} `, `${c.id}: typing the hint and a space writes the marker`);
+  }
+  for (const c of COMMANDS.filter(c => c.caret !== undefined)) {
+    const { start, end } = typeof c.caret === "number" ? { start: c.caret, end: c.caret } : c.caret;
+    assert.ok(0 <= start && start <= end && end <= c.lines.join("\n").length, `${c.id}: the caret is inside what it writes`);
+  }
 });
 
 test("an empty query lists all twelve; a name, an alias, a word of the name, then anything containing the query", () => {

@@ -1,5 +1,3 @@
-// The popup behind a right click on a markdown file in a file list: one row, "Open as new tab". main.js starts this
-// class instead of the editor when the popup's props say action "menu" ({ file, machine, space }).
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { props, theme, closeOverlay } from "herdr";

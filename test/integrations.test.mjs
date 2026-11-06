@@ -54,7 +54,6 @@ function openBeside(file, machine = null, registered = true) {
   if (registered) state.shared["herdr-inline-markdown.panes"] = { p7: `${machine ?? ""}:${file}` };
 }
 
-// What a mod asked of Herdr: the commands and the shared values it set.
 const asked = () => JSON.parse(JSON.stringify({ run: calls.run, setShared: calls.setShared, shared: state.shared }));
 
 const recent = { "herdr-inline-markdown.recent": Array.from({ length: 30 }, (_, i) => ({ machine: i % 2 ? "devbox" : null, path: `/n/${i}.md` })) };
@@ -125,8 +124,8 @@ const lines = (file, mark) => readFileSync(new URL(`../integrations/${file}`, im
 test("the tab-bar patch only marks Markdown tabs: it reads no key commands and opens no picker", () => {
   const plus = added("tabs/tabs.patch");
   assert.doesNotMatch(plus, /nextCommand|openOverlay|closeOverlay|markdownCommand|openPicker|markdown:(?:tab|pane)/);
-  assert.match(plus, /inTab\.every\(p => p\.mod === "herdr-inline-markdown"\)/);
-  assert.match(plus, /\.when\(markdown, el => el\.child\(image\("mods\/herdr-inline-markdown\/file-markdown\.svg"\)\.size\(14\)\)\)/);
+  assert.match(plus, /\.every\(p => p\.mod === "herdr-inline-markdown"\)/, "a tab is a Markdown tab only when all its panes are");
+  assert.match(plus, /\.when\(markdown, [^\n]*file-markdown\.svg/, "and only a Markdown tab gets the icon");
   assert.deepEqual(lines("tabs/tabs.patch", "-").map(l => l.trim().split(" = ")[0]), ["const name"], "the tab's name is the one line it changes");
 });
 
@@ -147,16 +146,15 @@ function filesUnder(dir, out = []) {
   return out;
 }
 
-test("the keys come with the plugin: no integration for them, and nothing names the tab bar's old Markdown commands", () => {
+test("the README and the integrations name no removed tab-bar commands", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
-  assert.equal(existsSync(join(root, "integrations/keys")), false);
   for (const file of [...filesUnder(join(root, "integrations")), join(root, "README.md")]) {
     assert.doesNotMatch(readFileSync(file, "utf8"), /markdown:(?:tab|pane)|my-tabs\.markdown/, file);
   }
 });
 
-// Herdr 0.1.12's shipped main.js of each mod a patch changes, by sha256. Herdr rewrites its shipped mods on every
-// start, so the app home has them; the checks below run against exactly these and skip anything else.
+// The sha256 of Herdr 0.1.12's shipped main.js of each mod a patch changes. Herdr rewrites its shipped mods on every
+// start, so the app home has them; the checks below skip any other version.
 const SHIPPED = {
   tabs: "12d4ecc89dbf864d5a889f240adaea25590812e0be1835bbdb3e636fe14f51d3",
   files: "2fe03eaaaa494f2e42753097617ab6ac20c964ae671c7548cee67557cff08fe1",

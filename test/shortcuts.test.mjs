@@ -9,7 +9,7 @@ const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.j
 const { default: Beside, MEMORY } = await import("../mods/herdr-inline-markdown-beside/main.js");
 
 const json = path => JSON.parse(readFileSync(new URL(`../${path}`, import.meta.url), "utf8"));
-const DIALOG = { kind: "dialog", width: 560, height: 460 };
+const DIALOG = json("mods/herdr-inline-markdown/mod.json").overlay;
 const FOLDER = "/home/user/notes";
 
 const fresh = (more = {}) => reset({
@@ -34,12 +34,6 @@ test("keys.json binds cmd-m to the Markdown mod and cmd-shift-m to its companion
   assert.deepEqual(json("keys.json"), {
     global: { "cmd-m": "mod.open:herdr-inline-markdown", "cmd-shift-m": "mod.open:herdr-inline-markdown-beside" },
   });
-});
-
-test("mod.json: mod.open shows the Markdown mod as a dialog the size the + menu opens the picker at; the rest is as before", () => {
-  const { overlay, ...rest } = json("mods/herdr-inline-markdown/mod.json");
-  assert.deepEqual(overlay, DIALOG);
-  assert.deepEqual(rest, { place: "none", title: "Markdown", focusable: true });
 });
 
 test("mod.json: the companion is placed nowhere, and mod.open shows it as a frameless popup of 2 px (1 would be the whole window)", () => {

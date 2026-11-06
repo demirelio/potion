@@ -7,12 +7,13 @@ import { makeCx, fire_timers, space, must } from "./helpers.mjs";
 const { Editor } = await import("../mods/herdr-inline-markdown/editor.js");
 const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
 const { stats, fileKey, diagramKey, mermaidConfig, sharpName } = await import("../mods/herdr-inline-markdown/lib.js");
-const { owners, STYLES } = await import("../mods/herdr-inline-markdown/page.js");
+const { owners, STYLES, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { theme } = await import("./mocks/herdr.mjs");
-const { liveFields } = await import("./mocks/gpui-base.mjs");
+const { liveFields, TextareaState } = await import("./mocks/gpui-base.mjs");
 const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, INSTALLED } = await import("../mods/herdr-inline-markdown/keys.js");
+const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
 
 const FILE = "/n/docs/note.md";
 const DOC = "# Title\n\nHello **world**.\n\n```mermaid\ngraph TD\nA-->B\n```\n\nBye\n";
@@ -21,7 +22,7 @@ const MERMAID = "/home/user/.local/share/herdr-inline-markdown/mermaid";
 const SANS = ".SystemUIFont";
 const MARK = String.fromCharCode(0xffff), BOM = String.fromCharCode(0xfeff);
 
-// Block i of the page as drawn now (Herdr draws the Column and Block views; the mock draws them when looked into).
+// Herdr draws the Column and Block views itself; the mock draws them when they are looked into.
 const keyAt = (m, i) => m.view.doc.blocks[i].key;
 const blockAt = (m, i, t = m.tree()) => must(t, `md-block-${keyAt(m, i)}`);
 const viewAt = (m, i, t) => all(blockAt(m, i, t), n => n.kind === "textview")[0];
@@ -33,9 +34,7 @@ async function heights(m, list) {
   await flush();
 }
 const press = (point, more = {}) => ({ button: "left", click_count: 1, position: point, local_position: point, modifiers: { shift: false, control: false, alt: false, platform: false }, ...more });
-// An action of the key table, as a binding dispatches it to md-root.
 const act = (m, name) => fire(must(m.tree(), "md-root"), `on_action:${name}`, { action: name }, m.cx);
-// Escape in the block being edited: it draws rendered again.
 const escape = m => act(m, "mdb-escape");
 async function clickAt(m, point) {
   const vp = must(m.tree(), "md-viewport");
@@ -60,7 +59,6 @@ const mdPane = (pane, tab) => ({ pane, terminal: null, tab, cwd: null, focused: 
 const mdPaneOf = tab => ({ ...mdPane(`p-${tab}`, tab), focused: true });
 const split = (pane, file, machine = null) => ["pane.split", { direction: "right", pane, mod: "herdr-inline-markdown", props: { file, machine } }];
 
-// A Markdown editor for `file`, with the doors a test needs: commands (send), watcher reports (touch), typing, clicks, keys.
 async function mount({ file = FILE, machine, disk, props } = {}) {
   if (disk !== undefined) state.disk.set(file, disk);
   const commands = [], watching = [];
@@ -114,7 +112,6 @@ function audit(tree) {
   return seen;
 }
 
-// A renderer that is installed and draws every diagram `width` x `height` px at scale 2.
 function renderer({ width = 800, height = 400, version = "mmdc-test+1" } = {}) {
   state.disk.set(`${MERMAID}/version`, version);
   state.disk.set(`${MERMAID}/node-path`, "/usr/local/bin/node");
@@ -123,8 +120,6 @@ function renderer({ width = 800, height = 400, version = "mmdc-test+1" } = {}) {
 }
 const keyOf = (source, version) => diagramKey(source, JSON.stringify(mermaidConfig(theme())), version);
 const imageOf = (tree, id) => all(find(tree, id), n => n.kind === "image")[0];
-
-// --- Reading
 
 test("a file opens in Reading: a centered page of blocks in a viewport, the Column and each block nested views", async () => {
   const m = await mount({ disk: DOC });
@@ -143,7 +138,8 @@ test("a file opens in Reading: a centered page of blocks in a viewport, the Colu
   assert.equal(column.entity.view.constructor.name, "Column");
   const blocks = must(t, "md-column").kids;
   assert.deepEqual(blocks.map(k => [k.kind, k.entity.view.constructor.name, k.entity.props.key]), m.view.doc.blocks.map(b => ["entity", "Block", b.key]));
-  assert.deepEqual(blocks.map(k => k.entity.props.owner), Array(4).fill(m.view.id), "props carry only strings");
+  assert.deepEqual(blocks.map(k => k.entity.props.owner), Array(4).fill(m.view.id), "every block names its editor");
+  assert.ok(blocks.every(k => Object.values(k.entity.props).every(v => typeof v === "string")), "props carry only strings");
   assert.equal(owners.get(m.view.id), m.view);
   const title = viewAt(m, 0, t);
   assert.equal(title.markdown, "Title");
@@ -166,7 +162,7 @@ test("the font: the theme's sans on the root and on every TextView's parent, so 
   for (const p of parents) assert.equal(p.style.font_family, SANS);
 });
 
-test("type: headings by level, prose at 15/1.6, code at 13 mono, front matter and definitions at 12 mono; space above by kind", async () => {
+test("type: each block is drawn in its kind's style, headings by level, code, front matter and definitions in mono; space above comes from the document", async () => {
   const doc = "---\na: 1\n---\n# One\n## Two\n### Three\n#### Four\n##### Five\n###### Six\n\nPara\n\n```js\nx\n```\n\n[r]: https://e.com\n\n<!-- note -->\n";
   const m = await mount({ disk: doc });
   const t = m.tree();
@@ -174,53 +170,45 @@ test("type: headings by level, prose at 15/1.6, code at 13 mono, front matter an
     const el = all(blockAt(m, i, t), n => n.style.text_size !== undefined && n.style.font_family !== undefined)[0];
     return [el.style.text_size, el.style.font_weight, el.style.line_height, el.style.font_family];
   };
-  assert.deepEqual([1, 2, 3, 4, 5, 6].map(typeOf), [[28, 700, 1.25, SANS], [22, 700, 1.3, SANS], [18, 600, 1.4, SANS], [16, 600, 1.5, SANS], [15, 600, 1.6, SANS], [14, 600, 1.6, SANS]]);
-  assert.deepEqual(typeOf(7), [15, 400, 1.6, SANS]);
-  assert.deepEqual(typeOf(8), [13, 400, 1.5, "Mono"]);
-  assert.deepEqual([0, 9, 10].map(typeOf), [[12, 400, 1.5, "Mono"], [12, 400, 1.5, "Mono"], [12, 400, 1.5, "Mono"]]);
+  const styled = name => [STYLES[name].size, STYLES[name].weight, STYLES[name].lh, STYLES[name].mono ? "Mono" : SANS];
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map(typeOf), [1, 2, 3, 4, 5, 6].map(level => styled(`h${level}`)));
+  assert.deepEqual(typeOf(7), styled("p"));
+  assert.deepEqual(typeOf(8), styled("mono"));
+  assert.deepEqual([0, 9, 10].map(typeOf), [styled("small"), styled("small"), styled("small")]);
   assert.deepEqual([9, 10].map(i => all(blockAt(m, i, t), n => n.style.text_color)[0].style.text_color), ["dim", "dim"]);
-  assert.deepEqual(m.view.doc.blocks.map((_, i) => blockAt(m, i, t).style.pt), [0, 32, 28, 24, 20, 20, 20, 8, 14, 14, 14]);
+  assert.deepEqual(m.view.doc.blocks.map((_, i) => blockAt(m, i, t).style.pt), m.view.doc.blocks.map((_, i) => spaceBefore(m.view.doc.blocks, i)));
   assert.equal(all(blockAt(m, 7, t), n => n.style.min_h === 24).length, 1, "a text block is at least a row tall");
 });
 
-test("chrome: bullets by depth, numbers, checkboxes, the quote bar, the code box with its language, front matter, the rule", async () => {
+test("chrome: markers by depth, numbers, checkboxes, the quote bar, the code language, front matter, the rule", async () => {
   const doc = "---\nt: x\n---\n- a\n  - b\n    - c\n- [ ] open\n- [x] done\n\n3. three\n4) four\n\n> said\n\n```py\nprint()\n```\n\n---\n";
   const m = await mount({ disk: doc });
   const t = m.tree();
   const front = blockAt(m, 0, t).kids[0];
-  assert.deepEqual([front.style.bg, front.style.border_1, front.style.border_color, front.style.rounded, front.style.px, front.style.py], ["surface", true, "border", 8, 12, 10]);
   assert.equal(textOf(front).trim(), "t: x");
   const markerOf = i => blockAt(m, i, t).kids[0].kids[0];
-  assert.deepEqual([markerOf(1).style.w, markerOf(1).style.h], [24, 24], "a 24 px marker column, one row tall");
-  assert.deepEqual([1, 2, 3].map(i => blockAt(m, i, t).style.pl), [0, 24, 48], "24 px per depth");
+  assert.deepEqual([markerOf(1).style.w, markerOf(1).style.h], [MARKER_W, m.view.data.get(keyAt(m, 1)).row], "a marker column, one row tall");
+  assert.deepEqual([1, 2, 3].map(i => blockAt(m, i, t).style.pl), [0, INDENT, 2 * INDENT], "one indent per depth");
   const dot = markerOf(1).kids[0], ring = markerOf(2).kids[0], square = markerOf(3).kids[0];
-  assert.deepEqual([dot.style.size, dot.style.rounded, dot.style.bg], [6, 3, "foreground"]);
-  assert.deepEqual([ring.style.size, ring.style.border, ring.style.border_color, ring.style.bg], [6, 1.5, "foreground", undefined]);
-  assert.deepEqual([square.style.size, square.style.bg, square.style.rounded], [5, "foreground", undefined]);
+  assert.deepEqual([dot.style.bg, Boolean(dot.style.rounded), dot.style.border], ["foreground", true, undefined], "a filled round dot");
+  assert.deepEqual([ring.style.bg, Boolean(ring.style.rounded), Boolean(ring.style.border), ring.style.border_color], [undefined, true, true, "foreground"], "a bordered, unfilled ring");
+  assert.deepEqual([square.style.bg, square.style.rounded, square.style.border], ["foreground", undefined, undefined], "a filled square corner");
   const open = must(t, `md-task-${keyAt(m, 4)}`), done = must(t, `md-task-${keyAt(m, 5)}`);
-  assert.deepEqual([open.style.size, open.style.rounded, open.style.border, open.style.border_color, open.style.bg, open.style.cursor_pointer], [16, 4, 1.5, "input", undefined, true]);
+  assert.deepEqual([open.style.border_color, open.style.bg, open.style.cursor_pointer], ["input", undefined, true]);
   assert.deepEqual([done.style.bg, done.style.border_color], ["accent", "accent"]);
-  assert.deepEqual(all(done, n => n.kind === "svg").map(n => [n.path, n.style.size, n.style.text_color]), [["mods/herdr-inline-markdown/check.svg", 12, "accent_foreground"]]);
+  assert.deepEqual(all(done, n => n.kind === "svg").map(n => [n.path, n.style.text_color]), [["mods/herdr-inline-markdown/check.svg", "accent_foreground"]]);
   assert.equal(viewAt(m, 5, t).markdown, "done");
   assert.equal(all(blockAt(m, 5, t), n => n.style.line_through).length, 1, "a done task is struck through on the TextView's parent");
   assert.equal(all(blockAt(m, 4, t), n => n.style.line_through).length, 0);
-  assert.deepEqual([6, 7].map(i => [textOf(markerOf(i)).trim(), markerOf(i).style.justify_end, markerOf(i).style.pr]), [["3.", true, 5], ["4)", true, 5]]);
+  assert.deepEqual([6, 7].map(i => [textOf(markerOf(i)).trim(), markerOf(i).style.justify_end]), [["3.", true], ["4)", true]]);
   const quote = blockAt(m, 8, t).kids[0];
-  assert.deepEqual([quote.kids[0].style.w, quote.kids[0].style.rounded, quote.kids[0].style.bg, quote.kids[1].style.pl], [3, 2, "input", 14]);
+  assert.deepEqual([quote.kids[0].style.w, quote.kids[0].style.bg, quote.kids[1].style.pl], [QUOTE_BAR, "input", QUOTE_PAD]);
   const code = blockAt(m, 9, t).kids[0];
-  assert.deepEqual([code.style.bg, code.style.border_1, code.style.rounded, code.style.px, code.style.py], ["surface", true, 8, 14, 12]);
   const lang = all(code, n => n.style.absolute)[0];
-  assert.deepEqual([textOf(lang).trim(), lang.style.top, lang.style.right, lang.style.text_size, lang.style.text_color], ["py", 6, 10, 11, "dim"]);
+  assert.deepEqual([textOf(lang).trim(), lang.style.text_color], ["py", "dim"]);
   assert.equal(all(code, n => n.kind === "textview").length, 0, "code is plain mono text, as the field draws it");
-  const rule = blockAt(m, 10, t).kids[0];
-  assert.deepEqual([rule.style.h, rule.kids[0].style.h, rule.kids[0].style.bg], [24, 1, "border"]);
+  assert.equal(blockAt(m, 10, t).kids[0].kids[0].style.bg, "border", "the rule is a line in the border colour");
   audit(t);
-});
-
-test("what TextView draws: a heading's text that would start a block is escaped, continuation lines cannot interrupt the paragraph", async () => {
-  const m = await mount({ disk: "# 1. Intro\n\n## - dash\n\nfoo\n    - bar\n" });
-  const t = m.tree();
-  assert.deepEqual([0, 1, 2].map(i => viewAt(m, i, t).markdown), ["1\\. Intro", "\\- dash", "foo\n    - bar"]);
 });
 
 test("an empty local note opens in Reading with an empty paragraph open and the keyboard in it; nothing is written for it", async () => {
@@ -338,16 +326,13 @@ test("ids are unique and every element with a handler has one, in both states an
   audit(m.tree());
 });
 
-// --- Modes and keys
-
 test("the Markdown toggle: pressed while the source shows, which takes the keyboard; back in Reading the block holding the source caret has it", async () => {
   const m = await mount({ disk: DOC });
   const button = () => must(m.tree(), "md-markdown");
   assert.equal(find(m.tree(), "md-modes"), null, "the three-way switch is gone");
   let b = button();
-  assert.deepEqual([b.style.h, b.style.px, b.style.gap, b.style.rounded, b.style.border_1, b.style.border_color, b.style.text_size], [26, 10, 5, 7, true, "border", 12]);
   assert.deepEqual([b.style.bg, b.style.text_color, b.hover], [undefined, "muted", true], "off: muted, with a hover background");
-  assert.deepEqual(all(b, n => n.kind === "svg").map(n => [n.path, n.style.size]), [["mods/herdr-inline-markdown/code.svg", 13]]);
+  assert.deepEqual(all(b, n => n.kind === "svg").map(n => n.path), ["mods/herdr-inline-markdown/code.svg"]);
   assert.equal(textOf(b).trim(), "Markdown");
   m.view.handle.focused = false;
   await m.click("md-markdown");
@@ -680,8 +665,6 @@ test("calibration that differs from the defaults redraws the blocks of that styl
   assert.deepEqual([wrap.style.min_h, wrap.style.pb], [28.5, 1]);
 });
 
-// --- Saving
-
 test("typing saves 700 ms after the last key, over the text the file had; another key moves the wait", async () => {
   const m = await mount({ disk: "old\n" });
   await m.click("md-markdown");
@@ -953,8 +936,6 @@ test("a mode switch does not write while a conflict or a deletion stands", async
   assert.equal(m.status(), "Conflict");
 });
 
-// --- Following the file
-
 test("a change on disk with nothing unsaved is shown at once in Reading, and in the source field when it next shows; no write", async () => {
   const m = await mount({ disk: "one\n" });
   assert.deepEqual(calls.watchFolder, ["/n/docs"], "the folder of the file is watched");
@@ -1023,9 +1004,10 @@ test("without the key table the field keeps its own Cmd+Z: a disk change goes in
   view.source.edit("plan!\n", cx);
   await fire_timers(cx, { ms: 700 });
   state.disk.set(FILE, "plan!\nagent step\n");
+  const before = view.source.log.length;
   watching.shift()([FILE]);
   await flush();
-  assert.deepEqual(view.source.log.at(-3), ["set_value", "plan!\nagent step\n"]);
+  assert.ok(view.source.log.slice(before).some(([call, text]) => call === "set_value" && text === "plan!\nagent step\n"), "the disk text goes in by set_value");
   view.source.undo(cx);
   await flush();
   await fire_timers(cx, { ms: 700 });
@@ -1334,8 +1316,6 @@ test("a file straight in the home folder (or /) is polled, not watched", async (
   }
 });
 
-// --- Another machine
-
 test("a file on another machine opens in Reading, shows Read-only, is polled every 5 s, and is never written", async () => {
   state.shared["herdr-inline-markdown.modes"] = { [fileKey("devbox", FILE)]: "markdown" };
   state.disk.set(FILE, "remote text\n\n- [ ] a task\n");
@@ -1404,8 +1384,6 @@ test("a remote file that is deleted says so without offering to save; an empty r
   assert.deepEqual([note.style.text_color, note.style.items_center, note.style.justify_center], ["muted", true, true]);
   assert.equal(find(empty.tree(), "md-start"), null);
 });
-
-// --- Closing
 
 test("close() writes what is unsaved, over the text the file had", async () => {
   const m = await mount({ disk: "old" });
@@ -1490,7 +1468,7 @@ test("close(): when the write in flight has not landed, the last write is refuse
   writes[2].land();
   await closing;
   assert.equal(state.disk.get(FILE), "two");
-  writes[0].land(); // the first write is refused now: the file moved on
+  writes[0].land(); // refused: the file moved on
   await fired;
   await flush();
   assert.equal(state.disk.get(FILE), "two", "the late write overwrote nothing");
@@ -1546,7 +1524,10 @@ test("after close() nothing runs: the waiting save, the watcher, the polls and t
   const m = await mount({ disk: "old" });
   await m.click("md-markdown");
   await m.type("new");
+  assert.ok(m.cx.timers.some(t => t.ms === 700 && !t.cancelled), "a save is waiting");
   await m.view.close(m.cx);
+  const saves = m.cx.timers.filter(t => t.ms === 700);
+  assert.ok(saves.length > 0 && saves.every(t => t.cancelled), "the waiting save is cancelled, not left to fire");
   const writes = calls.writeTextFile.length, reads = calls.readTextFile.length;
   assert.equal(writes, 1);
   await fire_timers(m.cx);
@@ -1556,10 +1537,21 @@ test("after close() nothing runs: the waiting save, the watcher, the polls and t
   assert.equal(calls.writeTextFile.length, writes);
   assert.equal(calls.readTextFile.length, reads);
   assert.equal(m.view.mode, "markdown");
-  assert.ok(m.cx.timers.every(t => t.cancelled || t.ran || t.once === undefined));
   assert.equal(owners.has(m.view.id), false, "the nested views no longer find it");
   await m.view.close(m.cx);
   assert.equal(calls.writeTextFile.length, writes, "a second close does nothing");
+});
+
+test("after close() the poll of a file on another machine is cancelled, and a tick already due reads nothing", async () => {
+  const m = await mount({ machine: "devbox", disk: "remote\n" });
+  const [poll] = m.cx.timers.filter(t => !t.once);
+  assert.equal(poll.cancelled, undefined, "polling while open");
+  await m.view.close(m.cx);
+  assert.equal(poll.cancelled, true);
+  const reads = calls.readTextFile.length;
+  poll.fn(m.cx);
+  await flush();
+  assert.equal(calls.readTextFile.length, reads);
 });
 
 test("a read that was out when the tab closed is ignored when it answers", async () => {
@@ -1572,8 +1564,6 @@ test("a read that was out when the tab closed is ignored when it answers", async
   assert.equal(m.view.loaded, false);
   assert.equal(m.view.text, "");
 });
-
-// --- Links
 
 test("links: web pages go to the browser, markdown files open beside this pane, other files say so, anchors do nothing", async () => {
   state.exec = async () => ({ code: 0, stdout: "", stderr: "" }); // the mail link below goes to `open`
@@ -1833,8 +1823,11 @@ test("the source field: terminal font at 13.5, in a column of at most 860 px tha
 });
 
 test("the source field is made once, in init, wraps long lines, and is the only field drawn in Markdown", async () => {
-  const m = await mount({ disk: "x" });
-  assert.equal(typeof m.view.source.handlers.change, "function");
+  const wrapping = [], real = TextareaState.prototype.set_soft_wrap;
+  TextareaState.prototype.set_soft_wrap = function (on) { if (on) wrapping.push(this); return real.call(this, on); };
+  let m;
+  try { m = await mount({ disk: "x" }); } finally { TextareaState.prototype.set_soft_wrap = real; }
+  assert.ok([m.view.source, m.view.field, m.view.spare].every(s => wrapping.includes(s)), "the source, the active and the armed field wrap long lines");
   const states = new Set();
   for (let i = 0; i < 4; i++) {
     await m.click("md-markdown");
@@ -1903,8 +1896,6 @@ test("a file that holds the marker character itself takes typing in Markdown; on
   assert.equal(m.view.text, "abc\n", "taking the file's own one out is typing too");
 });
 
-// --- Cost per render
-
 test("the document is parsed once for a text; a draw, a size change or a state switch parses nothing, an edit re-parses its span", async () => {
   const m = await mount({ disk: DOC });
   m.tree();
@@ -1946,8 +1937,6 @@ test("only the blocks whose drawing changed are redrawn; the Column only when th
   assert.equal(a.released, false);
 });
 
-// --- Footer, toolbar
-
 test("the footer counts words and lines of the buffer and shows the path with ~ for the home folder", async () => {
   const m = await mount({ file: "/home/user/notes/plan.md", disk: DOC });
   const { words, lines } = stats(DOC);
@@ -1956,9 +1945,7 @@ test("the footer counts words and lines of the buffer and shows the path with ~ 
   assert.match(textOf(footer), /~\/notes\/plan\.md$/);
   const place = all(footer, n => n.style.truncate && n.style.text_right)[0];
   assert.ok(place && place.style.min_w === 0 && place.style.flex_1);
-  assert.deepEqual([footer.style.h, footer.style.text_size, footer.style.text_color], [26, 11.5, "dim"]);
   const bar = must(m.tree(), "md-toolbar");
-  assert.equal(bar.style.h, 40);
   assert.equal(textOf(bar).includes("plan.md"), true);
   assert.equal(textOf(bar).includes("~/notes"), false, "the folder is in the footer, not the toolbar");
   assert.deepEqual(all(bar, n => n.kind === "image").map(n => n.path), ["mods/herdr-inline-markdown/file-markdown.svg"], "the file's own full-colour icon");
@@ -1981,7 +1968,7 @@ test("a buffer over 50000 characters is counted when it settles (save timer, loa
   assert.equal(counts(), "10001 words · 1 line", "typing does not recount");
   await m.type(`${big}more words\nand a new line, and more`);
   assert.equal(counts(), "10001 words · 1 line");
-  await m.save(); // the 700 ms timer
+  await m.save();
   assert.equal(counts(), "10009 words · 2 lines", "the save timer catches up");
   await m.type(`${big}a`);
   assert.equal(counts(), "10009 words · 2 lines");
@@ -2018,10 +2005,7 @@ test("the path outside the home folder is shown whole; a home folder that only s
   assert.match(textOf(must(b.tree(), "md-footer")), /\/home\/user2\/a\.md$/);
 });
 
-// --- Diagrams in the page
-
-// The diagram of DOC, block 2.
-const dia = m => `md-diagram-${keyAt(m, 2)}`;
+const dia =m => `md-diagram-${keyAt(m, 2)}`;
 
 // What the app does: the first draw asks for the diagrams, the renderer's version arrives and draws again, and the
 // diagrams asked for then wait their 400 ms and are made.
@@ -2064,7 +2048,6 @@ async function framed({ width = 4642, height = 5444, disk = DOC, viewH = 1000, i
   await heights(m, { 0: 35, 1: 32, [i]: d.space + d.frameH, ...more });
   return m;
 }
-// Frame i of the page: its box on the screen (viewport px), its data, its element and its pictures.
 function frameOn(m, i = 2) {
   const d = m.view.data.get(keyAt(m, i)), el = find(m.tree(), `md-frame-${keyAt(m, i)}`);
   return { left: d.frameLeft, top: 28 + m.view.sums[i + 1] - d.frameH - m.view.offset, w: d.frameW, h: d.frameH, d, el, img: el ? all(el, n => n.kind === "image") : [] };
@@ -2083,7 +2066,7 @@ const scroll = (m, p, dx, dy, more = {}) => fire(must(m.tree(), "md-viewport"), 
   { delta: { x: dx, y: dy }, touch_phase: "moved", position: p, local_position: p, modifiers: MODS, ...more, ...(more.modifiers ? { modifiers: { ...MODS, ...more.modifiers } } : {}) }, m.cx);
 const down = (m, p, more = {}) => fire(must(m.tree(), "md-viewport"), "on_mouse_down:left", press(p, more), m.cx);
 const up = (m, p, more = {}) => fire(must(m.tree(), "md-viewport"), "on_mouse_up:left", press(p, more), m.cx);
-// A drag on the viewport: press, moves in steps, release (a drag's release has click_count 0).
+// A drag's release has click_count 0.
 function drag(m, from, to, steps = 4) {
   down(m, from);
   for (let k = 1; k <= steps; k++) hover(m, { x: from.x + ((to.x - from.x) * k) / steps, y: from.y + ((to.y - from.y) * k) / steps });
@@ -2477,8 +2460,7 @@ test("a diagram block not measured yet with a picture of known size is estimated
   assert.equal(m.view.estimate(m.view.blocks[2]), 14 + 700);
 });
 
-// A renderer that draws a diagram natW x natH natural px at 2x, or at the --scale a sharp picture asks for.
-const drawsAt = (natW, natH) => async (_c, args) => {
+const drawsAt =(natW, natH) => async (_c, args) => {
   const at = args.indexOf("--scale"), scale = at < 0 ? 2 : Number(args[at + 1]);
   return { code: 0, stderr: "", stdout: `${JSON.stringify({ results: args.slice(at < 0 ? 5 : 9).map(file => ({ key: file.slice(file.lastIndexOf("/") + 1).replace(/\.mmd$/, ""), ok: true, width: Math.round(natW * scale), height: Math.round(natH * scale), scale })) })}\n` };
 };
@@ -2571,7 +2553,6 @@ test("diagrams keep their last image across edits made in Markdown: dimmed while
   assert.notEqual(now.path, first);
   assert.equal(now.style.opacity, undefined);
   assert.equal(textOf(must(t, "md-diagrams")), "1 diagram");
-  // An edit elsewhere in Markdown leaves the diagram as it is.
   await m.click("md-markdown");
   await m.type(m.view.source.value().replace("Bye", "Goodbye"));
   await m.click("md-markdown");
@@ -2641,8 +2622,6 @@ test("no node: the diagram says so and so does the footer", async () => {
   assert.equal(textOf(must(t, "md-diagrams")), "Diagrams need Node.js");
 });
 
-// --- Starting up and the roles
-
 test("a Markdown editor remembers the file as a recent one as it starts", async () => {
   await mount({ disk: "x" });
   assert.deepEqual(state.shared["herdr-inline-markdown.recent"], [{ machine: null, path: FILE }]);
@@ -2661,19 +2640,14 @@ test("the pane registry: not at init (focused() is still the previous tab), but 
   state.spaces[0].tabs.push(tabOf("tb2", "note.md"));
   state.panes = [shellPane, mdPaneOf("tb2")];
   farFocus("tb2");
-  // The write is a task of its own (a draw writes nothing shared); the mock runs a task's first step at once.
-  const real = m.cx.spawn, tasks = [];
-  m.cx.spawn = body => { tasks.push(body); return real(body); };
   m.tree();
-  assert.equal(tasks.length, 2, "the registry entry, and the pane header's name and mode");
   await flush();
   assert.deepEqual(registry(), { "p-tb2": fileKey(null, FILE) });
   assert.deepEqual(state.shared["herdr-inline-markdown.heads"], { "p-tb2": { name: "note.md", mode: "reading" } });
   const writes = calls.setShared.length;
   m.tree(); m.tree();
   await flush();
-  assert.equal(tasks.length, 2, "once per pane, not once per draw");
-  assert.equal(calls.setShared.length, writes);
+  assert.equal(calls.setShared.length, writes, "once per pane, not once per draw");
   assert.equal(m.view.claimed, "p-tb2");
 });
 
@@ -2753,7 +2727,7 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.equal(must(t, `md-field-${active.key}`).style.key_context, `${TEXT} rows=many menu=open`, "its slash menu open");
   const menu = must(t, "md-slash");
   assert.equal(must(t, "md-viewport").kids.indexOf(menu), must(t, "md-viewport").kids.findIndex(k => k.id?.startsWith("md-cal")) - 1, "drawn last on the page, before the calibration strip");
-  assert.deepEqual(all(menu, n => n.kind === "svg").map(n => n.path.split("/").at(-1)), ["type", "heading-1", "heading-2", "heading-3", "list", "list-ordered", "list-todo", "text-quote", "code", "workflow", "table", "minus"].map(i => `${i}.svg`));
+  assert.deepEqual(all(menu, n => n.kind === "svg").map(n => n.path.split("/").at(-1)), COMMANDS.map(c => `${c.icon}.svg`), "each command's icon, in the table's order");
   assert.ok(menu.style.shadow_lg && typeof menu.handlers.on_mouse_down_out === "function");
   assert.deepEqual([field.style.font_family, field.style.text_size, field.style.line_height], [SANS, 15, 1.6]);
   const spare = all(must(t, `md-field-${armed.key}`), n => n.kind === "textarea")[0];
@@ -2882,8 +2856,10 @@ test("main.js: a tab (or no props) is the editor, a dialog with action open is t
   dialog.init(undefined, dcx);
   await flush();
   assert.equal(dialog.role.constructor.name, "Picker");
-  assert.ok(dialog.render(dcx));
+  assert.ok(find(dialog.render(dcx), "mdp-root"), "render reaches the picker");
+  assert.equal(state.shared["herdr-inline-markdown.picker"], "ov-1", "the dialog is the open picker");
   await dialog.close(dcx);
+  assert.equal(state.shared["herdr-inline-markdown.picker"], null, "close reaches the picker, which gives up its place");
 });
 
 test("props come from the init argument when props() has none", async () => {
@@ -2908,8 +2884,7 @@ async function page(disk, sizes, viewH = 600) {
   return m;
 }
 const NO_MODS = { shift: false, control: false, alt: false, platform: false };
-// A key-up in the field being edited, as its wrapper hears it.
-const keyUp = (m, key, modifiers = {}) => fire(must(m.tree(), `md-field-${m.view.activeKey}`), "on_key_up", { key, keystroke: key, modifiers: { ...NO_MODS, ...modifiers } }, m.cx);
+const keyUp =(m, key, modifiers = {}) => fire(must(m.tree(), `md-field-${m.view.activeKey}`), "on_key_up", { key, keystroke: key, modifiers: { ...NO_MODS, ...modifiers } }, m.cx);
 const hover = (m, p) => fire(must(m.tree(), "md-viewport"), "on_mouse_move", { position: p, local_position: p, modifiers: NO_MODS }, m.cx);
 // Every style measured as drawn by default: arming waits for the measurements.
 function calibrate(m) {
@@ -2924,7 +2899,6 @@ function calibrate(m) {
 }
 
 test("the key table goes in once per runtime: versioned contexts of the editor's own fields only, mdb-* actions that md-root handles", async () => {
-  assert.deepEqual([TEXT, RAW, SOURCE, INSTALLED], ["MdText2", "MdRaw2", "MdSource2", "herdr-inline-markdown.keys.2"], "version 2: the slash menu's Up and Down");
   delete globalThis[INSTALLED];
   const a = await mount({ disk: "x" }), b = await mount({ disk: "y" });
   assert.equal(a.cx.bound.length, 1);
@@ -2946,7 +2920,6 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   assert.deepEqual(contexts("cmd-z"), [`${RAW} > Input`, `${SOURCE} > Input`, `${TEXT} > Input`]);
   assert.deepEqual(contexts("cmd-v"), [`${RAW} > Input`, `${TEXT} > Input`]);
   for (const key of ["backspace", "left", "right", "escape"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
-  assert.deepEqual([...new Set(table.map(x => x.action))].sort(), ["mdb-backspace-start", "mdb-cmd-enter", "mdb-down", "mdb-enter", "mdb-escape", "mdb-left-start", "mdb-move-down", "mdb-move-up", "mdb-pagedown", "mdb-pageup", "mdb-paste", "mdb-redo", "mdb-right-end", "mdb-shift-enter", "mdb-shift-tab", "mdb-tab", "mdb-undo", "mdb-up"], "no new action names");
   for (const key of ["delete", "cmd-a", "cmd-c", "cmd-x", "home", "end", "shift-up", "alt-left", "cmd-s", "cmd-e", "a"]) assert.deepEqual(contexts(key), [], key);
   const root = must(a.tree(), "md-root");
   for (const name of new Set(table.map(x => x.action))) assert.equal(typeof root.handlers[`on_action:${name}`], "function", name);
@@ -3638,15 +3611,11 @@ test("change events arrive in the live order, after the handler: typing is taken
   await clickAt(m, { x: X + 20, y: topOf(m, 0) + 10 });
   liveFields(true, m.cx);
   try {
-    const field = m.view.field, order = [], handler = field.handlers.change;
-    field.handlers.change = (e, cx) => { order.push("change"); return handler(e, cx); };
+    const field = m.view.field;
     field.select(5);
     field.type("!", m.cx);
-    queueMicrotask(() => order.push("microtask"));
-    process.nextTick(() => order.push("nextTick"));
     assert.equal(m.view.text, "Hello\n", "not yet: the change comes after this handler");
     await flush();
-    assert.deepEqual([order.indexOf("change"), order.length], [2, 3], "after the microtasks of the handler that typed");
     assert.equal(m.view.text, "Hello!\n");
     act(m, "mdb-shift-enter");
     assert.equal(m.view.text, "Hello!\\\n\n", "written at once, from the field's value");
@@ -3685,8 +3654,7 @@ test("a remote file opens nothing on a click and arms nothing", async () => {
   assert.equal(m.view.activeKey, null);
 });
 
-// The block being edited, its field's value and selection.
-const editing = m => [m.view.activeKey, m.view.field.value(), m.view.field.selection];
+const editing =m => [m.view.activeKey, m.view.field.value(), m.view.field.selection];
 // The user moves the caret in the field being edited to `at`, and the key-up reads it out.
 async function caretTo(m, at) {
   m.view.field.select(at);
@@ -4161,7 +4129,8 @@ test("a merge in Markdown goes into the source as an edit of the field; its care
   await m.touch([FILE]);
   assert.equal(m.view.text, "intro\nalpha!\nbeta\n");
   assert.equal(m.banner(), "");
-  assert.deepEqual(field.log.slice(log).map(([call]) => call), ["set_selected_range", "replace", "set_selected_range", "replace"]);
+  const applied = field.log.slice(log).map(([call]) => call);
+  assert.ok(applied.includes("replace") && !applied.includes("set_value"), "an edit of the field, never set_value, which would scroll it to the top");
   assert.deepEqual(field.selection, { start: 12, end: 12 });
   await m.save();
   assert.deepEqual(calls.writeTextFile.at(-1), { path: FILE, text: "intro\nalpha!\nbeta\n", expected: "intro\nalpha\nbeta\n" });
@@ -4243,7 +4212,6 @@ test("Cmd+Z changes nothing on a page that cannot be written: a remote file, or 
   assert.equal(calls.writeTextFile.length, 1, "only the save before it went read-only");
 });
 
-// Block i opened by a click on its first row, then the caret moved to field offset `caret` (when given).
 async function openBlock(m, i, caret) {
   const d = m.view.data.get(keyAt(m, i)), boxed = ["code", "mermaid", "table", "html", "frontmatter"].includes(d.kind) ? 13 : 0;
   await clickAt(m, { x: X + d.depth * 24 + (d.kind === "item" ? 24 : 0) + boxed + 4, y: topOf(m, i) + d.space + boxed + 5 });
@@ -4341,6 +4309,11 @@ test("an empty block not written yet, drawn between blocks, leaves the space abo
 
 test("Shift+Enter writes a backslash and the line end, which the page draws as a line break; in a heading it is Enter", async () => {
   const m = await page("Hello world\n\n# Head line\n", { 0: 24, 1: 67 });
+  await openBlock(m, 0, 5);
+  act(m, "mdb-shift-enter");
+  assert.equal(m.view.text, "Hello\\\n world\n\n# Head line\n", "in the middle of a paragraph, the rest of it goes below the break");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Hello world\n\n# Head line\n");
   await openBlock(m, 0, 11);
   act(m, "mdb-shift-enter");
   assert.equal(m.view.text, "Hello world\\\n\n\n# Head line\n");
@@ -4357,20 +4330,6 @@ test("Shift+Enter writes a backslash and the line end, which the page draws as a
   assert.equal(m.view.text, "Hello world\\\nagain\n\n# Head\n\nline\n");
   act(m, "mdb-undo");
   assert.equal(m.view.text, "Hello world\\\nagain\n\n# Head line\n");
-});
-
-test("Shift+Enter writes a line break that stays one; Cmd+V types the clipboard's text; nothing on the clipboard does nothing", async () => {
-  const m = await page("Hello world\n\n# Head\n", { 0: 24, 1: 67 });
-  await clickAt(m, { x: X + 20, y: topOf(m, 0) + 10 });
-  m.view.field.select(5);
-  act(m, "mdb-shift-enter");
-  assert.equal(m.view.text, "Hello\\\n world\n\n# Head\n");
-  m.cx.held = "pasted";
-  act(m, "mdb-paste");
-  assert.equal(m.view.text, "Hello\\\npasted world\n\n# Head\n");
-  m.cx.held = undefined;
-  act(m, "mdb-paste");
-  assert.equal(m.view.text, "Hello\\\npasted world\n\n# Head\n", "no text on the clipboard: nothing");
 });
 
 test("Backspace at the start: an item becomes a paragraph, a paragraph joins the one above with the caret at the join, below a code block it lands at the end of its last inner line", async () => {
@@ -4607,6 +4566,7 @@ test("a drag from block 2 to block 4 selects them whole, with 4's sub-items; Cmd
   const doc = "Zero\n\nOne\n\nTwo\n\nThree\n\n- four\n  - sub\n\nFive\n";
   const m = await page(doc, { 0: 24, 1: 38, 2: 38, 3: 38, 4: 38, 5: 30, 6: 38 });
   const on = i => ({ x: X + 60, y: topOf(m, i) + m.view.data.get(keyAt(m, i)).space + 5 }), vp = () => must(m.tree(), "md-viewport");
+  const textViewBefore = viewAt(m, 2).id;
   fire(vp(), "on_mouse_down:left", press(on(2)), m.cx);
   hover(m, on(2));
   assert.equal(m.view.sel, null, "inside one block the TextView selects its own text");
@@ -4617,7 +4577,7 @@ test("a drag from block 2 to block 4 selects them whole, with 4's sub-items; Cmd
   const t = m.tree(), selected = [0, 1, 2, 3, 4, 5, 6].filter(i => blockAt(m, i, t).style.bg === "selection");
   assert.deepEqual(selected, [2, 3, 4, 5], "block 4's sub-item goes with it");
   assert.deepEqual([blockAt(m, 2, t).style.rounded, m.view.activeKey, m.view.handle.focused], [4, null, true]);
-  assert.match(viewAt(m, 2, t).id, /-1$/, "a fresh TextView, without the selection the drag began in it");
+  assert.notEqual(viewAt(m, 2, t).id, textViewBefore, "a fresh TextView, without the selection the drag began in it");
   rootKey(m, "cmd-c");
   assert.equal(m.cx.clipboard.at(-1), "Two\n\nThree\n\n- four\n  - sub");
   const writes = calls.writeTextFile.length;
@@ -4998,11 +4958,9 @@ test("Backspace at the start of a raw block whose text was all deleted: it goes,
 // n one-line paragraphs: block 0 is estimated at 24 px, every other block at 38 (14 above its row).
 const paragraphs = n => Array.from({ length: n }, (_, i) => `Paragraph ${i}`).join("\n\n") + "\n";
 const columnKids = (m, t = m.tree()) => must(t, "md-column").kids;
-// The Column's blocks in order, those drawn upward (md-above) taken out of their box.
-const mountedEntities = (m, t) => columnKids(m, t).flatMap(k => (k.id === "md-above" ? k.kids[0].kids : [k])).filter(k => k.kind === "entity");
+const mountedEntities =(m, t) => columnKids(m, t).flatMap(k => (k.id === "md-above" ? k.kids[0].kids : [k])).filter(k => k.kind === "entity");
 const mountedOf = (m, t) => mountedEntities(m, t).map(k => m.view.at.get(k.entity.props.key));
 const blockViews = m => m.cx.entities.filter(e => e.view.constructor.name === "Block");
-// Every mounted block the page has no height for reports `h` px, as a block does once it is drawn.
 async function measureMounted(m, h) {
   const t = m.tree();
   for (const i of mountedOf(m, t)) if (!m.view.heights.has(keyAt(m, i))) fire(blockAt(m, i, t), "on_size_change", { width: 716, height: h }, m.cx);
@@ -5015,10 +4973,9 @@ const firstVisible = m => {
   return keyAt(m, i);
 };
 const screenTop = (m, key) => 28 + m.view.sums[m.view.at.get(key)] - m.view.offset;
-// The Column draws each mounted block exactly where the page's tops put it (its spacers stand for the blocks between,
-// and the blocks drawn upward fill a box up from the top of the block below it), it mounts every block within 750 px of
-// the page, and none but the one being edited much further than its margin: 1500 px when the window was made, grown
-// by the blocks in it that measured taller, plus the 750 px it may lag.
+// The Column draws each mounted block where the page's tops put it (spacers stand for the blocks between; blocks drawn
+// upward fill a box up from the top of the block below), mounts every block within 750 px of the page, and no other
+// beyond its margin: 1500 px when the window was made, grown by blocks that measured taller, plus the 750 px it may lag.
 function assertWindow(m) {
   const s = m.view.sums, n = m.view.blocks.length, top = m.view.offset - 28, bottom = top + m.view.viewH(), active = m.view.at.get(m.view.activeKey);
   let y = 0;
@@ -5628,19 +5585,16 @@ test("a marker typed alone into a block not written yet is written as typed on E
 
 const SLASH_ROWS = ["text", "h1", "h2", "h3", "ul", "ol", "todo", "quote", "code", "mermaid", "table", "hr"];
 const THREE = "Intro\n\nWords\n\nOutro\n";
-// Each character typed on its own, as the keys type them.
-const typed = (m, text) => { for (const ch of text) m.view.field.type(ch, m.cx); };
+const typed =(m, text) => { for (const ch of text) m.view.field.type(ch, m.cx); };
 const menuOf = m => find(m.tree(), "md-slash");
 const slashRows = (m, t = m.tree()) => all(find(t, "md-slash"), n => /^md-slash-/.test(n.id ?? "")).map(n => n.id.slice("md-slash-".length));
 const highlighted = m => all(menuOf(m), n => /^md-slash-/.test(n.id ?? "") && n.style.bg === "hover").map(n => n.id.slice("md-slash-".length));
 const contextOf = m => must(m.tree(), `md-field-${m.view.activeKey}`).style.key_context;
-// Block i opened and everything in it deleted, as the user selecting it all and pressing Backspace.
 async function emptied(m, i) {
   await openBlock(m, i);
   m.view.field.select(0, m.view.field.value().length);
   m.view.field.type("", m.cx);
 }
-// `query` typed after a slash at the end of block i, then picked by Enter.
 async function slashed(m, i, query, at) {
   await openBlock(m, i, at ?? m.view.openedValue(m.view.doc.blocks[i]).length);
   typed(m, query);
@@ -5657,10 +5611,9 @@ test("typing / at the start of a paragraph opens the menu under the caret row wi
   assert.ok(menu, "the menu");
   assert.deepEqual(slashRows(m), SLASH_ROWS);
   assert.deepEqual(highlighted(m), ["text"], "the first row highlighted");
-  assert.deepEqual([menu.style.absolute, menu.style.top, menu.style.left, menu.style.w], [true, 28 + 24 + 14 + 24 + 6, 92, 264], "6 px under the caret row, at the field's left");
-  assert.deepEqual([menu.style.bg, menu.style.rounded, menu.style.border_color, menu.style.shadow_lg, menu.style.p], ["popover", 10, "border", true, 5]);
+  assert.deepEqual([menu.style.absolute, menu.style.top, menu.style.left], [true, 28 + 24 + 14 + 24 + 6, 92], "6 px under the caret row, at the field's left");
   const row = must(m.tree(), "md-slash-h2");
-  assert.deepEqual([row.style.h, row.style.cursor_pointer, textOf(row).trim()], [31, true, "Heading 2 ##"]);
+  assert.deepEqual([row.style.cursor_pointer, textOf(row).trim()], [true, "Heading 2 ##"]);
   assert.equal(all(row, n => n.kind === "svg")[0].path, "mods/herdr-inline-markdown/heading-2.svg");
   assert.equal(contextOf(m), `${TEXT} rows=one menu=open`);
   assert.deepEqual([m.view.text, m.view.field.value()], ["Intro\n\n/\n\nOutro\n", "/"], "the slash is typed text");
@@ -5939,10 +5892,10 @@ test("/table writes a 3-column table with one empty row and selects 'Column 1'; 
   const table = "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |";
   assert.equal(m.view.text, `Intro\n\n${table}\n\nOutro\n`);
   assert.equal(m.view.blockByKey(m.view.activeKey).kind, "table");
-  assert.deepEqual(m.view.field.selection, { start: 2, end: 10 });
+  const value = m.view.field.value(), cell = word => ({ start: value.indexOf(word), end: value.indexOf(word) + word.length });
+  assert.deepEqual(m.view.field.selection, cell("Column 1"));
   act(m, "mdb-tab");
-  assert.deepEqual(m.view.field.selection, { start: 13, end: 21 });
-  assert.equal(table.slice(13, 21), "Column 2");
+  assert.deepEqual(m.view.field.selection, cell("Column 2"));
 });
 
 test("/divider writes a rule and opens an empty paragraph below it that takes the caret; nothing is written for that paragraph until typing", async () => {

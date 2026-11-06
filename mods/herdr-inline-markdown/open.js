@@ -1,18 +1,16 @@
-// Opening a markdown file: beside the focused pane in the current tab (place "pane"), or in a tab of its own (place
-// "tab"). Which pane shows which file lives in shared state ("herdr-inline-markdown.panes": pane id -> fileKey), filed by each
-// pane's editor the first time it is drawn: panes() does not say what a mod pane shows. Mods cannot import each
-// other, so the files integration carries a copy of openMarkdown (test/integrations.test.mjs checks that the copy
-// acts alike).
+// panes() does not say what a mod pane shows, so each pane's editor files its file in shared state (PANES: pane id ->
+// fileKey) the first time it is drawn. Mods cannot import each other: the files integration carries a copy of
+// openMarkdown (test/integrations.test.mjs checks that the copy acts alike).
 import { spaces, panes, focused, machines, shared, setShared, run } from "herdr";
 import { basename, fileKey, remember } from "./lib.js";
 
 const MOD = "herdr-inline-markdown", PANES = "herdr-inline-markdown.panes", RECENT = "herdr-inline-markdown.recent", RECENT_MAX = 30;
 
-// place "pane": the pane already showing the file in that tab gets the focus, else the file opens to the right of
-// `pane` (default: the focused one, else the tab's first). With no pane to open beside, it opens as a tab.
-// place "tab": goes to the file's own tab (every pane in it a Markdown pane, one of them this file's) in any space,
-// else opens one in `space`. A tab drawn before the registry knew it (restored in the background) is found by its
-// name when all its panes are still unknown and it is the only one.
+// place "pane" focuses the pane already showing the file in that tab, else splits right of `pane` (default: the focused
+// one, else the tab's first); with no pane to open beside it falls through to a tab. place "tab" selects the file's own
+// tab in any space, else opens one in `space`.
+// A tab restored in the background is not in the registry yet: it is found by its name when all its panes are unknown
+// and it is the only such tab.
 export function openMarkdown({ file, machine = null, place = "tab", space, pane }) {
   const key = fileKey(machine, file), known = shared(PANES) ?? {}, all = panes();
   const mine = all.filter(p => p.mod === MOD);
@@ -45,8 +43,8 @@ export function openMarkdown({ file, machine = null, place = "tab", space, pane 
   rememberRecent(file, machine);
 }
 
-// Files `pane` under the file's key. Forgets the entries of panes that are gone, but only while every machine's
-// layout is loaded (an offline machine's panes are not in panes(), and are not gone). Writes only on a change.
+// Entries of closed panes are dropped only while every machine's layout is loaded: an offline machine's panes are not
+// in panes(), but they are not gone.
 export function registerPane(pane, file, machine = null) {
   if (!pane) return;
   const before = shared(PANES) ?? {}, list = { ...before, [pane]: fileKey(machine, file) };
@@ -57,8 +55,7 @@ export function registerPane(pane, file, machine = null) {
   if (JSON.stringify(list) !== JSON.stringify(before)) setShared(PANES, list);
 }
 
-// The pane in `tab` that a copy showing `file` is drawn in: the one the registry already files under the file, else
-// the only Markdown pane of the tab the registry does not know yet. null while that is not certain (two unknown ones).
+// A pane the registry does not know yet counts only when it is the tab's one unknown Markdown pane; else null.
 export function paneOf(tab, file, machine = null) {
   const key = fileKey(machine, file), known = shared(PANES) ?? {};
   const mine = panes().filter(p => p.tab === tab && p.mod === MOD);
@@ -68,7 +65,6 @@ export function paneOf(tab, file, machine = null) {
   return fresh.length === 1 ? { pane: fresh[0].pane, filed: false } : null;
 }
 
-// The last 30 files opened, newest first, each once ({ machine, path }; the same path on another machine is another file).
 export function rememberRecent(file, machine = null) {
   const list = shared(RECENT), same = (a, b) => a.path === b.path && (a.machine ?? null) === (b.machine ?? null);
   setShared(RECENT, remember(Array.isArray(list) ? list : [], { machine: machine ?? null, path: file }, same, RECENT_MAX));

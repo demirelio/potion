@@ -1,7 +1,6 @@
-// The block editor's key table. Bindings are app-wide and cannot be removed, so the table goes in once per runtime
-// and never changes within a version: any change raises VERSION, which is part of every context's name
-// (MdText<VERSION>, MdRaw<VERSION>, MdSource<VERSION>). An action keeps its meaning and a handler for as long as any
-// build shipped it.
+// Bindings are app-wide and cannot be removed, so the table goes in once per runtime and never changes within a
+// version: any change raises VERSION, which is part of every context's name. An action keeps its meaning and a
+// handler for as long as any build shipped it.
 // A binding at `X > Input` takes the key from the field entirely; one at `X` fires only for the keys the field gives
 // away there (Backspace and Left at offset 0, Right at the end, Tab, Escape).
 const VERSION = 2;
@@ -38,12 +37,10 @@ export const BINDINGS = [
 
 export const ACTIONS = [...new Set(BINDINGS.map(b => b.action))];
 
-// A flag on globalThis outlives a reload of the mod, which a module variable does not: one table per runtime and
-// version, so a reload that raised VERSION installs its new table.
+// A flag on globalThis outlives a reload of the mod, which a module variable does not.
 const INSTALLED = `herdr-inline-markdown.keys.${VERSION}`;
 export { INSTALLED };
 
-// -> true when this call installed the table.
 export function installKeys(cx) {
   if (globalThis[INSTALLED]) return false;
   cx.bind_keys(BINDINGS);

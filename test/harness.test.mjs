@@ -1,8 +1,8 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { state, calls, reset, readTextFile, writeTextFile, watchFolder, nextCommand, appHome, notify } from "./mocks/herdr.mjs";
+import { state, calls, reset, readTextFile, writeTextFile } from "./mocks/herdr.mjs";
 import { files } from "./mocks/fs.mjs";
-import { TextareaState, InputState, EditorState, TextView, Textarea } from "./mocks/gpui-base.mjs";
+import { TextareaState, InputState, TextView, Textarea } from "./mocks/gpui-base.mjs";
 import { div } from "./mocks/gpui-kit.mjs";
 import { find, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, fire_timers } from "./helpers.mjs";
@@ -44,22 +44,34 @@ test("a timer set while timers fire waits for the next call", async () => {
   assert.deepEqual(ran, ["first", "second"]);
 });
 
-test("the recorded timers keep their shape: { ms, fn } for every, { ms, fn, once } for after", () => {
+test("a timer set with `after` is recorded under both names a test may look for", () => {
   const cx = makeCx(), fn = () => {};
-  cx.timer.every(5, fn);
-  cx.timer.after(7, fn);
-  assert.deepEqual(cx.timers.map(t => [t.ms, t.fn, t.once]), [[5, fn, undefined], [7, fn, true]]);
+  cx.timer.after(250, fn);
+  cx.timer.every(1000, fn);
+  assert.deepEqual(cx.timers[0], { ms: 250, fn, once: true, after: true });
+  assert.deepEqual(cx.timers[1], { ms: 1000, fn }, "`every` is marked neither once nor after");
 });
 
-test("cx reads the clipboard and records opened urls", () => {
+test("the clipboard reads clipboardText, else the last write, else held", () => {
   const cx = makeCx();
-  assert.equal(cx.read_from_clipboard(), undefined);
+  assert.equal(cx.read_from_clipboard(), undefined, "empty");
   cx.held = "held";
-  assert.equal(cx.read_from_clipboard(), "held");
+  assert.equal(cx.read_from_clipboard(), "held", "held when nothing was written");
   cx.write_to_clipboard("copied");
+  assert.equal(cx.clipboardText, "copied", "a write sets clipboardText");
   assert.equal(cx.read_from_clipboard(), "copied");
-  cx.open_url("https://example.com");
-  assert.deepEqual(cx.opened, ["https://example.com"]);
+  cx.clipboardText = "typed in by the test";
+  assert.equal(cx.read_from_clipboard(), "typed in by the test", "clipboardText set by a test beats the earlier write");
+  assert.deepEqual(cx.clipboard, ["copied"], "the log of writes is not touched by that");
+});
+
+test("clipboardText set before any write is what a read returns, even with held set", () => {
+  const cx = makeCx();
+  cx.held = "held";
+  cx.clipboardText = "pasted";
+  assert.equal(cx.read_from_clipboard(), "pasted");
+  cx.clipboardText = "";
+  assert.equal(cx.read_from_clipboard(), "", "an empty string is a clipboard that holds nothing, not an unset one");
 });
 
 test("state.disk: readTextFile gives its text or null", async () => {
@@ -99,25 +111,6 @@ test("state.writeTextFile can be scripted, and reset() clears the disk", async (
   assert.equal(await writeTextFile("/a.md", "y", null), null, "the default store is back");
 });
 
-test("watchFolder and nextCommand log and never answer unless a test says so", async () => {
-  const never = Symbol("never"), pending = p => Promise.race([p, new Promise(r => setTimeout(r, 20, never))]);
-  assert.equal(await pending(watchFolder("/notes")), never);
-  assert.equal(await pending(nextCommand()), never);
-  assert.deepEqual(calls.watchFolder, ["/notes"]);
-  state.watchFolder = async dir => [`${dir}/a.md`];
-  assert.deepEqual(await watchFolder("/notes"), ["/notes/a.md"]);
-  let n = 0;
-  state.nextCommand = async () => ["save", "toggle"][n++];
-  assert.equal(await nextCommand(), "save");
-  assert.equal(await nextCommand(), "toggle");
-});
-
-test("appHome and notify exist", () => {
-  assert.equal(appHome(), "/home/user/.config/herdr-app");
-  notify({ title: "Can't open x.png here", level: "info" });
-  assert.deepEqual(calls.notify, [{ title: "Can't open x.png here", level: "info" }]);
-});
-
 test("the in-memory fs of fs/promises is shared with the mocks and emptied by reset()", async () => {
   const fs = await import("./mocks/fs.mjs");
   await fs.writeFile("/d/x.mmd", "graph");
@@ -154,17 +147,6 @@ test("TextareaState and InputState hold text, record handlers and are typed into
   assert.ok(Textarea.new(area).__node.state === area);
 });
 
-test("EditorState keeps its options and now holds a value and handlers too", () => {
-  const code = EditorState.new({ language: "js", readonly: true, value: "a" });
-  assert.equal(code.options.language, "js");
-  assert.equal(code.value(), "a");
-  code.set_value("b");
-  assert.equal(code.value(), "b");
-  assert.equal(code.on("change", () => {}), true);
-  code.release();
-  assert.equal(code.released, true);
-});
-
 test("a TextView mock is an element with the id and the text it was given; only it has selectable and on_link_click", () => {
   const view = TextView.markdown("md-block-0", "# Hello").selectable(true).on_link_click(() => {});
   const node = view.__node;
@@ -185,11 +167,7 @@ test("a TextView mock is an element with the id and the text it was given; only 
   assert.equal(textOf(div().child("a").child("b")), "a b");
 });
 
-test("builders the Markdown mods draw with are accepted; ones gpui-kit does not declare are not", () => {
-  const el = div().mx_auto().w_1_2().flex_basis(1).flex_grow(1).flex_shrink(0).max_w_full().border_dashed().shadow_sm().italic().opacity(0.5)
-    .whitespace_normal().text_xs().text_sm().font_normal().ml(4).mt(1).mb(1).pt(1).pb(1).pl(1).pr(1).mr(1).my(1).px(1).py(1);
-  assert.equal(el.__node.style.mx_auto, true);
-  assert.equal(el.__node.style.opacity, 0.5);
+test("builders gpui-kit does not declare are refused", () => {
   assert.throws(() => div().line_clamp(2), /not a builder method/);
   assert.throws(() => div().select_none(), /not a builder method/);
 });
