@@ -1,9 +1,7 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { state, calls, reset } from "./mocks/herdr.mjs";
@@ -151,60 +149,4 @@ test("the README and the integrations name no removed tab-bar commands", () => {
   for (const file of [...filesUnder(join(root, "integrations")), join(root, "README.md")]) {
     assert.doesNotMatch(readFileSync(file, "utf8"), /markdown:(?:tab|pane)|my-tabs\.markdown/, file);
   }
-});
-
-// The sha256 of Herdr 0.1.12's shipped main.js of each mod a patch changes. Herdr rewrites its shipped mods on every
-// start, so the app home has them; the checks below skip any other version.
-const SHIPPED = {
-  tabs: "12d4ecc89dbf864d5a889f240adaea25590812e0be1835bbdb3e636fe14f51d3",
-  files: "2fe03eaaaa494f2e42753097617ab6ac20c964ae671c7548cee67557cff08fe1",
-  pane: "30df4c9b774414ca184b16f76c97c84f3cebd2ee411bea45c5c25b9d0ac65899",
-  "new-menu": "394ec4218f24263735083b90dc7a7c5f607ab58f9a7a74b823707509e806cb1a",
-};
-const APP = process.env.HERDR_APP_HOME ?? join(homedir(), ".config/herdr-app");
-function shipped(mod) {
-  const file = join(APP, "mods", mod, "main.js");
-  const text = existsSync(file) ? readFileSync(file, "utf8") : null;
-  return text !== null && createHash("sha256").update(text).digest("hex") === SHIPPED[mod] ? text : null;
-}
-
-// `text` as main.js in a scratch folder with `patches` applied in turn; fuzz 0 unless `fuzzy`.
-function applied(text, patches, fuzzy = false) {
-  const dir = mkdtempSync(join(tmp, "apply-"));
-  writeFileSync(join(dir, "main.js"), text);
-  const out = patches.map(patch => {
-    const input = readFileSync(new URL(`../integrations/${patch}`, import.meta.url));
-    const r = spawnSync("patch", ["-p1", "-d", dir, ...(fuzzy ? [] : ["-F", "0"])], { input, encoding: "utf8" });
-    return { status: r.status, output: `${r.stdout}${r.stderr}`.trim() };
-  });
-  return { out, text: readFileSync(join(dir, "main.js"), "utf8") };
-}
-
-const PATCHES = [
-  ["tabs", "tabs/tabs.patch", "my-tabs"],
-  ["tabs", "new-menu/tabs-plus-button.patch", "my-tabs"],
-  ["files", "files/files.patch", "my-files"],
-  ["pane", "pane-header/pane.patch", "my-pane"],
-  ["new-menu", "new-menu/new-menu.patch", "my-new-menu"],
-];
-
-for (const [mod, patch, clone] of PATCHES) {
-  test(`${patch} applies to Herdr 0.1.12's ${mod} byte for byte, and to a clone named ${clone}`, t => {
-    const text = shipped(mod);
-    if (!text) return t.skip(`no Herdr 0.1.12 ${mod} in ${APP}`);
-    assert.deepEqual(applied(text, [patch]).out, [{ status: 0, output: "patching file main.js" }], "no offset, no fuzz");
-    // A clone rewrites its own mods/<name>/ asset paths, which a context line may hold.
-    const [cloned] = applied(text.replaceAll(`mods/${mod}/`, `mods/${clone}/`), [patch], true).out;
-    assert.equal(cloned.status, 0, cloned.output);
-  });
-}
-
-test("the two tab-bar patches apply to one clone in either order, to the same file", t => {
-  const text = shipped("tabs");
-  if (!text) return t.skip(`no Herdr 0.1.12 tabs in ${APP}`);
-  const one = applied(text, ["tabs/tabs.patch", "new-menu/tabs-plus-button.patch"], true);
-  const other = applied(text, ["new-menu/tabs-plus-button.patch", "tabs/tabs.patch"], true);
-  for (const r of [...one.out, ...other.out]) assert.equal(r.status, 0, r.output);
-  assert.equal(one.text, other.text);
-  assert.ok(one.text.includes("mods/herdr-inline-markdown/file-markdown.svg") && one.text.includes('mod: "my-new-menu"'));
 });

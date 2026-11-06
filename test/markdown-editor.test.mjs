@@ -49,7 +49,7 @@ beforeEach(() => reset());
 // through the event loop, which is long enough for anything the mocks answer at once.
 const flush = async () => { for (let i = 0; i < 3; i++) await new Promise(done => setImmediate(done)); };
 
-// What Herdr 0.1.12 does, as seen in the running app: a copy starts while focused() still names the tab before its own and
+// What Herdr does, as seen in the running app: a copy starts while focused() still names the tab before its own and
 // panes() does not list its pane yet; it is drawn only while its tab is the shown one, then focused().tab is its own.
 const PANES = "herdr-inline-markdown.panes";
 const tabOf = (id, name) => ({ id, name, active: false, zoomed: false, status: null });

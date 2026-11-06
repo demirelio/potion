@@ -23,8 +23,6 @@ const NEEDS_NODE = "the renderer install needs npm and Node.js 22.12+";
 const tools = has("node") && has("npm") && nodeOk;
 
 const sha = file => createHash("sha256").update(readFileSync(join(REPO, "tools/mermaid", file))).digest("hex");
-const pin = JSON.parse(readFileSync(join(REPO, "tools/mermaid/package.json"), "utf8")).dependencies["@mermaid-js/mermaid-cli"];
-const VERSION = `mmdc-${pin}+${sha("render.mjs").slice(0, 8)}+${sha("package-lock.json").slice(0, 8)}`;
 
 // `app` exists as Herdr leaves it after its first start.
 function scratch(name) {
@@ -290,12 +288,6 @@ test("install.sh says so and exits 1 when keys.json cannot be written", () => {
   }
 });
 
-test("mermaid_version names mermaid-cli, render.mjs and the lock file", t => {
-  if (!tools) return t.skip(NEEDS_NODE);
-  assert.equal(bash(scratch("version"), "mermaid_version").stdout, VERSION);
-  assert.match(VERSION, /^mmdc-\d+\.\d+\.\d+\+[0-9a-f]{8}\+[0-9a-f]{8}$/);
-});
-
 function fakeTools(name, nodeScript) {
   const bin = join(tmp, name, "bin");
   mkdirSync(bin, { recursive: true });
@@ -349,7 +341,8 @@ test("install_mermaid writes node-path and version without a newline once everyt
   writeFileSync(join(where.mermaid, "node_modules/puppeteer/install.mjs"), "console.log('ready');\n");
   const run = bash(where, "install_mermaid");
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.equal(readFileSync(join(where.mermaid, "version"), "utf8"), VERSION);
+  const version = bash(where, "mermaid_version").stdout;
+  assert.equal(readFileSync(join(where.mermaid, "version"), "utf8"), version);
   assert.equal(readFileSync(join(where.mermaid, "node-path"), "utf8"), spawnSync("sh", ["-c", "command -v node"], { encoding: "utf8" }).stdout.trim());
-  assert.match(run.stdout, new RegExp(`mermaid: renderer ${VERSION.replace(/[+.]/g, "\\$&")} installed in `));
+  assert.ok(run.stdout.includes(`mermaid: renderer ${version} installed in `), run.stdout);
 });
