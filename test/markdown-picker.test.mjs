@@ -7,6 +7,7 @@ import { find, all, ids, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, fire_timers, space, must } from "./helpers.mjs";
 
 const { Picker } = await import("../mods/herdr-inline-markdown/picker.js");
+const { fileKey } = await import("../mods/herdr-inline-markdown/lib.js");
 const { FIND_SCRIPT } = await import("../mods/herdr-inline-markdown/lib.js");
 
 const FOLDER = "/home/user/Projects/herdr";
@@ -308,6 +309,31 @@ test("recent files show while the folder is still being listed", async () => {
   const { tree } = await mount({ settle: false });
   assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0"]);
   assert.equal(row(tree(), "mdp-file-0"), "plan.md docs recent");
+});
+
+test("a file already open in a pane of the focused tab says open, and the highlight starts on the first file that is not", async () => {
+  state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }, { machine: null, path: "/home/user/notes/todo.md" }];
+  state.shared["herdr-inline-markdown.panes"] = { pm: fileKey(null, `${FOLDER}/docs/plan.md`), elsewhere: fileKey(null, "/home/user/notes/todo.md") };
+  state.panes = [
+    { pane: "p1", terminal: "t-p1", tab: "tb1", cwd: FOLDER, focused: false },
+    { pane: "pm", terminal: null, tab: "tb1", cwd: null, focused: true, mod: "herdr-inline-markdown" },
+    { pane: "elsewhere", terminal: null, tab: "tb2", cwd: null, focused: false, mod: "herdr-inline-markdown" },
+  ];
+  state.focused = { space: "s1", tab: "tb1", pane: "pm", terminal: null, shown: null, agent: null, cwd: null };
+  const { tree } = await mount({ props: { place: "pane" } });
+  assert.equal(row(tree(), "mdp-file-0"), "plan.md docs open", "open beside already: choosing it goes to that pane");
+  assert.equal(row(tree(), "mdp-file-1"), "todo.md ~/notes recent", "open in another tab only: still a recent file here");
+  assert.deepEqual(highlighted(tree()), ["mdp-file-1"], "Enter opens a file that is not on screen yet");
+});
+
+test("with every listed file already open in the tab, the highlight stays on the first file", async () => {
+  state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
+  state.shared["herdr-inline-markdown.panes"] = { pm: fileKey(null, `${FOLDER}/docs/plan.md`) };
+  state.panes = [{ pane: "pm", terminal: null, tab: "tb1", cwd: null, focused: true, mod: "herdr-inline-markdown" }];
+  state.focused = { space: "s1", tab: "tb1", pane: "pm", terminal: null, shown: null, agent: null, cwd: null };
+  state.exec = async () => ({ code: 0, stdout: "", stderr: "" });
+  const { tree } = await mount();
+  assert.deepEqual(highlighted(tree()), ["mdp-file-0"]);
 });
 
 test("the highlight starts on the first file so Enter opens it; New note is above it", async () => {

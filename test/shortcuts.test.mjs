@@ -118,6 +118,19 @@ test("the picker mod.open makes opens a chosen file in a new tab of the active s
   assert.deepEqual(calls.run[0], ["tab.new", { name: "plan.md", space: "s1", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/plan.md`, machine: null } }]);
 });
 
+test("the beside picker, opened from a Markdown pane that is beside a terminal, opens another file in a new pane beside it", async () => {
+  const md = { pane: "pm", terminal: null, tab: "s1-tab", cwd: null, focused: true, mod: "herdr-inline-markdown" };
+  fresh({
+    panes: [pane("p1", "s1-tab", FOLDER), md],
+    focused: { space: "s1", tab: "s1-tab", pane: "pm", terminal: null, shown: null, agent: null, cwd: null },
+    shared: { "herdr-inline-markdown.panes": { pm: `:${FOLDER}/a.md` } },
+  });
+  const { view, cx } = start(Markdown, { overlay: "ov-8", action: "open", place: "pane" });
+  await cx.settle();
+  view.role.open(`${FOLDER}/b.md`);
+  assert.deepEqual(calls.run[0], ["pane.split", { direction: "right", pane: "pm", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/b.md`, machine: null } }]);
+});
+
 const MODS = { "herdr-inline-markdown": Markdown, "herdr-inline-markdown-beside": Beside };
 const KEYS = { "cmd-m": "herdr-inline-markdown", "cmd-shift-m": "herdr-inline-markdown-beside" };
 const OPEN_PICKER = "herdr-inline-markdown.picker";

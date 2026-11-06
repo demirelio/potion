@@ -1,7 +1,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, home, props, shared, setShared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
-import { FIND_SCRIPT, basename, dirname, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
+import { FIND_SCRIPT, basename, dirname, fileKey, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
 import { openMarkdown } from "./open.js";
 
 // A picker that opens closes the one named here, so one is open at a time; the cmd-shift-m mod reads it to close the
@@ -36,6 +36,7 @@ export class Picker {
     // A snapshot: the dialog is short-lived, and shared() hands out a new copy on every call.
     const recent = shared("herdr-inline-markdown.recent");
     this.recent = (Array.isArray(recent) ? recent : []).filter(r => r && typeof r.path === "string" && (r.machine ?? null) === this.machine);
+    this.openHere = this.openInTab();
     this.files = [];
     this.loading = true; this.failure = null; this.problem = null; this.busy = false; this.closed = false;
     this.query = ""; this.at = null; this.scroll = 0; this.listHeight = null;
@@ -139,9 +140,21 @@ export class Picker {
     return rows;
   }
 
-  // Until the person moves it: the best file (so Enter opens it), else Create, else New note.
+  // The files shown in the focused tab's Markdown panes. Choosing one only goes to its pane, so Enter skips them.
+  openInTab() {
+    const known = shared("herdr-inline-markdown.panes") ?? {}, tab = focused()?.tab;
+    return new Set(panes().filter(p => p.tab === tab && p.mod === "herdr-inline-markdown" && known[p.pane]).map(p => known[p.pane]));
+  }
+
+  isOpenHere(file) {
+    return this.openHere.has(fileKey(this.machine, file));
+  }
+
+  // Until the person moves it: the best file not already on screen (so Enter opens it), else any file, else Create,
+  // else New note.
   cursor(rows) {
-    const first = rows.findIndex(r => r.kind === "file"), create = rows.findIndex(r => r.kind === "create");
+    const files = rows.flatMap((r, i) => (r.kind === "file" ? [i] : []));
+    const first = files.find(i => !this.isOpenHere(rows[i].entry.file)) ?? files[0] ?? -1, create = rows.findIndex(r => r.kind === "create");
     return clamp(this.at ?? (first >= 0 ? first : Math.max(create, 0)), 0, rows.length - 1);
   }
 
@@ -228,7 +241,8 @@ export class Picker {
       .child(svg(file ? "mods/herdr-inline-markdown/markdown.svg" : "mods/herdr-inline-markdown/file-plus.svg").size(14).flex_none().text_color(t.muted))
       .child(div().flex_none().max_w(320).truncate().font_semibold().child(name))
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(hint))
-      .when(file && row.entry.recent, el => el.child(div().flex_none().text_size(11).text_color(t.dim).child("recent")));
+      .when(file && (row.entry.recent || this.isOpenHere(row.entry.file)), el => el.child(div().flex_none().text_size(11).text_color(t.dim)
+        .child(this.isOpenHere(row.entry.file) ? "open" : "recent")));
   }
 
   render() {
