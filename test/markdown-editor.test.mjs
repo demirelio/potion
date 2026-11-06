@@ -3113,6 +3113,12 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   }
   assert.deepEqual(contexts("cmd-z"), [`${RAW} > Input`, `${SOURCE} > Input`, `${TEXT} > Input`]);
   assert.deepEqual(contexts("cmd-v"), [`${RAW} > Input`, `${TEXT} > Input`]);
+  for (const [key, action] of [["alt-up", "mdb-move-up"], ["alt-down", "mdb-move-down"]]) {
+    assert.deepEqual(contexts(key), [`${RAW} > Input`, `${TEXT} > Input`], `${key}: moves the block, in both block contexts`);
+    assert.deepEqual(actions(key), [action], key);
+  }
+  assert.deepEqual(table.filter(x => /^cmd-shift-(up|down)$/.test(x.keystroke)), [], "the keys that moved a block before are not bound");
+  assert.deepEqual([TEXT, RAW, SOURCE], ["MdText3", "MdRaw3", "MdSource3"], "the table changed, so its contexts are new ones and the old ones stay inert");
   for (const key of ["backspace", "left", "right", "escape"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
   for (const key of ["delete", "cmd-a", "cmd-c", "cmd-x", "home", "end", "shift-up", "alt-left", "cmd-s", "cmd-e", "a"]) assert.deepEqual(contexts(key), [], key);
   const root = must(a.tree(), "md-root");
@@ -4740,7 +4746,7 @@ test("--- then Enter gives a rule and an empty paragraph below it", async () => 
   assert.equal(m.view.text, "Intro\n\n---\n\nafter\n\nNext\n");
 });
 
-test("Cmd+Shift+Up moves an item with its subtree, the caret staying in it; Cmd+Shift+Down moves it back; each is a single Cmd+Z", async () => {
+test("Option+Up moves an item with its subtree, the caret staying in it; Option+Down moves it back; each is a single Cmd+Z", async () => {
   const doc = "- a\n- b\n  - b1\n- c\n";
   const m = await page(doc, { 0: 24, 1: 30, 2: 30, 3: 30 });
   await openBlock(m, 1, 1);
@@ -5795,7 +5801,7 @@ async function slashed(m, i, query, at) {
   act(m, "mdb-enter");
 }
 
-test("typing / at the start of a paragraph opens the menu under the caret row with thirteen rows, and the field's wrapper declares 'MdText2 rows=one menu=open'", async () => {
+test(`typing / at the start of a paragraph opens the menu under the caret row with thirteen rows, and the field's wrapper declares '${TEXT} rows=one menu=open'`, async () => {
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   assert.equal(menuOf(m), null);
@@ -6624,9 +6630,9 @@ test("the menu closes when Backspace deletes the slash, a key-up readout or a mo
   assert.equal(menuOf(m), null, "another block opened");
 });
 
-test("Alt+Up, Cmd+Up, Alt+Down and Cmd+Down, which the field keeps, are read out on key-up: a caret moved out of the query closes the menu, so a letter typed there is text and Enter splits the block or opens one below", async () => {
+test("Cmd+Up and Cmd+Down, which the field keeps, are read out on key-up: a caret moved out of the query closes the menu, so a letter typed there is text and Enter splits the block or opens one below", async () => {
   const START = "x\n\nHello /h world\n\nNext\n", END = "Hello /h worldx\n\nNext\n";
-  for (const [key, mods, caret, want] of [["up", { alt: true }, 0, START], ["up", { platform: true }, 0, START], ["down", { alt: true }, 14, END], ["down", { platform: true }, 14, END]]) {
+  for (const [key, mods, caret, want] of [["up", { platform: true }, 0, START], ["down", { platform: true }, 14, END]]) {
     reset();
     const m = await page("Hello world\n\nNext\n", { 0: 24, 1: 38 });
     const where = `${key} ${JSON.stringify(mods)}`;

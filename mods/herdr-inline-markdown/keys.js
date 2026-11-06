@@ -3,7 +3,7 @@
 // handler for as long as any build shipped it.
 // A binding at `X > Input` takes the key from the field entirely; one at `X` fires only for the keys the field gives
 // away there (Backspace and Left at offset 0, Right at the end, Tab, Escape).
-const VERSION = 2;
+const VERSION = 3;
 export const TEXT = `MdText${VERSION}`, RAW = `MdRaw${VERSION}`, SOURCE = `MdSource${VERSION}`;
 
 const deep = ctx => `${ctx} > Input`;
@@ -24,8 +24,8 @@ export const BINDINGS = [
   ...bind("down", "mdb-down", [oneRow(TEXT), oneRow(RAW), menuOpen(TEXT)]),
   ...bind("pageup", "mdb-pageup", BLOCKS),
   ...bind("pagedown", "mdb-pagedown", BLOCKS),
-  ...bind("cmd-shift-up", "mdb-move-up", BLOCKS),
-  ...bind("cmd-shift-down", "mdb-move-down", BLOCKS),
+  ...bind("alt-up", "mdb-move-up", BLOCKS),
+  ...bind("alt-down", "mdb-move-down", BLOCKS),
   ...bind("cmd-v", "mdb-paste", BLOCKS),
   ...bind("cmd-z", "mdb-undo", [...BLOCKS, deep(SOURCE)]),
   ...bind("cmd-shift-z", "mdb-redo", [...BLOCKS, deep(SOURCE)]),

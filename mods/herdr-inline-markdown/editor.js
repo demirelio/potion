@@ -2390,8 +2390,8 @@ export class Editor {
     }
     if (!MOVES.has(k)) return;
     const plainVertical = (k === "up" || k === "down") && !m.alt && !m.platform && !m.control;
-    // A plain Up or Down the menu took moved its highlight, not the caret. One it did not take (Alt or Cmd with it, or
-    // a press in the frame before the menu's binding applies) moved the caret, and the readout closes the menu.
+    // A plain Up or Down the menu took moved its highlight, not the caret. One it did not take (Cmd with it, or a press
+    // in the frame before the menu's binding applies) moved the caret, and the readout closes the menu.
     if (menuTook && plainVertical) return;
     this.syncField(cx);
     const before = this.known, c = this.caretOf(this.field);

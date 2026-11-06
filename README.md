@@ -167,7 +167,7 @@ file.
 | Backspace at the start | A heading or quote becomes a paragraph; an item moves out a level, then becomes a paragraph; a paragraph joins the one above. An empty block goes |
 | Delete at the end | Joins the next paragraph, heading or item to this one, or removes the rule after it |
 | Tab / Shift+Tab | Nests / un-nests a list item with its sub-items; in a table, selects the next / previous cell; in code, Tab types four spaces |
-| Cmd+Shift+Up / Down | Moves the block (an item with its sub-items) above or below its neighbour |
+| Option+Up / Down | Moves the block (an item with its sub-items) above or below its neighbour |
 | Arrow keys | Move inside the block, and on to the block above or below at its edge |
 | Page Up / Page Down | Scrolls a page and takes the caret along |
 | Escape | Stops editing; Enter picks up where you were |
@@ -300,7 +300,7 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
 
 - **Rename the mod.** `herdr-inline-markdown` is a personal prefix. It names the two mod folders, the shared-state keys
   (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`, `.picker`, `.imageFolder`), the cache folder (`data/herdr-inline-markdown`), the key
-  contexts (`MdText2`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
+  contexts (`MdText3`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
   clone names `my-tabs`, `my-files`, `my-pane` and `my-new-menu`. Rename them together, with one search and replace
   and `npm test`.
 - **Choose a license** and add `LICENSE`. `package.json` is `"private": true` and carries no author or license.
