@@ -29,6 +29,8 @@ The package holds:
 - `git` on the machine of the folder you open files from: the picker lists markdown files with `git ls-files`,
   or with `find` outside a repository.
 - `curl`, for pictures from the web (macOS ships it). Without it those pictures show an error box and the rest works.
+- `osascript`, for the picture dialog (macOS ships it). Without it Image writes `![]()` for you to type the address in,
+  and dropping pictures still works.
 
 ## Install
 
@@ -135,8 +137,13 @@ gives way to the pane's header, which shows the same file name and toggle.
   2,000), or outside a repository `find` up to 5 folders deep without `node_modules`, `.git`, hidden folders,
   `Library` and `.cache` (at most 1,000), on the machine of the space. Creating a file runs `mkdir -p` for the folders
   in its name. `curl` downloads the https pictures a file names, and once each time Herdr starts `find` deletes the
-  files of the picture cache older than 45 days. Files are written only on this computer: the one you edit, a new
-  note, and the diagram and picture caches.
+  files of the picture cache older than 45 days. `sh` starts `osascript` in the background to show the file dialog for
+  pictures (macOS), because Herdr stops a command after 30 s and a dialog can stay open longer; the mod waits for it
+  by checking, every 0.3 s, for the files `osascript` writes into the picture cache folder (`pick-*`, deleted once
+  read), looks with `kill -0` every 2 s that it is still running, and ends it with `kill` when its pane closes.
+  `mkdir -p` and `cp` put a picture from outside the note's folder into `images/` beside it. Files are written only on
+  this computer: the one you edit, a new note, the diagram and picture caches (the dialog's answer too), and the
+  pictures copied beside a note.
 
 ### Block editing
 
@@ -188,8 +195,11 @@ and To-do list, Quote, Code block, Mermaid diagram, Image, Table and Divider. Ty
 `/img`, `/mer`); Up and Down move the highlight, Enter, Tab or a click picks it, and Escape closes it and keeps what
 you typed. A text style changes the block you are in and keeps its words; the others add a block where the slash was
 (a table with "Column 1" selected, a diagram with a starter flowchart), or take the block's place when it held nothing
-else. Image writes `![]()` with the caret between the parentheses for its address, and the picture is drawn when you
-leave the paragraph. Cmd+Z right after a pick gives back the `/h2` you typed, and a second Cmd+Z removes it. A pick
+else. Image opens the macOS file dialog: choose one picture or several, and they are written as one paragraph where the
+slash was, with the caret in a new paragraph below (see [Pictures](#pictures)); Cancel writes nothing. Where the dialog
+can't run (no `osascript`, so not on macOS), Image writes `![]()` with the caret between the parentheses for you to
+type an address, and the picture is drawn when you leave the paragraph. Cmd+Z right after a pick gives back the `/h2`
+you typed, and a second Cmd+Z removes it; after the dialog one Cmd+Z removes the pictures and leaves the copies. A pick
 writes the same markdown as typing it. There is no menu in code, tables or diagram source, where a slash is text.
 
 ### Diagrams
@@ -224,6 +234,21 @@ A paragraph made only of images is drawn as pictures in Reading: `![alt](address
 several. A linked image, `[![alt](address)](https://…)`, counts too, so the row of badges at the top of a README is
 drawn. An image inside a line of text, an HTML `<img>` and a reference-style image (`![alt][ref]`) are not drawn.
 
+- **Adding pictures:** pick them or drop them, in a note on this computer that you can edit. **Image** in the
+  [slash menu](#slash-menu) opens the macOS file dialog, which offers PNG, JPEG, GIF, WebP, BMP and SVG files (not
+  HEIC) and lets you choose several; it stays open as long as you need, and closing the pane closes it. The dialog
+  opens in the folder the last picture came from, else on the Desktop, where macOS saves screenshots (your home
+  folder when there is no Desktop). Image files dragged from Finder onto the page are added the same way, below the
+  block the pointer was last over, else below the block you are editing, else at the end; any other file is ignored,
+  and a drop with no picture says so.
+  A picture already in the note's folder or below it is linked where it is, as `a.png` or `img/a.png`. Any other is
+  copied into an `images/` folder beside the note, made when needed, and linked as `images/<name>`. The copy's name is
+  the original's with each run of whitespace turned into `-` (macOS puts a narrow no-break space in screenshot names);
+  when `images/` already holds that name with other bytes the copy is numbered `-2`, `-3`…, and with the same bytes
+  that file is linked and nothing is copied. The alt text is the file's name without its extension. An address with a
+  space is written in `<…>`; `(`, `)`, `%`, `#` and `?` in a name are written as `%28`, `%29`, `%25`, `%23` and `%3F`.
+  A copy that fails is left out, and a notice names it with the reason. Cmd+Z removes the pictures you added and
+  leaves the copies.
 - **Addresses:** a path relative to the markdown file, an absolute path or a `file://` address, an `https://`
   address, and `data:image/…` (base64 or percent-encoded). `http://` and every other scheme are never fetched: they
   show an error box. Web pictures are downloaded with `curl` when the file opens (https only, redirects too, 10 MB at
@@ -245,8 +270,8 @@ drawn. An image inside a line of text, an HTML `<img>` and a reference-style ima
   from its bytes, because Herdr draws only pictures from its app folder. Once each time Herdr starts, files there
   older than 45 days are deleted, and the folder can be emptied by hand at any time.
 
-Besides the file itself, the mod keeps in Herdr's shared state which pane shows which file, the 30 most recent files
-and each file's last state (Reading or Markdown).
+Besides the file itself, the mod keeps in Herdr's shared state which pane shows which file, the 30 most recent files,
+each file's last state (Reading or Markdown) and the folder the last picture came from.
 
 ## Integrations
 
@@ -264,17 +289,17 @@ npm test    # node 22+, nothing to install; never starts Herdr
 The tests cover the mod's pure functions (`lib.js`), its block model (`blocks.js`, run over the CommonMark and GFM
 spec examples, the documents in `test/fixtures/markdown/docs` and variants of each), the caret, page and
 diagram-frame arithmetic (`geometry.js`), the undo history, the page's drawing, opening a file, the picker, the
-editor, the diagram service, the picture service and its image-size reader, the keys and the companion mod,
-`install.sh` and its merge of `keys.json`, the assets, and that the files integration's copy of `openMarkdown` acts
-like `open.js`. The renderer's tests run the installed copy and skip when there isn't one; to run them without
-touching your install, point `HERDR_MERMAID_HOME` at one. The patch tests apply each patch to Herdr 0.1.12's shipped
-mods, read from `${HERDR_APP_HOME:-~/.config/herdr-app}` (Herdr rewrites them on every start), and skip when the
-files there are not exactly 0.1.12's.
+editor, the diagram service, the picture service and its image-size reader, the picture dialog and the placing of
+pictures beside a note, the keys and the companion mod, `install.sh` and its merge of `keys.json`, the assets, and
+that the files integration's copy of `openMarkdown` acts like `open.js`. The renderer's tests run the installed copy
+and skip when there isn't one; to run them without touching your install, point `HERDR_MERMAID_HOME` at one. The patch
+tests apply each patch to Herdr 0.1.12's shipped mods, read from `${HERDR_APP_HOME:-~/.config/herdr-app}` (Herdr
+rewrites them on every start), and skip when the files there are not exactly 0.1.12's.
 
 ## Before open-sourcing
 
 - **Rename the mod.** `herdr-inline-markdown` is a personal prefix. It names the two mod folders, the shared-state keys
-  (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`, `.picker`), the cache folder (`data/herdr-inline-markdown`), the key
+  (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`, `.picker`, `.imageFolder`), the cache folder (`data/herdr-inline-markdown`), the key
   contexts (`MdText2`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
   clone names `my-tabs`, `my-files`, `my-pane` and `my-new-menu`. Rename them together, with one search and replace
   and `npm test`.

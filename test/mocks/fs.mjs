@@ -5,7 +5,7 @@ export const files = new Map();
 // What the mod asked for, in order: `readFile` and `writeFile` hold the path, `mkdir` the path and its options.
 export const log = { readFile: [], writeFile: [], mkdir: [] };
 // op -> (path -> the error that call rejects with); the path "*" is every path.
-export const failing = { readFile: new Map(), writeFile: new Map() };
+export const failing = { readFile: new Map(), writeFile: new Map(), readdir: new Map() };
 // path -> a promise a read of it waits for, after it has taken what the file holds then.
 const held = new Map();
 
@@ -49,6 +49,8 @@ export async function unlink(path) {
 }
 // What is directly in a folder: its files, and the folders files sit in further down. A file is not a folder.
 export async function readdir(path) {
+  const error = failure("readdir", path);
+  if (error) throw error;
   const names = new Set([...files.keys()].filter(p => p.startsWith(`${path}/`)).map(p => p.slice(path.length + 1).split("/")[0]));
   if (!names.size) throw missing(path);
   return [...names];

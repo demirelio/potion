@@ -10,6 +10,7 @@ import {
   filterFiles, newFileName, uniqueName, fileKey, stats, modeOf, toggleMode, remember, trimMap,
   markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, isLight, mix, mermaidConfig, diagramKey, DIAGRAM_COLORS, sharpName,
   toSource, sourceToDoc, docToSource, sourceSplice, eolOf, picturesOf, pictureSource, touches,
+  isPictureName, copyName, pictureLink, pictureMarkdown,
 } from "../mods/herdr-inline-markdown/lib.js";
 import { diff, parse } from "../mods/herdr-inline-markdown/blocks.js";
 import { corpus } from "./markdown-corpus.mjs";
@@ -471,6 +472,13 @@ test("picturesOf: an empty link address is no link", () => {
   assert.equal(picturesOf("[![a](x.png)](<>)")[0].href, null);
 });
 
+test("picturesOf: a backslash escapes a bracket or a backslash in the alt, and an escaped ] does not end it", () => {
+  assert.equal(picturesOf("![a \\[1\\]](x.png)")[0].alt, "a [1]");
+  assert.equal(picturesOf("![a\\\\](x.png)")[0].alt, "a\\");
+  assert.equal(picturesOf("[![a \\]](x.png)](y)")[0].alt, "a ]");
+  assert.deepEqual(picturesOf("![a\\](x.png)"), [], "the only ] is escaped, so the image is never closed");
+});
+
 test("picturesOf: anything that is not only images is []", () => {
   for (const text of ["", "plain text", "![a](x.png) and text", "text ![a](x.png)", "[![a](x.png)]", "![a](x(1).png)", "[a](b)", "![a][ref]", "<img src=\"a.png\">", "![a](x.png)\n\n![b](y.png)"]) {
     assert.deepEqual(picturesOf(text), [], JSON.stringify(text));
@@ -536,4 +544,59 @@ test("touches: a reported path is the file, a folder above it (the root is all o
 
 test("pictureSource: an address that is not a place on this machine is not a picture address", () => {
   for (const src of ["//cdn.x.io/a.png", "file://other-host/a.png", "file:", "?v=2"]) assert.deepEqual(pictureSource(src, "/n/a.md"), { kind: "none", why: "Not a picture address" }, src);
+});
+
+const NOTE = "/n/docs/note.md";
+
+test("isPictureName: png, jpg, jpeg, gif, webp, bmp and svg in any case; heic, a bare extension and a longer one are not", () => {
+  for (const name of ["a.png", "A.PNG", "x.jpg", "x.JPEG", "x.jpeg", "x.gif", "x.webp", "x.Bmp", "x.svg", "/Users/me/Desktop/Screenshot 1.png", "a.b.png"]) assert.ok(isPictureName(name), name);
+  for (const name of ["a.heic", "a.tiff", "png", "a.png.txt", "a.pngx", "a.txt", "", undefined, null]) assert.ok(!isPictureName(name), String(name));
+});
+
+test("copyName: every run of whitespace in a name becomes one hyphen, a narrow no-break space (macOS screenshots) too", () => {
+  assert.equal(copyName("Screenshot 2026-11-06 at 10.15.30 AM.png"), "Screenshot-2026-11-06-at-10.15.30-AM.png");
+  assert.equal(copyName("a   b\t\nc.png"), "a-b-c.png");
+  assert.equal(copyName("tidy.png"), "tidy.png");
+  assert.equal(copyName(""), "");
+});
+
+test("pictureLink: the address relative to the note's folder for a picture in or under it, else null (the picture has to be copied)", () => {
+  assert.equal(pictureLink("/n/docs/a.png", NOTE), "a.png");
+  assert.equal(pictureLink("/n/docs/img/a.png", NOTE), "img/a.png");
+  assert.equal(pictureLink("/n/docs/img/deep/a.png", NOTE), "img/deep/a.png");
+  assert.equal(pictureLink("/n/docs/./img/../a.png", NOTE), "a.png", "the path is normalised first");
+  assert.equal(pictureLink("/a.png", "/note.md"), "a.png", "a note at the root");
+  for (const path of ["/Users/me/Desktop/shot.png", "/n/a.png", "/n/docs2/a.png", "/n/doc/a.png", "/n/docs", "/n/docs/", "/n/docs/../a.png"]) assert.equal(pictureLink(path, NOTE), null, path);
+});
+
+test("pictureLink: a space puts the address in <…>; the characters an address cannot hold are written as %XX", () => {
+  assert.equal(pictureLink("/n/docs/my shot.png", NOTE), "<my shot.png>");
+  assert.equal(pictureLink("/n/docs/my pics/a b.png", NOTE), "<my pics/a b.png>");
+  assert.equal(pictureLink("/n/docs/a(1).png", NOTE), "a%281%29.png");
+  assert.equal(pictureLink("/n/docs/a (1).png", NOTE), "<a %281%29.png>");
+  assert.equal(pictureLink("/n/docs/100%.png", NOTE), "100%25.png");
+  assert.equal(pictureLink("/n/docs/a#1?.png", NOTE), "a%231%3F.png");
+  assert.equal(pictureLink("/n/docs/a<b>.png", NOTE), "a%3Cb%3E.png");
+  assert.equal(pictureLink("/n/docs/a:b.png", NOTE), "./a:b.png", "the colon would be taken for a scheme");
+  assert.equal(pictureLink("/n/docs/ok/a:b.png", NOTE), "ok/a:b.png");
+});
+
+test("pictureMarkdown: one image per line, `![alt](address)`, the brackets and backslashes of the alt escaped", () => {
+  assert.equal(pictureMarkdown([{ alt: "a", address: "a.png" }]), "![a](a.png)");
+  assert.equal(pictureMarkdown([{ alt: "a", address: "a.png" }, { alt: "shot 1", address: "images/shot-1.png" }]), "![a](a.png)\n![shot 1](images/shot-1.png)");
+  assert.equal(pictureMarkdown([{ alt: "Shot [1]", address: "<my shot.png>" }]), "![Shot \\[1\\]](<my shot.png>)");
+  assert.equal(pictureMarkdown([{ alt: "a\\", address: "a.png" }]), "![a\\\\](a.png)");
+  assert.equal(pictureMarkdown([{ alt: "", address: "a.png" }]), "![](a.png)");
+  assert.equal(pictureMarkdown([]), "");
+});
+
+test("what pictureLink and pictureMarkdown write is read back as the same picture: one image-only paragraph, the same path, the same alt", () => {
+  for (const name of ["a.png", "my shot.png", "a (1).png", "100%.png", "50%25.png", "a#1?.png", "a<b>.png", "a:b.png", "[x].png", "tab\tname.png", "ünï cødé.png", "a\\b.png", "[![x]](y).png"]) {
+    const path = `/n/docs/sub/${name}`, alt = name.replace(/\.png$/, "");
+    const markdown = pictureMarkdown([{ alt, address: pictureLink(path, NOTE) }]);
+    assert.ok(parse(`${markdown}\n`).blocks[0].image, `${name}: ${markdown}`);
+    const [picture] = picturesOf(markdown);
+    assert.equal(picture.alt, alt, name);
+    assert.deepEqual(pictureSource(picture.src, NOTE), { kind: "file", path }, name);
+  }
 });

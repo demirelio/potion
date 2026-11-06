@@ -31,7 +31,7 @@ const FRONT_OPEN = /^---[ \t]*\r?$/;
 const FRONT_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
 const TASK = /^\[([ xX])\][ \t]/;
 // An image, or a linked image: groups 1-3 are the linked form's alt, address and link, 4-5 the plain form's alt and address.
-export const IMAGE_ITEM = /\[!\[([^\]\n]*)\]\(([^)\n]*)\)\]\(([^)\n]*)\)|!\[([^\]\n]*)\]\(([^)\n]*)\)/g;
+export const IMAGE_ITEM = /\[!\[((?:\\.|[^\]\\\n])*)\]\(([^)\n]*)\)\]\(([^)\n]*)\)|!\[((?:\\.|[^\]\\\n])*)\]\(([^)\n]*)\)/g;
 // A gap is either a line break or spaces, never both parts at once, so a paragraph that fails is not tried split by split.
 export const IMAGE_ONLY = new RegExp(`^[ \\t]*(?:${IMAGE_ITEM.source})(?:(?:[ \\t]*\\n[ \\t]*|[ \\t]*)(?:${IMAGE_ITEM.source}))*[ \\t]*\\n?$`);
 const BLANK = /^[ \t]*$/;

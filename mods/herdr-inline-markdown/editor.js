@@ -3,7 +3,7 @@
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
-import { MODES, basename, dirname, docToSource, eolOf, fileKey, modeOf, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
+import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
 import { COLUMN, FRAME, MENU, anchorBlock, blockAt, canZoom, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
@@ -11,6 +11,7 @@ import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
 import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
+import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, SOURCE, installKeys } from "./keys.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 
@@ -123,6 +124,11 @@ const beforeKey = (key, kind) => (doc, text) => {
   const b = byKey(doc, key);
   return b && insertBefore(doc, b, kind, text);
 };
+// Where picked pictures go, written as a pending block is: a `base` and its `steps`.
+const AT_END = { base: atEnd, steps: [] };
+const belowBlock = key => ({ base: afterKey(key, "paragraph"), steps: [] });
+const placeOf = pending => ({ base: pending.base, steps: pending.steps });
+const PICTURES_ONLY = "Only pictures can be dropped here (PNG, JPEG, GIF, WebP, BMP, SVG)";
 const STEPS = { indent, outdent, paragraph: toParagraph, nest, unnest };
 const UNDOES = { indent: "outdent", outdent: "indent", nest: "unnest", unnest: "nest" };
 // Splice `s` of doc, then each step (a name in STEPS, or (doc, block, caret) -> splice) on the block at the caret the
@@ -229,6 +235,7 @@ export class Editor {
     this.diagrams.onChange = cx => this.assetsChanged(cx);
     this.images = new Images();
     this.images.onChange = cx => this.assetsChanged(cx);
+    this.picking = false; this.dialog = null;
     this.shown = new Map(); this.good = new Map(); // block key -> what the diagram answered, and its last image
     // block key -> the pictures of an image paragraph: { content, list (picturesOf), items (list with what Images answered), layout }
     this.pictures = new Map();
@@ -978,6 +985,7 @@ export class Editor {
     this.saveTask?.cancel(); this.pollTask?.cancel(); this.settleTimer?.cancel();
     this.diagrams?.close();
     this.images?.close();
+    this.dialog?.stop();
     owners.delete(this.id);
     for (const e of [...this.entities.values(), this.column]) { try { e?.release(); } catch { /* the host let it go already */ } }
     this.entities.clear();
@@ -2915,8 +2923,10 @@ export class Editor {
   // Command c picked: the block becomes what it names, or its lines go in where the slash was, and "/query" goes, as one
   // history entry. A block a text style leaves empty goes when left so, as one the user emptied would: it keeps the
   // value it was opened with. A line the commit parses as a raw block (`~~~ /code`) takes no command, nor does a block
-  // retype refuses: both stay as typed.
+  // retype refuses: both stay as typed. A command with `picture` on a file asks for image files first (slashPicture),
+  // and does nothing while a dialog is already open.
   slashPick(c, cx) {
+    if (c.picture && this.picking) return;
     this.syncField(cx);
     if (!this.slashOpen()) return;
     const s = this.slash;
@@ -2930,6 +2940,7 @@ export class Editor {
     if (!b || !isText(b) || !this.f || this.seen.slice(s.at, s.end) !== `/${s.query}`) return;
     const at = fieldToDoc(this.f, s.at), length = s.end - s.at;
     const unquery = { start: at, end: at + length, insert: "", caret: at };
+    if (c.picture && this.file) return this.slashPicture(c, b, s, unquery, opened, cx);
     if (c.lines) return this.slashLines(c, b, s, unquery, cx);
     if (c.to.kind === "paragraph" && !(this.seen.slice(0, s.at) + this.seen.slice(s.end)).trim()) return this.emptyParagraphFor(b, unquery, cx);
     // Retyped first: a block holding only the query is no block once the query goes.
@@ -2968,6 +2979,10 @@ export class Editor {
   // for any other style (or `# ` would be a heading inside it); for its own list it stays as it is.
   slashPending(c, cx) {
     const p = this.pending;
+    if (c.picture && this.file) {
+      this.setField("", { start: 0, end: 0 });
+      return this.askForPictures(placeOf(p), c, cx);
+    }
     if (c.lines) {
       const w = chain(this.doc, p.base(this.doc, PLACEHOLDER), [...p.steps, (d, b) => insertLines(d, b, 0, PLACEHOLDER.length, c.lines)]);
       if (!w) return;
@@ -2982,6 +2997,85 @@ export class Editor {
     const item = p.block.kind === "item", same = item && c.to.kind === "item" && c.to.list === listOf(p.block);
     if (item && !same) this.restep("paragraph", cx);
     if (c.to.kind !== "paragraph" && !same) this.writePending(c.marker, c.marker.length, cx, false, true);
+  }
+
+  // Image picked on a file: the query goes (a block that held only it goes too, as for Text), the file dialog opens, and
+  // what it answers is written where the slash was. A block with other text keeps it, and the pictures go below it.
+  slashPicture(c, b, s, unquery, opened, cx) {
+    if (!(this.seen.slice(0, s.at) + this.seen.slice(s.end)).trim() && b.subtreeEnd === b.end) {
+      this.paragraphInPlace(b, cx);
+      const p = this.pending;
+      return this.askForPictures(p ? placeOf(p) : AT_END, c, cx);
+    }
+    const w = chain(this.doc, unquery, []);
+    if (!w) return;
+    this.op(w.splice, cx);
+    this.opened = opened;
+    this.askForPictures(belowBlock(b.key), c, cx);
+  }
+
+  // One dialog at a time, kept open as long as the person needs; closing the pane ends it. Without osascript the
+  // command's own lines are written, as for any command with lines.
+  askForPictures(target, c, cx) {
+    this.picking = true;
+    cx.spawn(async cx => {
+      let paths = null, problem = null;
+      const dialog = this.dialog = new PictureDialog(ms => new Promise(done => cx.timer.after(ms, () => done())));
+      try { paths = await dialog.pick(imageStart()); } catch (e) { problem = e; }
+      this.dialog = null;
+      this.picking = false;
+      if (this.closed) return;
+      if (problem instanceof DialogUnavailable) return this.writePictures(target, c.lines, cx, { caret: c.caret });
+      if (problem) {
+        notify({ title: "Can't choose pictures", body: why(problem), level: "error" });
+        return;
+      }
+      if (!paths?.length || !this.placeable()) return;
+      const items = await placePictures(paths, this.file);
+      if (items.length) this.writePictures(target, pictureMarkdown(items).split("\n"), cx);
+    });
+  }
+
+  placeable() {
+    if (this.closed) return false;
+    if (this.editable()) return true;
+    notify({ title: "The pictures weren't added", body: "This note can't be edited right now", level: "info" });
+    return false;
+  }
+
+  // `lines` become blocks at `target`, at the end of the page when that place is gone. The caret then goes into them at
+  // `caret`, or to a new empty paragraph below; `keepFocus` leaves no block open (a drop).
+  writePictures(target, lines, cx, { caret, keepFocus = false } = {}) {
+    if (!this.placeable()) return false;
+    this.leave(cx);
+    const write = (d, b) => insertLines(d, b, 0, PLACEHOLDER.length, lines);
+    const w = chain(this.doc, target.base(this.doc, PLACEHOLDER), [...target.steps, write]) ?? chain(this.doc, atEnd(this.doc, PLACEHOLDER), [write]);
+    if (!w) return false;
+    const then = keepFocus ? () => this.handle.focus() : caret === undefined ? () => this.paragraphAfter(w.splice.caret, cx) : null;
+    return this.op(w.splice, cx, { caret, then });
+  }
+
+  // Image files dropped on the page go below the block the pointer was last over, else below the one being edited, else
+  // at the end; any other file is ignored.
+  dropped(e, cx) {
+    if (!this.editable()) return;
+    const paths = (e?.paths ?? []).filter(isPictureName);
+    if (!paths.length) {
+      notify({ title: PICTURES_ONLY, level: "info" });
+      return;
+    }
+    const target = this.dropTarget();
+    cx.spawn(async cx => {
+      const items = await placePictures(paths, this.file);
+      if (items.length) this.writePictures(target, pictureMarkdown(items).split("\n"), cx, { keepFocus: true });
+    });
+  }
+
+  dropTarget() {
+    const key = (this.pointer && this.hit(this.pointer)?.block?.key) || this.activeKey;
+    if (!key) return AT_END;
+    const p = this.pending;
+    return p?.key === key ? placeOf(p) : belowBlock(key);
   }
 
   // Where the menu goes: over or under the caret row, its edge at the slash. Null while that row has no place.
@@ -3168,7 +3262,8 @@ export class Editor {
       .on_mouse_down("left", (e, cx) => this.viewportDown(e, cx))
       .on_mouse_up("left", (e, cx) => this.viewportUp(e, cx))
       .on_mouse_move((e, cx) => this.viewportMove(e, cx))
-      .on_hover((hovered, cx) => this.viewportHover(hovered, cx));
+      .on_hover((hovered, cx) => this.viewportHover(hovered, cx))
+      .on_drop((e, cx) => this.dropped(e, cx));
     if (!this.blocks.length) {
       if (!this.editable()) vp.child(div().id("md-note-empty").absolute().left(0).right(0).top(0).bottom(0).flex().items_center().justify_center().text_color(t.muted).child("This note is empty."));
     } else {

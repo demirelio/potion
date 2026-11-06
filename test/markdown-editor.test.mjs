@@ -6078,13 +6078,17 @@ test("/mermaid writes the starter flowchart, the block shows its source with the
   assert.ok(m.view.shown.has(key), "the diagram was asked for");
 });
 
-test("/img writes an empty image with the caret between the parentheses; the address typed there is drawn once the block is left", async () => {
+const noDialog = () => { state.exec = async () => { throw new Error("spawn osascript ENOENT"); }; };
+
+test("without osascript /img writes an empty image with the caret between the parentheses; the address typed there is drawn once the block is left", async () => {
+  noDialog();
   files.set(`${DIR}/a.png`, SHOT);
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   typed(m, "/img");
   assert.deepEqual(slashRows(m), ["image"]);
   act(m, "mdb-enter");
+  await flush();
   assert.equal(m.view.text, "Intro\n\n![]()\n\nOutro\n");
   const key = m.view.activeKey;
   assert.equal(m.view.blockByKey(key).image, true);
@@ -6097,14 +6101,379 @@ test("/img writes an empty image with the caret between the parentheses; the add
 });
 
 test("an image left without an address is drawn as a box called Picture", async () => {
+  noDialog();
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   typed(m, "/image");
   act(m, "mdb-enter");
+  await flush();
   const key = m.view.activeKey;
   escape(m);
   await flush();
   assert.equal(textOf(must(m.tree(), `md-pictures-${key}`)).trim(), "Picture: No picture address");
+});
+
+const DESKTOP = "/home/user/Desktop", PICS = "/Users/me/pics", IMAGE_FOLDER = "herdr-inline-markdown.imageFolder", OTHER = png(41, 31);
+const OK = { code: 0, stdout: "", stderr: "" };
+const PID = "4242";
+// What exec answers while pictures are chosen. `dialog` is how osascript ends ({ code, stdout, stderr }, a promise of that, a
+// function of sh's arguments returning either), or an Error that `sh` is refused with. `sh` answers the pid and the answer
+// files appear as the detached script leaves them; mkdir does nothing, cp copies in the in-memory files, kill says the
+// process lives.
+function dialogShows(dialog) {
+  state.exec = async (command, args) => {
+    if (command === "sh") {
+      const answer = typeof dialog === "function" ? dialog(args) : dialog;
+      if (answer instanceof Error) throw answer;
+      Promise.resolve(answer).then(({ code, stdout, stderr }) => {
+        files.set(`${args[3]}.txt`, stdout);
+        files.set(`${args[3]}.err`, stderr);
+        files.set(`${args[3]}.code`, `${code}\n`);
+      });
+      return { code: 0, stdout: `${PID}\n`, stderr: "" };
+    }
+    if (command === "cp") files.set(args[1], files.get(args[0]));
+    return OK;
+  };
+}
+const chosen = (...paths) => ({ code: 0, stdout: `${paths.join("\n")}\n`, stderr: "" });
+const CANCELLED = { code: 1, stdout: "", stderr: "0:90: execution error: User canceled. (-128)\n" };
+const ran = command => calls.exec.filter(c => c.command === command);
+// The dialog stays open until `answer(result)` is called.
+function dialogHeld() {
+  const held = {};
+  dialogShows(() => new Promise(done => { held.answer = done; }));
+  return held;
+}
+// One look at the answer files, 300 ms later.
+const polled = async m => {
+  await fire_timers(m.cx, { ms: 300 });
+  await flush();
+};
+async function pickImage(m, query = "/img") {
+  typed(m, query);
+  act(m, "mdb-enter");
+  await flush();
+  await polled(m);
+}
+
+test("/img opens the file dialog at the Desktop; the pictures it answers are written where the slash was, the caret goes to a new paragraph below, and one Cmd+Z takes them away", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  files.set(`${DESKTOP}/shot 1.png`, OTHER);
+  dialogShows(chosen(`${DIR}/a.png`, `${DESKTOP}/shot 1.png`));
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  typed(m, "/img");
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Intro\n\nOutro\n", "the query and the paragraph it was in are gone while the dialog is open");
+  await flush();
+  await polled(m);
+  assert.equal(ran("sh").length, 1);
+  assert.equal(ran("sh")[0].args.at(-1), DESKTOP);
+  assert.equal(m.view.text, "Intro\n\n![a](a.png)\n![shot 1](images/shot-1.png)\n\nOutro\n");
+  assert.deepEqual(ran("mkdir").map(c => c.args), [["-p", `${DIR}/images`]]);
+  assert.deepEqual(ran("cp").map(c => c.args), [[`${DESKTOP}/shot 1.png`, `${DIR}/images/shot-1.png`]]);
+  assert.deepEqual(m.view.doc.blocks.map(b => b.image === true), [false, true, false]);
+  assert.ok(pendingOf(m), "an empty paragraph below the pictures");
+  assert.equal(m.view.blocks[2].key, m.view.activeKey);
+  assert.equal(m.view.field.value(), "");
+  await flush();
+  const shown = all(must(m.tree(), picsOf(m)), n => n.kind === "image").map(n => n.path);
+  assert.deepEqual(shown, [cached(SHOT), cached(OTHER)], "drawn at once");
+  assert.equal(state.shared[IMAGE_FOLDER], DIR, "the next dialog opens where the first picture came from");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Intro\n\nOutro\n");
+  assert.equal(ran("cp").length, 1, "the copy stays");
+});
+
+test("the dialog opens at the folder the last picture came from; the caret is in the paragraph below, where the next /img goes", async () => {
+  files.set(`${PICS}/a.png`, SHOT);
+  files.set(`${PICS}/b.png`, OTHER);
+  dialogShows(chosen(`${PICS}/a.png`));
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  assert.equal(state.shared[IMAGE_FOLDER], PICS);
+  dialogShows(chosen(`${PICS}/b.png`));
+  await pickImage(m);
+  assert.deepEqual(ran("sh").map(c => c.args.at(-1)), [DESKTOP, PICS]);
+  assert.equal(m.view.text, "Intro\n\n![a](images/a.png)\n\n![b](images/b.png)\n\nOutro\n");
+});
+
+test("cancelling the dialog writes nothing and says nothing: the emptied paragraph is still there to type in", async () => {
+  dialogShows(CANCELLED);
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  assert.equal(m.view.text, "Intro\n\nOutro\n");
+  assert.ok(pendingOf(m));
+  assert.deepEqual([calls.notify, ran("mkdir"), ran("cp"), state.shared[IMAGE_FOLDER]], [[], [], [], undefined]);
+  typed(m, "x");
+  assert.equal(m.view.text, "Intro\n\nx\n\nOutro\n", "in its own place");
+});
+
+test("cancelling in a block that has other text leaves it as it was before the slash, still being edited", async () => {
+  dialogShows(CANCELLED);
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await openBlock(m, 1, 5);
+  await pickImage(m, " /img");
+  assert.equal(m.view.text, "Intro\n\nWords \n\nOutro\n");
+  assert.deepEqual(editing(m), [keyAt(m, 1), "Words ", { start: 6, end: 6 }]);
+  assert.deepEqual(calls.notify, []);
+});
+
+test("with no osascript Image still writes an empty image, the caret between the parentheses, and says nothing", async () => {
+  noDialog();
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  assert.equal(m.view.text, "Intro\n\n![]()\n\nOutro\n");
+  assert.deepEqual(editing(m), [keyAt(m, 1), "![]()", { start: 4, end: 4 }]);
+  assert.deepEqual(calls.notify, []);
+});
+
+test("a dialog that fails gives a notice with the reason and writes nothing", async () => {
+  dialogShows({ code: 1, stdout: "", stderr: "execution error: Not allowed to send keystrokes. (-1743)\n" });
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  assert.equal(m.view.text, "Intro\n\nOutro\n");
+  assert.deepEqual(calls.notify, [{ title: "Can't choose pictures", body: "execution error: Not allowed to send keystrokes. (-1743)", level: "error" }]);
+});
+
+test("a picture whose name images/ holds with other bytes is written as -2, one with the same bytes as the file there, and nothing is copied", async () => {
+  for (const [held, address, copies] of [[OTHER, "images/shot-2.png", 1], [SHOT, "images/shot.png", 0]]) {
+    reset();
+    files.set(`${DESKTOP}/shot.png`, SHOT);
+    files.set(`${DIR}/images/shot.png`, held);
+    dialogShows(chosen(`${DESKTOP}/shot.png`));
+    const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+    await emptied(m, 1);
+    await pickImage(m);
+    assert.equal(m.view.text, `Intro\n\n![shot](${address})\n\nOutro\n`);
+    assert.equal(ran("cp").length, copies, address);
+  }
+});
+
+test("a picture that cannot be copied is left out with a notice naming it; the others are written", async () => {
+  files.set(`${DESKTOP}/a.png`, SHOT);
+  files.set(`${DESKTOP}/b.png`, OTHER);
+  dialogShows(chosen(`${DESKTOP}/a.png`, `${DESKTOP}/b.png`));
+  const run = state.exec;
+  state.exec = async (command, args) => (command === "cp" && args[0].endsWith("a.png") ? { code: 1, stdout: "", stderr: "cp: no space left\n" } : run(command, args));
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  assert.equal(m.view.text, "Intro\n\n![b](images/b.png)\n\nOutro\n");
+  assert.deepEqual(calls.notify, [{ title: "Couldn't copy a.png", body: "cp: no space left", level: "error" }]);
+});
+
+test("every picture failing writes nothing", async () => {
+  files.set(`${DESKTOP}/a.png`, SHOT);
+  dialogShows(chosen(`${DESKTOP}/a.png`));
+  const run = state.exec;
+  state.exec = async (command, args) => (command === "cp" ? { code: 1, stdout: "", stderr: "cp: no space left\n" } : run(command, args));
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  assert.equal(m.view.text, "Intro\n\nOutro\n");
+  assert.equal(calls.notify.length, 1);
+});
+
+test("Image in the empty paragraph Enter opened writes the pictures in its place and moves the caret to a new paragraph below them", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  dialogShows(chosen(`${DIR}/a.png`));
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await openBlock(m, 1, 5);
+  act(m, "mdb-enter");
+  assert.ok(pendingOf(m));
+  await pickImage(m);
+  assert.equal(m.view.text, "Intro\n\nWords\n\n![a](a.png)\n\nOutro\n");
+  assert.ok(pendingOf(m), "a new empty paragraph");
+  assert.equal(m.view.blocks[3].key, m.view.activeKey);
+  typed(m, "x");
+  assert.equal(m.view.text, "Intro\n\nWords\n\n![a](a.png)\n\nx\n\nOutro\n");
+});
+
+test("Image in a block that has other text goes below that block, the query gone and the text kept", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  dialogShows(chosen(`${DIR}/a.png`));
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await openBlock(m, 1, 5);
+  await pickImage(m, " /img");
+  assert.equal(m.view.text, "Intro\n\nWords \n\n![a](a.png)\n\nOutro\n");
+  assert.ok(pendingOf(m));
+});
+
+test("Image in the empty item Enter opened writes the pictures as a paragraph after the list item they follow", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  dialogShows(chosen(`${DIR}/a.png`));
+  const m = await page("- one\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0, 3);
+  act(m, "mdb-enter");
+  assert.equal(pendingOf(m).kind, "item");
+  await pickImage(m);
+  assert.equal(m.view.text, "- one\n\n![a](a.png)\n\nEnd\n");
+  assert.deepEqual(m.view.doc.blocks.map(b => [b.kind, b.image === true]), [["item", false], ["paragraph", true], ["paragraph", false]]);
+});
+
+test("a second pick while the dialog is open does nothing; the first still writes its pictures", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  const held = dialogHeld();
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  assert.equal(ran("sh").length, 1);
+  typed(m, "/img");
+  act(m, "mdb-enter");
+  await flush();
+  assert.equal(ran("sh").length, 1, "no second dialog");
+  assert.equal(m.view.field.value(), "/img", "and nothing happened to the block");
+  held.answer(chosen(`${DIR}/a.png`));
+  await polled(m);
+  assert.match(m.view.text, /^Intro\n\n!\[a\]\(a\.png\)\n\n/);
+  typed(m, "/img");
+  dialogShows(CANCELLED);
+  act(m, "mdb-enter");
+  await flush();
+  assert.equal(ran("sh").length, 2, "once the dialog has answered, Image asks again");
+});
+
+test("a dialog browsed in for minutes writes its pictures when it ends: the answer is waited for every 300 ms, the process looked at on the way, nothing happens meanwhile", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  const held = dialogHeld();
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  for (let i = 0; i < 400; i++) await polled(m);
+  assert.equal(m.view.text, "Intro\n\nOutro\n", "two minutes on, nothing is written");
+  assert.deepEqual([ran("sh").length, calls.notify.length], [1, 0]);
+  assert.ok(ran("kill").length > 50 && ran("kill").every(c => c.args.join(" ") === `-0 ${PID}`), "only looks at the process");
+  held.answer(chosen(`${DIR}/a.png`));
+  await polled(m);
+  assert.equal(m.view.text, "Intro\n\n![a](a.png)\n\nOutro\n");
+  assert.equal(m.view.picking, false);
+});
+
+test("a dialog whose process is gone with no answer gives the notice 'The picture dialog closed unexpectedly', and Image works again", async () => {
+  const held = dialogHeld();
+  const run = state.exec;
+  state.exec = async (command, args) => (command === "kill" && args[0] === "-0" ? { code: 1, stdout: "", stderr: "" } : run(command, args));
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  for (let i = 0; i < 7; i++) await polled(m);
+  assert.deepEqual(calls.notify, [{ title: "Can't choose pictures", body: "The picture dialog closed unexpectedly", level: "error" }]);
+  assert.equal(m.view.text, "Intro\n\nOutro\n");
+  assert.equal(m.view.picking, false);
+  assert.ok(held.answer);
+});
+
+test("closing the pane while the dialog is open kills its process and writes and copies nothing, however late an answer comes", async () => {
+  files.set(`${DESKTOP}/a.png`, SHOT);
+  const held = dialogHeld();
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  assert.deepEqual(ran("kill"), []);
+  await m.view.close(m.cx);
+  assert.deepEqual(ran("kill").map(c => c.args), [[PID]]);
+  held.answer(chosen(`${DESKTOP}/a.png`));
+  await polled(m);
+  assert.deepEqual([ran("cp"), ran("mkdir"), calls.notify, m.view.text], [[], [], [], "Intro\n\nOutro\n"]);
+  assert.equal(m.view.picking, false);
+});
+
+test("the pictures go where the slash was even when the page changed while the dialog was open: after the block above, else at the end", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  const held = dialogHeld();
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  typed(m, "x");
+  assert.equal(m.view.text, "Intro\n\nx\n\nOutro\n", "typed into the paragraph that took the slash's place");
+  held.answer(chosen(`${DIR}/a.png`));
+  await polled(m);
+  assert.equal(m.view.text, "Intro\n\n![a](a.png)\n\nx\n\nOutro\n");
+
+  reset();
+  files.set(`${DIR}/a.png`, SHOT);
+  const slow = dialogHeld();
+  const n = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(n, 1);
+  await pickImage(n);
+  await n.save();
+  state.disk.set(FILE, "# Other\n");
+  await n.touch([FILE]);
+  assert.equal(n.view.text, "# Other\n", "a page with no paragraph: the one the pictures were to follow is gone");
+  slow.answer(chosen(`${DIR}/a.png`));
+  await polled(n);
+  assert.equal(n.view.text, "# Other\n\n![a](a.png)\n");
+});
+
+test("a pane switched to Markdown while the dialog is open copies nothing and says why", async () => {
+  files.set(`${DESKTOP}/a.png`, SHOT);
+  const held = dialogHeld();
+  const switched = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(switched, 1);
+  await pickImage(switched);
+  await switched.click("md-markdown");
+  held.answer(chosen(`${DESKTOP}/a.png`));
+  await polled(switched);
+  assert.equal(switched.view.text, "Intro\n\nOutro\n");
+  assert.deepEqual([ran("cp"), calls.notify.map(n => n.title)], [[], ["The pictures weren't added"]]);
+});
+
+const drop = (m, paths) => fire(must(m.tree(), "md-viewport"), "on_drop", { paths }, m.cx);
+
+test("a drop of two images and a text file writes the two, one linked and one copied, below the last block when nothing was pointed at", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  files.set(`${DESKTOP}/b 2.png`, OTHER);
+  dialogShows(CANCELLED);
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  drop(m, [`${DIR}/a.png`, `${DESKTOP}/notes.txt`, `${DESKTOP}/b 2.png`]);
+  await flush();
+  assert.equal(m.view.text, "Intro\n\nWords\n\nOutro\n\n![a](a.png)\n![b 2](images/b-2.png)\n");
+  assert.deepEqual(ran("cp").map(c => c.args), [[`${DESKTOP}/b 2.png`, `${DIR}/images/b-2.png`]]);
+  assert.deepEqual(ran("sh"), []);
+  assert.equal(m.view.activeKey, null, "no block is being edited after a drop");
+});
+
+test("a drop goes below the block the pointer was last over, else below the block being edited", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  hover(m, { x: X + 10, y: topOf(m, 0) + 5 });
+  drop(m, [`${DIR}/a.png`]);
+  await flush();
+  assert.equal(m.view.text, "Intro\n\n![a](a.png)\n\nWords\n\nOutro\n");
+
+  reset();
+  files.set(`${DIR}/a.png`, SHOT);
+  const n = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await openBlock(n, 1, 2);
+  fire(must(n.tree(), "md-viewport"), "on_hover", false, n.cx);
+  drop(n, [`${DIR}/a.png`]);
+  await flush();
+  assert.equal(n.view.text, "Intro\n\nWords\n\n![a](a.png)\n\nOutro\n");
+  assert.equal(n.view.activeKey, null, "no block is open after a drop");
+});
+
+test("a drop with no picture in it gives a notice and changes nothing", async () => {
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  drop(m, [`${DESKTOP}/notes.txt`, `${DESKTOP}/photo.heic`]);
+  await flush();
+  assert.equal(m.view.text, THREE);
+  assert.deepEqual(calls.notify, [{ title: "Only pictures can be dropped here (PNG, JPEG, GIF, WebP, BMP, SVG)", level: "info" }]);
+  assert.deepEqual(calls.exec, []);
+});
+
+test("a drop on a page that cannot be edited does nothing: no notice, no copy", async () => {
+  const m = await mount({ file: "/home/dev/n.md", machine: "devbox", disk: THREE });
+  viewportOf(m, 900, 600);
+  files.set(`${DESKTOP}/a.png`, SHOT);
+  drop(m, [`${DESKTOP}/a.png`]);
+  await flush();
+  assert.deepEqual([m.view.text, calls.notify, calls.exec], [THREE, [], []]);
 });
 
 test("/table writes a 3-column table with one empty row and selects 'Column 1'; Tab then selects 'Column 2'", async () => {

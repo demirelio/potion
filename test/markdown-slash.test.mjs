@@ -44,6 +44,7 @@ test("Image is found by its name, img, pic, picture, photo and the start of its 
   assert.equal(ids(matches("i"))[0], "image", "a name that starts with the query comes before the ones that contain it");
   const image = COMMANDS.find(c => c.id === "image");
   assert.deepEqual([image.lines, image.caret, image.icon], [["![]()"], 4, "image"]);
+  assert.deepEqual(COMMANDS.filter(c => c.picture).map(c => c.id), ["image"], "only Image asks for files first");
   assert.equal(image.lines[0][image.caret - 1] + image.lines[0][image.caret], "()", "between the parentheses");
 });
 

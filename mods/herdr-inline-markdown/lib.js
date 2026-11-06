@@ -98,14 +98,16 @@ const destinationOf = raw => {
   return (angled ? angled[1] : text.split(/\s/, 1)[0]).trim();
 };
 
+const unescapeAlt = alt => alt.replace(/\\([\\[\]])/g, "$1");
+
 // -> [{ alt, src, href }], one per image of an image-only paragraph's content (`href` is null unless the image is
 // linked), else [].
 export function picturesOf(content) {
   const text = String(content ?? "");
   if (!IMAGE_ONLY.test(text)) return [];
   return [...text.matchAll(IMAGE_ITEM)].map(m => (m[4] === undefined
-    ? { alt: m[1], src: destinationOf(m[2]), href: destinationOf(m[3]) || null }
-    : { alt: m[4], src: destinationOf(m[5]), href: null }));
+    ? { alt: unescapeAlt(m[1]), src: destinationOf(m[2]), href: destinationOf(m[3]) || null }
+    : { alt: unescapeAlt(m[4]), src: destinationOf(m[5]), href: null }));
 }
 
 const NOT_AN_ADDRESS = "Not a picture address";
@@ -124,6 +126,31 @@ export function pictureSource(src, file) {
   const link = resolveLink(url, file);
   return link.path ? { kind: "file", path: link.path } : { kind: "none", why: NOT_AN_ADDRESS };
 }
+
+export const isPictureName = name => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(name ?? ""));
+
+// \s covers U+202F, which macOS puts in screenshot names.
+export const copyName = base => String(base ?? "").replace(/\s+/g, "-");
+
+// `?` and `#` would end the path, `%` would start an escape, and a parenthesis would end the image (the image pattern
+// stops at the first `)`, even inside <…>).
+const ADDRESS_ESCAPES = { "%": "%25", "(": "%28", ")": "%29", "?": "%3F", "#": "%23", "<": "%3C", ">": "%3E", "\n": "%0A", "\r": "%0D" };
+
+function pictureAddress(relative) {
+  const text = relative.replace(/[%()?#<>\n\r]/g, c => ADDRESS_ESCAPES[c]);
+  const plain = /^[a-z][a-z0-9+.-]*:/i.test(text) ? `./${text}` : text;
+  return /\s/.test(plain) ? `<${plain}>` : plain;
+}
+
+// null when the picture is not under the note's folder, so it has to be copied there first.
+export function pictureLink(path, note) {
+  const folder = normalizePath(dirname(note)), target = normalizePath(path), prefix = folder === "/" ? "/" : `${folder}/`;
+  return target.startsWith(prefix) && target.length > prefix.length ? pictureAddress(target.slice(prefix.length)) : null;
+}
+
+const escapeAlt = alt => alt.replace(/[\\[\]]/g, "\\$&");
+
+export const pictureMarkdown = items => items.map(({ alt, address }) => `![${escapeAlt(alt)}](${address})`).join("\n");
 
 // Order: a match in the file name beats one only in the path, a run of the query beats scattered letters, an earlier
 // match beats a later one, a shorter path breaks ties.

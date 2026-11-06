@@ -2,7 +2,8 @@ const MERMAID = ["```mermaid", "flowchart TD", "  A[Start] --> B[End]", "```"];
 const TABLE = ["| Column 1 | Column 2 | Column 3 |", "| --- | --- | --- |", "|  |  |  |"];
 
 // `to` turns the block being edited into another text block (`marker` is what typing it in an empty block writes);
-// `lines` are a new block written where the slash was, with the field caret (or range) `caret` in it.
+// `lines` are a new block written where the slash was, with the field caret (or range) `caret` in it. A command with
+// `picture` first asks for image files in a dialog; its `lines` are what it writes when there is no dialog.
 export const COMMANDS = [
   { id: "text", name: "Text", aliases: ["p", "paragraph", "text"], hint: "", icon: "type", to: { kind: "paragraph" } },
   { id: "h1", name: "Heading 1", aliases: ["h1", "heading", "#"], hint: "#", icon: "heading-1", to: { kind: "heading", level: 1 }, marker: "# " },
@@ -14,7 +15,7 @@ export const COMMANDS = [
   { id: "quote", name: "Quote", aliases: ["quote", ">"], hint: ">", icon: "text-quote", to: { kind: "quote" }, marker: "> " },
   { id: "code", name: "Code block", aliases: ["code", "fence", "```"], hint: "```", icon: "code", lines: ["```", "", "```"], caret: 4 },
   { id: "mermaid", name: "Mermaid diagram", aliases: ["mermaid", "diagram", "chart", "flowchart"], hint: "mermaid", icon: "workflow", lines: MERMAID, caret: MERMAID.slice(0, -1).join("\n").length },
-  { id: "image", name: "Image", aliases: ["image", "img", "picture", "photo", "![]"], hint: "![]()", icon: "image", lines: ["![]()"], caret: 4 },
+  { id: "image", name: "Image", aliases: ["image", "img", "picture", "photo", "![]"], hint: "![]()", icon: "image", picture: true, lines: ["![]()"], caret: 4 },
   { id: "table", name: "Table", aliases: ["table"], hint: "|", icon: "table", lines: TABLE, caret: { start: 2, end: 10 } },
   { id: "hr", name: "Divider", aliases: ["hr", "divider", "---", "line"], hint: "---", icon: "minus", lines: ["---"] },
 ];
