@@ -3,13 +3,14 @@
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
-import { MODES, basename, dirname, docToSource, eolOf, fileKey, modeOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, trimMap } from "./lib.js";
+import { MODES, basename, dirname, docToSource, eolOf, fileKey, modeOf, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { COLUMN, FRAME, MENU, anchorBlock, blockAt, canZoom, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, overflows, pageStep, passThrough, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
+import { COLUMN, FRAME, MENU, anchorBlock, blockAt, canZoom, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
 import { Diagrams } from "./diagrams.js";
+import { Images } from "./images.js";
 import { ACTIONS, SOURCE, installKeys } from "./keys.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 
@@ -60,9 +61,6 @@ const why = e => String(e?.message ?? e);
 // What readTextFile says about a file over its 1 MiB limit is not written down anywhere: go by the usual words.
 const tooBig = e => /mib|too (large|big)|exceed|larger than/i.test(why(e));
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-// A path the watcher reports belongs to this file when it is the file, a folder above it (a root path means "look
-// at everything"), or has its name (the watcher may spell the folder differently, /private/var for /var).
-const touches = (path, file) => path === file || file.startsWith(path.endsWith("/") ? path : `${path}/`) || basename(path) === basename(file);
 // Sizes and pointer positions come in screen pixels; the layout works in the pixels the zoom setting scales.
 const zoom = () => Number(settings()?.zoom) || 1;
 const windowPoint = e => (e?.position ? { x: e.position.x / zoom(), y: e.position.y / zoom() } : null);
@@ -161,7 +159,7 @@ const withInnerLine = (b, value) => {
 };
 
 // What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, with block 2 in the
-// field and its slash menu open, the spare field over block 4, and a diagram frame wider than the column.
+// field and its slash menu open, the spare field over block 4, a diagram frame wider than the column, and a picture.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
@@ -182,6 +180,7 @@ const FIXTURE = [
   "A setext heading", "----------------", "",
 ].join("\n");
 const FIXTURE_DIAGRAM = { key: "check-fixture", state: "ok", width: 1800, height: 300, scale: 2, error: null };
+const FIXTURE_PICTURE = { state: "ok", path: MARKDOWN_ICON, width: 32, height: 32, error: null };
 
 export class Editor {
   init(props, cx) {
@@ -227,8 +226,12 @@ export class Editor {
     this.heights = new Map(); this.estimates = new WeakMap(); this.sums = [0]; this.offset = 0; this.viewport = null; this.reveal = null; this.win = null; this.winTimer = null;
     this.press = null; this.thumb = null; this.pointer = null; this.fieldPress = null; this.fieldHeld = null; this.dragFrom = null; this.linked = false;
     this.diagrams = new Diagrams();
-    this.diagrams.onChange = cx => this.diagramsChanged(cx);
+    this.diagrams.onChange = cx => this.assetsChanged(cx);
+    this.images = new Images();
+    this.images.onChange = cx => this.assetsChanged(cx);
     this.shown = new Map(); this.good = new Map(); // block key -> what the diagram answered, and its last image
+    // block key -> the pictures of an image paragraph: { content, list (picturesOf), items (list with what Images answered), layout }
+    this.pictures = new Map();
     // Diagram frames: `frames` the view ({ z, x, y }) of each frame panned or zoomed (none: its starting view), `pan` a
     // press on a frame ({ key, from, x0, y0, moved }), `hoverTop` where the hovered frame's − % + group sits, `gesture`
     // the wheel gesture going on, `zoomed` the frames zoomed since the zoom last rested.
@@ -302,6 +305,7 @@ export class Editor {
     this.slash = { act: this.act, at: slashAt, end: slashAt + 1, query: "", items: COMMANDS, index: 0, first: 0, side: null };
     const diagram = this.doc.blocks.find(b => b.kind === "mermaid");
     this.shown.set(diagram.key, FIXTURE_DIAGRAM); this.good.set(diagram.key, FIXTURE_DIAGRAM);
+    this.setPictures(this.doc.blocks.find(b => b.image), () => FIXTURE_PICTURE);
     this.hoverFrame = diagram.key;
     this.rebuild(null, null);
   }
@@ -801,6 +805,7 @@ export class Editor {
           const paths = await watchFolder(dir);
           if (this.closed) return;
           if (paths.some(p => touches(p, this.file))) cx.spawn(cx => this.recheck(cx));
+          if (this.images.forget(paths)) this.assetsChanged(cx);
         }
       } catch { if (!this.closed) this.poll(LOCAL_POLL, cx); }
     });
@@ -972,6 +977,7 @@ export class Editor {
     this.closed = true; this.slash = null;
     this.saveTask?.cancel(); this.pollTask?.cancel(); this.settleTimer?.cancel();
     this.diagrams?.close();
+    this.images?.close();
     owners.delete(this.id);
     for (const e of [...this.entities.values(), this.column]) { try { e?.release(); } catch { /* the host let it go already */ } }
     this.entities.clear();
@@ -1068,7 +1074,7 @@ export class Editor {
   forget(key) {
     const e = this.entities.get(key);
     if (e) { try { e.release(); } catch { /* already gone */ } }
-    for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.gens, this.frames]) m.delete(key);
+    for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames]) m.delete(key);
     this.disarmed.delete(key); this.zoomed.delete(key);
     if (this.armedKey === key) this.armedKey = null;
     if (this.hoverFrame === key) this.hoverFrame = null;
@@ -1085,10 +1091,12 @@ export class Editor {
     this.updateSel();
     if (cx && this.file) {
       for (const b of this.doc.blocks) {
-        if (b.kind !== "mermaid" || b.key === this.activeKey) continue;
-        const d = this.diagrams.get(b.source, cx);
-        this.shown.set(b.key, d);
-        if (d.state === "ok") this.good.set(b.key, d);
+        if (b.key === this.activeKey) continue;
+        if (b.kind === "mermaid") {
+          const d = this.diagrams.get(b.source, cx);
+          this.shown.set(b.key, d);
+          if (d.state === "ok") this.good.set(b.key, d);
+        } else if (b.image) this.setPictures(b, p => this.images.get(p.src, this.file, { remote: this.remote }, cx));
       }
     }
     for (let i = 0; i < blocks.length; i++) {
@@ -1256,7 +1264,42 @@ export class Editor {
       gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key),
       row: cal.row, ratio: cal.ratio, padRendered: cal.padRendered, padActive: cal.padActive,
       ...(look.look === "diagram" ? this.frameData(b, width) : {}),
+      ...(look.look === "picture" ? this.pictureData(b, width) : {}),
     };
+  }
+
+  // `answer` says how one picture of the paragraph stands, as { state, path, width, height, error }: Images.get's answer.
+  // A picture being read again keeps the one it showed, as a diagram keeps its last good image.
+  setPictures(b, answer) {
+    const kept = this.pictures.get(b.key), same = kept?.content === b.content, list = same ? kept.list : picturesOf(b.content);
+    const stands = (now, i) => (same && now.state === "pending" && kept.items[i].state === "ok" ? kept.items[i] : now);
+    this.pictures.set(b.key, { content: b.content, list, items: list.map((p, i) => ({ ...p, ...stands(answer(p), i) })), layout: null });
+  }
+
+  // The pictures of block `key` laid out in a column `width` px wide: { items, boxes, height }, which the page draws and
+  // a click is tested against.
+  pictureOf(key, width) {
+    const kept = this.pictures.get(key);
+    if (!kept) return { items: [], boxes: [], height: 0 };
+    if (kept.layout?.width !== width) {
+      const sized = kept.items.map(item => ({ state: item.state, natW: item.width, natH: item.height }));
+      kept.layout = { width, ...pictureLayout(sized, width) };
+    }
+    return { items: kept.items, boxes: kept.layout.boxes, height: kept.layout.height };
+  }
+
+  // Primitive fields only, so that a block whose pictures stand as before is not drawn again.
+  pictureData(b, width) {
+    const pictureW = Math.max(1, width - b.depth * INDENT);
+    if (b.key === this.activeKey || !this.pictures.has(b.key)) return { pictureSig: "", pictureW, pictureH: 0 };
+    const { items, height } = this.pictureOf(b.key, pictureW);
+    const pictureSig = JSON.stringify(items.map(i => [i.state, i.path, i.width, i.height, i.error, i.href]));
+    return { pictureSig, pictureW, pictureH: height };
+  }
+
+  // The index of the picture whose box holds the point (x, y) in the paragraph's content box, else -1.
+  pictureAt(d, x, y) {
+    return this.pictureOf(d.key, d.pictureW).boxes.findIndex(box => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h);
   }
 
   // The frame of a diagram block: the picture that is ready, else the last one dimmed, sized for the viewport. A
@@ -1285,7 +1328,8 @@ export class Editor {
     return v_flex().id("md-column").w_full().children(this.mountedItems(k => this.entities.get(k)));
   }
 
-  diagramsChanged(cx) {
+  // A diagram was drawn or a picture loaded: the page draws again, when Reading is the view.
+  assetsChanged(cx) {
     if (this.closed || this.mode !== "reading" || !this.doc) return;
     this.rebuild(cx, this.anchor());
   }
@@ -1322,6 +1366,7 @@ export class Editor {
   estimateOf(d, w, advance) {
     if (d.look === "rule") return d.space + RULE_H;
     if (d.look === "diagram") return d.space + (d.frameH ? d.frameH + (d.boxAbove ? DIAGRAM_H + 8 : 0) : DIAGRAM_H);
+    if (d.look === "picture" && d.mode === "rendered") return d.space + d.pictureH;
     const box = d.look === "code" || d.look === "boxed" ? 2 * BOX.py + 2 : d.look === "front" ? 2 * FRONT_BOX.py + 2 : 0;
     const lines = d.text.split("\n"), perRow = Math.max(1, Math.floor(w / advance));
     const rows = d.look === "boxed" ? lines.length : lines.reduce((n, l) => n + Math.max(1, Math.ceil(l.length / perRow)), 0);
@@ -1632,6 +1677,7 @@ export class Editor {
     if (!hit) return;
     if (hit.on === "tool") return this.toolClick(hit.block.key, hit.tool, cx);
     if (hit.on === "task") return this.tick(hit.block, cx);
+    if (hit.on === "picture") return this.pictureClick(hit, p, cx, count);
     if (!this.editable()) return;
     if (hit.on === "frame") {
       if (count >= 2) this.clickBlock(hit.block.key, p, cx);
@@ -1647,6 +1693,15 @@ export class Editor {
       return;
     }
     this.clickBlock(key, p, cx);
+  }
+
+  // A picture is big and a stray click must not turn it into a source line, so as on a diagram only a double-click edits
+  // it. A linked picture follows its link on a click instead (on files that cannot be edited too) and is never edited here.
+  pictureClick(hit, p, cx, count) {
+    const href = this.pictures.get(hit.block.key)?.items[hit.item]?.href;
+    if (href) {
+      if (count === 1) this.link(href, cx);
+    } else if (count >= 2 && this.editable()) this.clickBlock(hit.block.key, p, cx);
   }
 
   // A move event says nothing of the buttons: while a press is under way, on the page or in a field, nothing is armed
@@ -1906,8 +1961,9 @@ export class Editor {
   }
 
   // The block under a viewport point and what on it: a diagram's frame (also where it reaches into the margins), a cell
-  // of its − % + group, a checkbox, a body, the space below the last block ("end"), or a margin outside every block
-  // ("outside"). x and y are relative to the block's root, fx and fy to the frame. A page with no blocks is all "end".
+  // of its − % + group, a picture block (`item` the picture under the point, or -1), a checkbox, a body, the space below
+  // the last block ("end"), or a margin outside every block ("outside"). x and y are relative to the block's root, fx and
+  // fy to the frame. A page with no blocks is all "end".
   hit(p) {
     const blocks = this.blocks, n = blocks.length;
     if (this.sums.length !== n + 1) return null;
@@ -1923,6 +1979,7 @@ export class Editor {
     if (y >= this.sums[n]) return { on: "end" };
     const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
     const inX = x - b.depth * INDENT, inY = y - this.sums[i] - d.space;
+    if (d.look === "picture" && d.mode === "rendered") return { block: b, on: "picture", item: this.pictureAt(d, inX, inY), x, y: y - this.sums[i] };
     const on = d.marker === "task" && inX >= 0 && inX < MARKER_W && inY >= 0 && inY < d.row ? "task" : "block";
     return { block: b, on, x, y: y - this.sums[i] };
   }
@@ -2245,6 +2302,7 @@ export class Editor {
     const d = this.data.get(b.key), active = b.key === this.activeKey, c = this.chromeOf(d, active), cal = this.calOf(d.style);
     const value = active ? this.seen : this.openedValue(b);
     if (b.kind === "mermaid" && !active) return this.entry(b, value, 1, null);
+    if (d.look === "picture" && !active) return value.length;
     const height = (this.heights.get(b.key) ?? this.estimate(b)) - c.y - c.below - (active ? d.padActive : d.padRendered);
     const fenced = !active && (Boolean(b.fence) || b.kind === "frontmatter");
     return pressToField({ kind: b.kind, value, fenced, closed: b.closed, rows: this.rowsOf(d, active), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance });

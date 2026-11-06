@@ -128,6 +128,31 @@ test("the image-only paragraph, task, setext and mermaid facts are recorded on t
   assert.equal(d.blocks[4].source, "graph TD\n  A-->B");
 });
 
+const imageFlags = text => parse(text).blocks.map(b => b.image);
+
+test("a linked image is an image-only paragraph", () => {
+  assert.deepEqual(imageFlags("[![build](https://x.io/b.svg)](https://x.io/ci)\n"), [true]);
+  assert.deepEqual(imageFlags("[![](a.png)](b)\n"), [true]);
+});
+
+test("a badge row of images and linked images, on one line or several, is an image-only paragraph", () => {
+  assert.deepEqual(imageFlags("[![a](x.svg)](y) [![b](x2.svg)](y2)\t![c](z.svg)\n"), [true]);
+  assert.deepEqual(imageFlags("![a](x.svg)\n[![b](y.svg)](z)  \n ![c](w.svg)\n"), [true]);
+  assert.deepEqual(imageFlags("[![a](x)](y)![b](z)\n"), [true], "no space is needed between two");
+});
+
+test("text around an image, an unfinished link and a destination holding ) keep the paragraph text", () => {
+  for (const text of ["see ![a](x)\n", "![a](x) caption\n", "[![a](x)](y) tail\n", "[text](y)\n", "[![a](x)]\n", "[![a](x)](y\n", "![a](x(1).png)\n", "[![a](x)](y(1))\n"]) {
+    assert.deepEqual(imageFlags(text).filter(Boolean), [], JSON.stringify(text));
+  }
+});
+
+test("a long row followed by text is told apart at once, not after trying every split of the spaces between", () => {
+  assert.deepEqual(imageFlags(`${"[![a](x)](y)   ".repeat(60)}x\n`), [false]);
+  assert.deepEqual(imageFlags(`${"![a](x)   ".repeat(60)}x\n`), [false]);
+  assert.deepEqual(imageFlags(`${"![a](x) \t ".repeat(60)}\n`), [true]);
+});
+
 test("nesting follows the container rule: a fence right after an item's first line is its child", () => {
   const d = parse("1. Install:\n   ```bash\n   npm i\n   ```\n2. Run\n");
   assert.deepEqual(d.blocks.map(b => [b.kind, b.depth, b.parent]), [["item", 0, -1], ["code", 1, 0], ["item", 0, -1]]);

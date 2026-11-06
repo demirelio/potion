@@ -120,6 +120,31 @@ test("the in-memory fs of fs/promises is shared with the mocks and emptied by re
   assert.equal(files.size, 0);
 });
 
+test("the in-memory fs logs reads, writes and folders, can be told to fail, and can hold a read until released", async () => {
+  const fs = await import("./mocks/fs.mjs");
+  await fs.mkdir("/d", { recursive: true });
+  await fs.writeFile("/d/a", new Uint8Array([1]));
+  await fs.readFile("/d/a");
+  assert.deepEqual([fs.log.mkdir, fs.log.writeFile, fs.log.readFile], [[["/d", { recursive: true }]], ["/d/a"], ["/d/a"]]);
+  fs.failing.readFile.set("/d/a", new Error("boom"));
+  fs.failing.writeFile.set("*", new Error("full"));
+  await assert.rejects(fs.readFile("/d/a"), /boom/);
+  await assert.rejects(fs.writeFile("/d/b", "x"), /full/);
+  assert.equal(files.has("/d/b"), false, "a failed write stores nothing");
+  fs.failing.readFile.clear();
+  const release = fs.hold("/d/a");
+  let done = false;
+  const read = fs.readFile("/d/a").then(contents => { done = true; return contents; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(done, false, "held");
+  files.set("/d/a", new Uint8Array([2]));
+  release();
+  assert.deepEqual([...await read], [1], "what the file held when the read began");
+  reset();
+  assert.deepEqual([fs.log.mkdir, fs.log.writeFile, fs.log.readFile], [[], [], []]);
+  assert.equal(fs.failing.writeFile.size, 0);
+});
+
 test("TextareaState and InputState hold text, record handlers and are typed into with edit() and submit()", async () => {
   const cx = makeCx(), seen = [];
   const area = TextareaState.new({ value: "start", placeholder: "p" });

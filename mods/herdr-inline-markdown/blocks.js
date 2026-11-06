@@ -30,7 +30,10 @@ const DELIM_ROW = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
 const FRONT_OPEN = /^---[ \t]*\r?$/;
 const FRONT_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
 const TASK = /^\[([ xX])\][ \t]/;
-const IMAGE_ONLY = /^(?:[ \t]*!\[[^\]\n]*\]\([^)\n]*\)[ \t]*\n?)+$/;
+// An image, or a linked image: groups 1-3 are the linked form's alt, address and link, 4-5 the plain form's alt and address.
+export const IMAGE_ITEM = /\[!\[([^\]\n]*)\]\(([^)\n]*)\)\]\(([^)\n]*)\)|!\[([^\]\n]*)\]\(([^)\n]*)\)/g;
+// A gap is either a line break or spaces, never both parts at once, so a paragraph that fails is not tried split by split.
+export const IMAGE_ONLY = new RegExp(`^[ \\t]*(?:${IMAGE_ITEM.source})(?:(?:[ \\t]*\\n[ \\t]*|[ \\t]*)(?:${IMAGE_ITEM.source}))*[ \\t]*\\n?$`);
 const BLANK = /^[ \t]*$/;
 
 const BLOCK_TAGS = "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";

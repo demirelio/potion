@@ -1,6 +1,6 @@
 # herdr-inline-markdown
 
-A Markdown reader and editor for the Herdr app, with mermaid diagrams.
+A Markdown reader and editor for the Herdr app, with mermaid diagrams and pictures.
 
 A **Markdown pane** shows one markdown file, as a rendered page you edit in place or as its source, and saves what
 you type. It opens beside your terminals in the current tab, or in a tab of its own. It is meant for reading the
@@ -28,6 +28,7 @@ The package holds:
   puppeteer downloads (figures vary by platform), and a few minutes the first time.
 - `git` on the machine of the folder you open files from: the picker lists markdown files with `git ls-files`,
   or with `find` outside a repository.
+- `curl`, for pictures from the web (macOS ships it). Without it those pictures show an error box and the rest works.
 
 ## Install
 
@@ -115,7 +116,8 @@ gives way to the pane's header, which shows the same file name and toggle.
 - **Links in Reading:** a click on a link opens it (in the block being edited a link is text you can edit).
   `http(s)` opens in the browser and `mailto` in the mail app; a link to another markdown file opens in a pane beside
   this one, on the same machine; `#anchor` does nothing; any other file gives a notice "Can't open <name> here".
-  Images are not drawn (Herdr's text view has no images): a picture shows as its source line.
+  A paragraph made only of images is drawn as pictures (see [Pictures](#pictures)); an image inside a line of text is
+  not.
 - **Saving:** 700 ms after you stop typing, on a tick, on a switch between Reading and Markdown, on `cmd-s` and when
   its pane or tab closes. The footer says Saving…, Unsaved or Saved. Every write names the text it last read, so a
   file that changed on disk is never overwritten silently.
@@ -132,21 +134,25 @@ gives way to the pane's header, which shows the same file name and toggle.
 - **What it runs:** `git ls-files` in the folder to list markdown files (tracked and untracked, not ignored; at most
   2,000), or outside a repository `find` up to 5 folders deep without `node_modules`, `.git`, hidden folders,
   `Library` and `.cache` (at most 1,000), on the machine of the space. Creating a file runs `mkdir -p` for the folders
-  in its name. Files are written only on this computer: the one you edit, a new note, and the diagram cache.
+  in its name. `curl` downloads the https pictures a file names, and once each time Herdr starts `find` deletes the
+  files of the picture cache older than 45 days. Files are written only on this computer: the one you edit, a new
+  note, and the diagram and picture caches.
 
 ### Block editing
 
 The block you click keeps its size, font and place. Only its own raw marks appear while you are in it (`**bold**`,
 `` `code` ``, link addresses); its `#`, `-`, `1.`, `[ ]` or `>` stays hidden. A code block, table, HTML block, front
 matter or diagram shows its source, fences included, in the terminal font, and a diagram is drawn again when you leave
-it. A hard-wrapped paragraph shows its line breaks as spaces, so it wraps as it did on the page, and keeps them in
-the file.
+it; a paragraph of pictures shows its source in a smaller terminal font and is drawn again the same way. A
+hard-wrapped paragraph shows its line breaks as spaces, so it wraps as it did on the page, and keeps them in the
+file.
 
 | Key or click | What it does |
 |---|---|
 | Click | Edits the block under the pointer. In plain text the caret lands where you click; in text with formatting it lands at the nearest word boundary, in code on the clicked line and column, in a table at the start of the clicked cell. The second click is exact |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
-| Double-click a diagram | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
+| Double-click a diagram or a picture | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
+| Click a linked picture | Opens its link, as a click on a link in text does; the picture itself is never opened for editing by a click |
 | Click a checkbox | Ticks or unticks it |
 | Enter | At the end of a block: a new one below (a list continues). At the start: a new one above. In the middle: splits the block. On an empty item: out a level, then out of the list. In code: a new line |
 | Shift+Enter | A line break inside the block, written as `\` at the end of the line; in a heading it is Enter |
@@ -171,18 +177,20 @@ leave empty disappears and writes nothing to the file.
 the second is exact; selecting across blocks selects whole blocks (the middle of one block to the middle of another
 needs the Markdown view); typing never re-wraps the source; input methods that compose characters (Japanese,
 Chinese) may misbehave with Enter, while direct typing in any script is fine. **Left out on purpose:** drag handles,
-Cmd+B / Cmd+I, images, footnotes (a reference stays text, a definition shows as a dim source line), jumping to
-`#anchor` links, and any button besides the one toggle and a diagram's zoom.
+Cmd+B / Cmd+I, images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is
+drawn), footnotes (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and
+any button besides the one toggle and a diagram's zoom.
 
 ### Slash menu
 
 Type `/` at the start of a block or after a space for a menu of block types: Text, Heading 1-3, Bulleted, Numbered
-and To-do list, Quote, Code block, Mermaid diagram, Table and Divider. Typing on narrows it (`/h2`, `/todo`,
-`/mer`); Up and Down move the highlight, Enter, Tab or a click picks it, and Escape closes it and keeps what you
-typed. A text style changes the block you are in and keeps its words; the others add a block where the slash was (a
-table with "Column 1" selected, a diagram with a starter flowchart), or take the block's place when it held nothing
-else. Cmd+Z right after a pick gives back the `/h2` you typed, and a second Cmd+Z removes it. A pick writes the same
-markdown as typing it. There is no menu in code, tables or diagram source, where a slash is text.
+and To-do list, Quote, Code block, Mermaid diagram, Image, Table and Divider. Typing on narrows it (`/h2`, `/todo`,
+`/img`, `/mer`); Up and Down move the highlight, Enter, Tab or a click picks it, and Escape closes it and keeps what
+you typed. A text style changes the block you are in and keeps its words; the others add a block where the slash was
+(a table with "Column 1" selected, a diagram with a starter flowchart), or take the block's place when it held nothing
+else. Image writes `![]()` with the caret between the parentheses for its address, and the picture is drawn when you
+leave the paragraph. Cmd+Z right after a pick gives back the `/h2` you typed, and a second Cmd+Z removes it. A pick
+writes the same markdown as typing it. There is no menu in code, tables or diagram source, where a slash is text.
 
 ### Diagrams
 
@@ -210,6 +218,33 @@ never under 75 % or over 100 % (mermaid's own size).
 - **Edit it:** double-click it to open its source.
 - Each frame keeps its view while you edit elsewhere, switch the theme or open its source.
 
+### Pictures
+
+A paragraph made only of images is drawn as pictures in Reading: `![alt](address)`, one or several, on one line or on
+several. A linked image, `[![alt](address)](https://…)`, counts too, so the row of badges at the top of a README is
+drawn. An image inside a line of text, an HTML `<img>` and a reference-style image (`![alt][ref]`) are not drawn.
+
+- **Addresses:** a path relative to the markdown file, an absolute path or a `file://` address, an `https://`
+  address, and `data:image/…` (base64 or percent-encoded). `http://` and every other scheme are never fetched: they
+  show an error box. Web pictures are downloaded with `curl` when the file opens (https only, redirects too, 10 MB at
+  most, 20 s). The pictures of a file on another machine aren't shown yet, except the ones from the web.
+- **Formats:** PNG, JPEG, GIF, WebP, BMP and SVG, told by the file's bytes, not its name. A file over 25 MB or a
+  picture over 50 megapixels shows an error box.
+- **Size:** a picture keeps its own size, shrunk to the width of the text when it is wider, never enlarged. Pictures
+  that fit sit side by side and the rest wrap to the next row, so badges make a row and screenshots stack.
+- **Clicks:** a single click does nothing; a double-click shows the paragraph's source to edit, and leaving it draws
+  the pictures again. A click on a linked picture opens its link instead, as a click on a link in text does, also on
+  a file you can't edit, and never edits: arrow into the paragraph, or use the Markdown view.
+- **Updates:** when the folder watcher reports a picture's file, the page reads it again and swaps the new picture in
+  when it is loaded, so a picture an agent writes after the markdown appears without reopening. Where the folder
+  isn't watched (your home folder, `/`, a file on another machine) pictures are read when they are first drawn and
+  not again.
+- **Errors:** a picture that can't be shown is a box with its name and the reason: not found, not a picture, too big,
+  the download failed. A box says Loading picture… while one loads.
+- **Cache:** every picture is copied into `~/.config/herdr-app/data/herdr-inline-markdown/images/` under a name made
+  from its bytes, because Herdr draws only pictures from its app folder. Once each time Herdr starts, files there
+  older than 45 days are deleted, and the folder can be emptied by hand at any time.
+
 Besides the file itself, the mod keeps in Herdr's shared state which pane shows which file, the 30 most recent files
 and each file's last state (Reading or Markdown).
 
@@ -229,11 +264,12 @@ npm test    # node 22+, nothing to install; never starts Herdr
 The tests cover the mod's pure functions (`lib.js`), its block model (`blocks.js`, run over the CommonMark and GFM
 spec examples, the documents in `test/fixtures/markdown/docs` and variants of each), the caret, page and
 diagram-frame arithmetic (`geometry.js`), the undo history, the page's drawing, opening a file, the picker, the
-editor, the diagram service, the keys and the companion mod, `install.sh` and its merge of `keys.json`, the assets,
-and that the files integration's copy of `openMarkdown` acts like `open.js`. The renderer's tests run the installed
-copy and skip when there isn't one; to run them without touching your install, point `HERDR_MERMAID_HOME` at one.
-The patch tests apply each patch to Herdr 0.1.12's shipped mods, read from `${HERDR_APP_HOME:-~/.config/herdr-app}`
-(Herdr rewrites them on every start), and skip when the files there are not exactly 0.1.12's.
+editor, the diagram service, the picture service and its image-size reader, the keys and the companion mod,
+`install.sh` and its merge of `keys.json`, the assets, and that the files integration's copy of `openMarkdown` acts
+like `open.js`. The renderer's tests run the installed copy and skip when there isn't one; to run them without
+touching your install, point `HERDR_MERMAID_HOME` at one. The patch tests apply each patch to Herdr 0.1.12's shipped
+mods, read from `${HERDR_APP_HOME:-~/.config/herdr-app}` (Herdr rewrites them on every start), and skip when the
+files there are not exactly 0.1.12's.
 
 ## Before open-sourcing
 
@@ -251,9 +287,12 @@ The patch tests apply each patch to Herdr 0.1.12's shipped mods, read from `${HE
   rewritten the way a clone does it (simulated, not cloned by Herdr), and by loading the mod against test mocks;
   nothing here has been run inside the app or in another version. The keys rely on `mod.open` showing each mod as
   its `mod.json` overlay says (the companion's 2 px frameless popup included). Say so in the compatibility notes.
-- **Icon provenance.** Thirteen icons are from lucide-static 1.69.0; four more match the path data of current
+- **Icon provenance.** Fourteen icons are from lucide-static 1.69.0; four more match the path data of current
   Lucide icons, but the release they were copied from was not recorded. `spinner.svg` and `dots.svg` were drawn for
   this package, and `file-markdown.svg` is the Material Icon Theme's markdown icon.
+- **Opening a file can fetch https pictures.** A markdown file can name pictures on the web, and the mod downloads
+  them with `curl` when the file opens (https only, 10 MB at most, 20 s), so the server of each one sees your address.
+  Say so, or put the download behind a setting.
 - **The installer fetches about 650 MB** (mermaid-cli and its dependencies, then a headless Chrome from the
   puppeteer download host) and runs `npm ci --ignore-scripts`. Say so before anyone runs it, and consider an
   opt-in for the Chrome download.

@@ -343,3 +343,32 @@ export function passThrough({ down, offset, maxOffset, top, h, viewH, y, minY, m
   const y1 = clamp(y - dir * (step - page), minY, maxY), back = step - page - dir * (y - y1);
   return { offset: offset + dir * (page + Math.min(back, room - page)), y: y1 };
 }
+
+// The pictures of an image paragraph: `gap` between them, and a box `boxH` high where a picture is not ready.
+export const PICTURE = { gap: 8, boxH: 40 };
+// A scaled width can come out a hair under the whole number it was scaled to.
+const SCALE_SLACK = 1e-9;
+
+function pictureSize(item, width) {
+  if (item.state !== "ok" || !(item.natW > 0 && item.natH > 0)) return { w: width, h: PICTURE.boxH };
+  const scale = Math.min(1, width / item.natW);
+  return { w: Math.max(1, Math.floor(item.natW * scale + SCALE_SLACK)), h: Math.max(1, Math.round(item.natH * scale)) };
+}
+
+// `items` are { state, natW, natH }. A picture keeps its size, shrunk to `width` and never enlarged; they flow left to
+// right and wrap, rows `gap` apart, each as tall as its tallest and each picture at its top. -> { boxes: [{ x, y, w, h }],
+// height }.
+export function pictureLayout(items, width) {
+  const boxes = [];
+  let x = 0, y = 0, rowH = 0;
+  for (const item of items) {
+    const { w, h } = pictureSize(item, width);
+    if (rowH > 0) {
+      if (x + PICTURE.gap + w > width) { y += rowH + PICTURE.gap; x = 0; rowH = 0; } else x += PICTURE.gap;
+    }
+    boxes.push({ x, y, w, h });
+    x += w;
+    rowH = Math.max(rowH, h);
+  }
+  return { boxes, height: y + rowH };
+}

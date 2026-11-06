@@ -18,10 +18,10 @@ function typing(before, typed) {
   return { menu, value };
 }
 
-test("the menu lists twelve commands in order, each with a name, aliases, a hint and an icon file that exists", () => {
-  assert.deepEqual(ids(COMMANDS), ["text", "h1", "h2", "h3", "ul", "ol", "todo", "quote", "code", "mermaid", "table", "hr"]);
-  assert.deepEqual(COMMANDS.map(c => c.name), ["Text", "Heading 1", "Heading 2", "Heading 3", "Bulleted list", "Numbered list", "To-do list", "Quote", "Code block", "Mermaid diagram", "Table", "Divider"]);
-  assert.deepEqual(COMMANDS.map(c => c.hint), ["", "#", "##", "###", "-", "1.", "[ ]", ">", "```", "mermaid", "|", "---"]);
+test("the menu lists thirteen commands in order, each with a name, aliases, a hint and an icon file that exists", () => {
+  assert.deepEqual(ids(COMMANDS), ["text", "h1", "h2", "h3", "ul", "ol", "todo", "quote", "code", "mermaid", "image", "table", "hr"]);
+  assert.deepEqual(COMMANDS.map(c => c.name), ["Text", "Heading 1", "Heading 2", "Heading 3", "Bulleted list", "Numbered list", "To-do list", "Quote", "Code block", "Mermaid diagram", "Image", "Table", "Divider"]);
+  assert.deepEqual(COMMANDS.map(c => c.hint), ["", "#", "##", "###", "-", "1.", "[ ]", ">", "```", "mermaid", "![]()", "|", "---"]);
   assert.equal(new Set(ids(COMMANDS)).size, COMMANDS.length, "ids are unique");
   for (const c of COMMANDS) {
     assert.ok(c.aliases.length > 0, c.id);
@@ -38,7 +38,16 @@ test("the menu lists twelve commands in order, each with a name, aliases, a hint
   }
 });
 
-test("an empty query lists all twelve; a name, an alias, a word of the name, then anything containing the query", () => {
+test("Image is found by its name, img, pic, picture, photo and the start of its marker; it writes an empty image with the caret in the parentheses", () => {
+  for (const query of ["image", "IMG", "pic", "picture", "photo", "!", "![]"]) assert.deepEqual(ids(matches(query)), ["image"], query);
+  assert.equal(ids(matches("im"))[0], "image");
+  assert.equal(ids(matches("i"))[0], "image", "a name that starts with the query comes before the ones that contain it");
+  const image = COMMANDS.find(c => c.id === "image");
+  assert.deepEqual([image.lines, image.caret, image.icon], [["![]()"], 4, "image"]);
+  assert.equal(image.lines[0][image.caret - 1] + image.lines[0][image.caret], "()", "between the parentheses");
+});
+
+test("an empty query lists all thirteen; a name, an alias, a word of the name, then anything containing the query", () => {
   assert.deepEqual(matches(""), COMMANDS);
   assert.deepEqual(ids(matches("h")).slice(0, 3), ["h1", "h2", "h3"], "the three headings first");
   assert.deepEqual(ids(matches("H2")), ["h2"], "any case");
@@ -105,7 +114,7 @@ test("deleting the slash, an edit after the query, a newline, a leading space or
 test("the highlight wraps on Up and Down, returns to the first row whenever the list changes, and the drawn window follows it", () => {
   let menu = opened;
   menu = step(menu, -1);
-  assert.equal(menu.index, 11, "up from the first row: the last");
+  assert.equal(menu.index, 12, "up from the first row: the last");
   menu = step(menu, 1);
   assert.equal(menu.index, 0, "down from the last row: the first");
   menu = step(step(menu, 1), 1);
@@ -120,7 +129,7 @@ test("the highlight wraps on Up and Down, returns to the first row whenever the 
   for (let k = 0; k < 5; k++) win = step(win, -1, 4);
   assert.deepEqual([win.index, win.first], [1, 1], "and starts at it going up");
   win = step({ ...win, index: 0, first: 0 }, -1, 4);
-  assert.deepEqual([win.index, win.first], [11, 8], "wrapping up shows the last four");
+  assert.deepEqual([win.index, win.first], [12, 9], "wrapping up shows the last four");
   assert.equal(follow(5, 2, 4, 12), 2);
   assert.equal(follow(0, 3, 4, 12), 0);
   assert.equal(follow(9, 11, 4, 5), 1, "never past the end of a short list");

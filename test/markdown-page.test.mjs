@@ -25,8 +25,9 @@ function drawn(text, i, more = {}) {
   };
   const owner = {
     fonts: { sans: ".SystemUIFont", mono: "Mono" }, field: TextareaState.new({ value: "" }), spare: TextareaState.new({ value: "" }),
-    remote: false, shown: new Map(), good: new Map(), links: [], sizes: [],
+    remote: false, shown: new Map(), good: new Map(), links: [], sizes: [], layouts: new Map(),
     link(url) { this.links.push(url); }, blockSized(key, size) { this.sizes.push([key, size]); },
+    pictureOf(key, width) { this.asked = [key, width]; return this.layouts.get(key) ?? { items: [], boxes: [], height: 0 }; },
   };
   return { d, owner, el: renderBlock(owner, d), b };
 }
@@ -35,7 +36,7 @@ test("how Reading draws each kind, in which type and colour", () => {
   const doc = "---\na: 1\n---\n# H\n\np\n\n![x](y.png)\n\n- i\n\n> q\n\n```js\nc\n```\n\n```mermaid\ngraph TD\n```\n\n| a |\n|---|\n| b |\n\n<div>h</div>\n\n<!-- c -->\n\n[r]: /u\n\n***\n";
   assert.deepEqual(blocksOf(doc).map(b => [b.kind, ...Object.values(lookOf(b))]), [
     ["frontmatter", "small", "muted", "front"], ["heading", "h1", "foreground", "text"], ["paragraph", "p", "foreground", "text"],
-    ["paragraph", "small", "dim", "lines"], ["item", "p", "foreground", "text"], ["quote", "p", "foreground", "text"],
+    ["paragraph", "small", "dim", "picture"], ["item", "p", "foreground", "text"], ["quote", "p", "foreground", "text"],
     ["code", "mono", "foreground", "code"], ["mermaid", "mono", "foreground", "diagram"], ["table", "mono", "foreground", "boxed"],
     ["html", "mono", "foreground", "boxed"], ["html", "small", "dim", "lines"], ["definition", "small", "dim", "lines"], ["hr", "p", "muted", "rule"],
   ]);
@@ -179,4 +180,47 @@ test("a drawn diagram is a frame from its block's data and the editor's view: th
   const selected = renderBlock(owner, { ...d, selected: true });
   assert.equal(selected.__node.style.bg, undefined, "the frame draws the selection tint, not the block");
   assert.ok(find(selected, `md-frame-tint-${d.key}`));
+});
+
+const SHOT = { alt: "shot", src: "shot.png", href: null, state: "ok", path: "data/herdr-inline-markdown/images/aa.png", width: 300, height: 100, error: null };
+const BADGE = { alt: "badge", src: "b.svg", href: "https://e.com", state: "ok", path: "data/herdr-inline-markdown/images/bb.svg", width: 80, height: 20, error: null };
+
+const BOXES = [{ x: 0, y: 0, w: 300, h: 100 }, { x: 308, y: 0, w: 80, h: 20 }];
+
+function pictured(items, more = {}) {
+  const shown = drawn("![shot](shot.png)\n\nafter\n", 0, { pictureW: 600, ...more });
+  shown.owner.layouts.set(shown.d.key, { items, boxes: BOXES.slice(0, items.length), height: 100 });
+  return { ...shown, el: renderBlock(shown.owner, shown.d) };
+}
+
+test("a picture block draws what the owner has for its key and width, in a box as tall as the layout", () => {
+  const { el, owner, d } = pictured([SHOT, BADGE]);
+  assert.deepEqual(owner.asked, [d.key, 600]);
+  assert.equal(el.__node.id, `md-block-${d.key}`);
+  const box = find(el, `md-pictures-${d.key}`);
+  assert.deepEqual([box.style.relative, box.style.w_full, box.style.h], [true, true, 100]);
+  const images = all(box, n => n.kind === "image");
+  assert.deepEqual(images.map(n => [n.path, n.style.left, n.style.top, n.style.w, n.style.h]), [
+    [SHOT.path, 0, 0, 300, 100], [BADGE.path, 308, 0, 80, 20]]);
+  assert.deepEqual(images.map(n => n.style.cursor_pointer), [undefined, true], "only the linked picture has the hand");
+});
+
+test("a rendered picture block has the default pointer, and the selection tint is on each picture, not on the root", () => {
+  const { el } = pictured([SHOT]);
+  assert.deepEqual([el.__node.style.cursor_default, el.__node.style.cursor_text, el.__node.style.cursor_pointer], [true, undefined, undefined]);
+  assert.equal(el.__node.style.bg, undefined);
+  assert.equal(all(el, n => n.id?.endsWith("-tint")).length, 0);
+  const { el: chosen, d } = pictured([SHOT, BADGE], { selected: true });
+  assert.equal(chosen.__node.style.bg, undefined, "no tint on the root");
+  assert.deepEqual(all(chosen, n => n.id?.endsWith("-tint")).map(n => n.id), [`md-pictures-${d.key}-0-tint`, `md-pictures-${d.key}-1-tint`]);
+});
+
+test("a picture block being edited shows its source in the small field, with the text cursor and the root's selection tint", () => {
+  const { el, owner, d } = pictured([SHOT], { mode: "active", selected: true });
+  const wrap = find(el, `md-field-${d.key}`), input = all(wrap, n => n.kind === "textarea")[0];
+  assert.equal(input.state, owner.field);
+  assert.deepEqual([input.style.font_family, input.style.text_size, input.style.text_color], ["Mono", STYLES.small.size, "dim"]);
+  assert.equal(el.__node.style.cursor_text, true);
+  assert.equal(el.__node.style.bg, "selection");
+  assert.equal(all(el, n => n.kind === "image").length, 0);
 });

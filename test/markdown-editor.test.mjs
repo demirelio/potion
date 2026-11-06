@@ -1,8 +1,11 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { state, calls, reset } from "./mocks/herdr.mjs";
+import { files, log, hold } from "./mocks/fs.mjs";
 import { all, find, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, fire_timers, space, must } from "./helpers.mjs";
+import { png } from "./pictures.mjs";
 
 const { Editor } = await import("../mods/herdr-inline-markdown/editor.js");
 const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
@@ -14,6 +17,7 @@ const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, INSTALLED } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
+const { PICTURE, pictureLayout } = await import("../mods/herdr-inline-markdown/geometry.js");
 
 const FILE = "/n/docs/note.md";
 const DOC = "# Title\n\nHello **world**.\n\n```mermaid\ngraph TD\nA-->B\n```\n\nBye\n";
@@ -2391,6 +2395,194 @@ test("on a file of another machine a frame whose picture fits has the grab curso
   assert.equal(m.view.activeKey, null);
 });
 
+const DIR = "/n/docs", SHOT = png(40, 30);
+const PICDOC = "# Title\n\n![x](a.png)\n\nBye\n";
+const LINKED = "# Title\n\n[![x](a.png)](https://e.com/page)\n\nBye\n";
+const cached = (bytes, ext = "png") => `data/herdr-inline-markdown/images/${createHash("sha256").update(bytes).digest("hex").slice(0, 16)}.${ext}`;
+const picsOf = (m, i = 1) => `md-pictures-${keyAt(m, i)}`;
+const serveDownloads = bytes => {
+  state.exec = async (command, args) => {
+    if (command === "curl") files.set(args[args.indexOf("-o") + 1], bytes);
+    return { code: 0, stdout: "", stderr: "" };
+  };
+};
+
+// Pictures are loaded when the page first draws; every block is then measured as drawn.
+async function pictured(disk = PICDOC, { file, machine, bytes = SHOT } = {}) {
+  files.set(`${DIR}/a.png`, bytes);
+  const m = await mount({ disk, file, machine });
+  viewportOf(m, 900, 600);
+  await flush();
+  const sizes = {};
+  m.view.blocks.forEach((b, i) => {
+    const d = m.view.data.get(b.key);
+    sizes[i] = d.look === "picture" ? d.space + d.pictureH : 30;
+  });
+  await heights(m, sizes);
+  return m;
+}
+const onPicture = (m, dx = 10, i = 1) => ({ x: X + dx, y: topOf(m, i) + m.view.data.get(keyAt(m, i)).space + 10 });
+
+test("pictures: a pending box, then the picture from the cache folder at the size the layout gives, and the block's estimate is that height", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  const release = hold(`${DIR}/a.png`);
+  const m = await mount({ disk: PICDOC });
+  const key = keyAt(m, 1), id = picsOf(m);
+  assert.match(textOf(must(m.tree(), id)), /Loading picture…/);
+  const waiting = m.view.data.get(key);
+  assert.deepEqual([waiting.pictureH, m.view.estimate(m.view.blocks[1])], [PICTURE.boxH, waiting.space + PICTURE.boxH]);
+  release();
+  await flush();
+  const t = m.tree(), img = imageOf(t, id), { height } = pictureLayout([{ state: "ok", natW: 40, natH: 30 }], 716);
+  assert.equal(img.path, cached(SHOT));
+  assert.deepEqual([img.style.w, img.style.h, must(t, id).style.h], [40, 30, height]);
+  const d = m.view.data.get(key);
+  assert.deepEqual([d.pictureH, m.view.estimate(m.view.blocks[1])], [height, d.space + height]);
+  assert.equal(blockAt(m, 1, t).style.cursor_default, true);
+  audit(t);
+});
+
+test("pictures: a single click changes nothing, a double-click shows the source with the caret at its end, leaving draws the picture again", async () => {
+  const m = await pictured(), key = keyAt(m, 1);
+  assert.deepEqual([m.view.hit(onPicture(m)).on, m.view.hit(onPicture(m)).item, m.view.hit(onPicture(m, 300)).item], ["picture", 0, -1]);
+  await clickAt(m, onPicture(m));
+  assert.equal(m.view.activeKey, null);
+  await doubleClickAt(m, onPicture(m));
+  assert.equal(m.view.activeKey, key);
+  assert.equal(m.view.field.value(), "![x](a.png)");
+  assert.deepEqual(m.view.field.selection, { start: 11, end: 11 });
+  assert.equal(find(m.tree(), picsOf(m)), null, "the source is shown in its place");
+  escape(m);
+  assert.equal(imageOf(m.tree(), picsOf(m)).path, cached(SHOT));
+});
+
+test("pictures: a click on a picture opens nothing while another block is being edited, and the keyboard stays there", async () => {
+  const m = await pictured();
+  await clickAt(m, { x: X + 20, y: topOf(m, 2) + 10 });
+  assert.equal(m.view.activeKey, keyAt(m, 2));
+  m.view.field.focused = false;
+  await clickAt(m, onPicture(m));
+  assert.deepEqual([m.view.activeKey, m.view.field.focused], [keyAt(m, 2), true]);
+});
+
+test("pictures: a click on a linked picture opens its link, on a file that cannot be edited too, and a double-click never edits it", async () => {
+  const m = await pictured(LINKED);
+  assert.equal(m.view.hit(onPicture(m)).item, 0);
+  await clickAt(m, onPicture(m));
+  assert.deepEqual([m.cx.opened, m.view.activeKey], [["https://e.com/page"], null]);
+  await doubleClickAt(m, onPicture(m));
+  assert.deepEqual([m.cx.opened.length, m.view.activeKey], [2, null], "the first click of a double-click opens it, the second does nothing");
+  m.view.locked = "Read-only: unusual characters";
+  await clickAt(m, onPicture(m));
+  assert.equal(m.cx.opened.length, 3);
+  assert.equal(imageOf(m.tree(), picsOf(m)).style.cursor_pointer, true);
+});
+
+test("pictures: a picture file that changes on disk is read again and drawn from its new cache path; another file's event reads nothing", async () => {
+  const m = await pictured(), id = picsOf(m), bigger = png(60, 20);
+  assert.deepEqual(log.readFile, [`${DIR}/a.png`]);
+  await m.touch([`${DIR}/other.txt`]);
+  assert.deepEqual(log.readFile, [`${DIR}/a.png`], "nothing was read");
+  assert.equal(imageOf(m.tree(), id).path, cached(SHOT));
+  files.set(`${DIR}/a.png`, bigger);
+  await m.touch([`${DIR}/a.png`]);
+  assert.deepEqual(log.readFile, [`${DIR}/a.png`, `${DIR}/a.png`]);
+  const img = imageOf(m.tree(), id);
+  assert.deepEqual([img.path, img.style.w, img.style.h], [cached(bigger), 60, 20]);
+  assert.equal(m.view.data.get(keyAt(m, 1)).pictureH, 20);
+});
+
+test("pictures: a picture that changes on disk stays until the new one is in, with no pending box and no jump; one that is gone shows its error", async () => {
+  const m = await pictured(), id = picsOf(m), key = keyAt(m, 1), bigger = png(60, 20);
+  files.set(`${DIR}/a.png`, bigger);
+  const release = hold(`${DIR}/a.png`);
+  await m.touch([`${DIR}/a.png`]);
+  assert.equal(log.readFile.length, 2, "the new bytes are being read");
+  assert.doesNotMatch(textOf(must(m.tree(), id)), /Loading/);
+  assert.deepEqual([imageOf(m.tree(), id).path, m.view.data.get(key).pictureH], [cached(SHOT), 30]);
+  release();
+  await flush();
+  const img = imageOf(m.tree(), id);
+  assert.deepEqual([img.path, img.style.w, img.style.h, m.view.data.get(key).pictureH], [cached(bigger), 60, 20, 20]);
+  files.delete(`${DIR}/a.png`);
+  await m.touch([`${DIR}/a.png`]);
+  assert.equal(textOf(must(m.tree(), id)).trim(), "x: Not found", "only a load in progress is covered up");
+});
+
+test("pictures: another address in the paragraph does not keep the old picture while the new one loads", async () => {
+  const m = await pictured(), key = keyAt(m, 1), other = png(60, 20);
+  files.set(`${DIR}/b.png`, other);
+  const release = hold(`${DIR}/b.png`);
+  state.disk.set(FILE, PICDOC.replace("a.png", "b.png"));
+  await m.touch([FILE]);
+  assert.equal(keyAt(m, 1), key, "the same block");
+  assert.match(textOf(must(m.tree(), picsOf(m))), /Loading picture…/);
+  assert.equal(imageOf(m.tree(), picsOf(m)), undefined);
+  release();
+  await flush();
+  assert.equal(imageOf(m.tree(), picsOf(m)).path, cached(other));
+});
+
+test("pictures: a missing picture shows its error box, and the picture appears once the file exists and the watcher says so", async () => {
+  const m = await mount({ disk: PICDOC });
+  assert.equal(textOf(must(m.tree(), picsOf(m))).trim(), "x: Not found");
+  assert.equal(m.view.data.get(keyAt(m, 1)).pictureH, PICTURE.boxH);
+  files.set(`${DIR}/a.png`, SHOT);
+  await m.touch([`${DIR}/a.png`]);
+  assert.equal(imageOf(m.tree(), picsOf(m)).path, cached(SHOT));
+});
+
+test("pictures: on a file of another machine local pictures show the error box and nothing is read, while https pictures load", async () => {
+  files.set("/home/dev/a.png", SHOT);
+  const web = png(80, 20);
+  serveDownloads(web);
+  const doc = "# Title\n\n![x](a.png)\n\n[![w](https://e.com/w.png)](https://e.com/page)\n\nBye\n";
+  const m = await mount({ file: "/home/dev/n.md", machine: "devbox", disk: doc });
+  viewportOf(m, 900, 600);
+  await flush();
+  assert.equal(textOf(must(m.tree(), picsOf(m))).trim(), "x: Pictures on another machine aren't shown yet");
+  assert.equal(imageOf(m.tree(), picsOf(m, 2)).path, cached(web));
+  assert.deepEqual(log.readFile.filter(path => !path.endsWith(".part")), [], "no picture file was read");
+  const sizes = {};
+  m.view.blocks.forEach((b, i) => { const d = m.view.data.get(b.key); sizes[i] = d.look === "picture" ? d.space + d.pictureH : 30; });
+  await heights(m, sizes);
+  await doubleClickAt(m, onPicture(m));
+  assert.equal(m.view.activeKey, null);
+  await clickAt(m, onPicture(m, 10, 2));
+  assert.deepEqual(m.cx.opened, ["https://e.com/page"], "its link opens on a read-only file");
+});
+
+test("pictures: a narrower pane shrinks them to the column and the block's estimate follows; they are never enlarged", async () => {
+  const wide = png(1000, 500), m = await pictured(PICDOC, { bytes: wide }), id = picsOf(m);
+  assert.deepEqual([imageOf(m.tree(), id).style.w, imageOf(m.tree(), id).style.h], [716, 358]);
+  fire(must(m.tree(), "md-root"), "on_size_change", { width: 464, height: 700 }, m.cx);
+  const img = imageOf(m.tree(), id), d = m.view.data.get(keyAt(m, 1));
+  assert.deepEqual([img.style.w, img.style.h, must(m.tree(), id).style.h], [400, 200, 200]);
+  assert.equal(m.view.estimate(m.view.blocks[1]), d.space + 200);
+});
+
+test("pictures: a picture inside a list item is laid out in the column less the indent, and a point left of it is no picture", async () => {
+  const m = await pictured("- item\n\n  ![x](a.png)\n", { bytes: png(716, 100) });
+  const img = imageOf(m.tree(), picsOf(m)), key = keyAt(m, 1);
+  assert.deepEqual([img.style.w, img.style.h], [716 - INDENT, Math.round((100 * (716 - INDENT)) / 716)]);
+  assert.equal(m.view.data.get(key).pictureW, 716 - INDENT);
+  assert.deepEqual([m.view.hit(onPicture(m, INDENT + 5)).item, m.view.hit(onPicture(m, 5)).item], [0, -1]);
+});
+
+test("pictures: one that arrives while the source is shown is there when Reading is back; closing the pane stops the loads", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  const release = hold(`${DIR}/a.png`);
+  const m = await mount({ disk: PICDOC });
+  await m.click("md-markdown");
+  assert.equal(m.view.mode, "markdown");
+  release();
+  await flush();
+  await m.click("md-markdown");
+  assert.equal(imageOf(m.tree(), picsOf(m)).path, cached(SHOT));
+  await m.view.close(m.cx);
+  assert.equal(m.view.images.closed, true);
+});
+
 test("a frame's view survives a theme switch, an edit elsewhere, and opening its source then Escape", async () => {
   const m = await framed({ width: 6000, height: 800 });
   const key = keyAt(m, 2), f = frameOn(m);
@@ -2736,6 +2928,8 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.equal(must(t, `md-field-${armed.key}`).style.key_context, undefined, "only the active field has the block keys");
   assert.ok(find(t, "md-cal"), "the calibration strip");
   assert.ok(find(t, `md-diagram-${view.doc.blocks.find(b => b.kind === "mermaid").key}`));
+  const picture = imageOf(t, `md-pictures-${view.doc.blocks.find(b => b.image).key}`);
+  assert.deepEqual([picture.path, picture.style.w, picture.style.h], ["mods/herdr-inline-markdown/file-markdown.svg", 32, 32], "a real picture, so check draws an image");
   audit(t);
 });
 
@@ -5583,7 +5777,7 @@ test("a marker typed alone into a block not written yet is written as typed on E
   }
 });
 
-const SLASH_ROWS = ["text", "h1", "h2", "h3", "ul", "ol", "todo", "quote", "code", "mermaid", "table", "hr"];
+const SLASH_ROWS = ["text", "h1", "h2", "h3", "ul", "ol", "todo", "quote", "code", "mermaid", "image", "table", "hr"];
 const THREE = "Intro\n\nWords\n\nOutro\n";
 const typed =(m, text) => { for (const ch of text) m.view.field.type(ch, m.cx); };
 const menuOf = m => find(m.tree(), "md-slash");
@@ -5601,7 +5795,7 @@ async function slashed(m, i, query, at) {
   act(m, "mdb-enter");
 }
 
-test("typing / at the start of a paragraph opens the menu under the caret row with twelve rows, and the field's wrapper declares 'MdText2 rows=one menu=open'", async () => {
+test("typing / at the start of a paragraph opens the menu under the caret row with thirteen rows, and the field's wrapper declares 'MdText2 rows=one menu=open'", async () => {
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   assert.equal(menuOf(m), null);
@@ -5882,6 +6076,35 @@ test("/mermaid writes the starter flowchart, the block shows its source with the
   await flush();
   assert.ok(find(m.tree(), `md-diagram-${key}`), "drawn once left");
   assert.ok(m.view.shown.has(key), "the diagram was asked for");
+});
+
+test("/img writes an empty image with the caret between the parentheses; the address typed there is drawn once the block is left", async () => {
+  files.set(`${DIR}/a.png`, SHOT);
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  typed(m, "/img");
+  assert.deepEqual(slashRows(m), ["image"]);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Intro\n\n![]()\n\nOutro\n");
+  const key = m.view.activeKey;
+  assert.equal(m.view.blockByKey(key).image, true);
+  assert.deepEqual(editing(m), [key, "![]()", { start: 4, end: 4 }]);
+  typed(m, "a.png");
+  assert.equal(m.view.text, "Intro\n\n![](a.png)\n\nOutro\n");
+  escape(m);
+  await flush();
+  assert.equal(imageOf(m.tree(), `md-pictures-${key}`).path, cached(SHOT));
+});
+
+test("an image left without an address is drawn as a box called Picture", async () => {
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  typed(m, "/image");
+  act(m, "mdb-enter");
+  const key = m.view.activeKey;
+  escape(m);
+  await flush();
+  assert.equal(textOf(must(m.tree(), `md-pictures-${key}`)).trim(), "Picture: No picture address");
 });
 
 test("/table writes a 3-column table with one empty row and selects 'Column 1'; Tab then selects 'Column 2'", async () => {

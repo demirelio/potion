@@ -9,9 +9,10 @@ import {
   MARKDOWN_EXT, isMarkdown, hash, dirname, basename, joinPath, normalizePath, tildePath, resolveLink,
   filterFiles, newFileName, uniqueName, fileKey, stats, modeOf, toggleMode, remember, trimMap,
   markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, isLight, mix, mermaidConfig, diagramKey, DIAGRAM_COLORS, sharpName,
-  toSource, sourceToDoc, docToSource, sourceSplice, eolOf,
+  toSource, sourceToDoc, docToSource, sourceSplice, eolOf, picturesOf, pictureSource, touches,
 } from "../mods/herdr-inline-markdown/lib.js";
-import { diff } from "../mods/herdr-inline-markdown/blocks.js";
+import { diff, parse } from "../mods/herdr-inline-markdown/blocks.js";
+import { corpus } from "./markdown-corpus.mjs";
 
 const sh = promisify(execFile);
 
@@ -441,4 +442,98 @@ test("diagramKey changes with the source, the config and the renderer version", 
   assert.notEqual(base, diagramKey("graph TD\nA-->B", '{"a":1}', "mmdc-12.2.0+abcd1235"));
   assert.notEqual(diagramKey("b", "a", "v"), diagramKey("ab", "", "v"), "the parts cannot slide into each other");
   assert.notEqual(diagramKey("x", "", "v1"), diagramKey("1x", "", "v"), "the parts cannot slide into each other");
+});
+
+test("picturesOf: one entry per image, with its alt, its address, and the link it sits in", () => {
+  assert.deepEqual(picturesOf("![logo](img/logo.png)"), [{ alt: "logo", src: "img/logo.png", href: null }]);
+  assert.deepEqual(picturesOf("[![build](https://x.io/b.svg)](https://x.io/ci)"), [{ alt: "build", src: "https://x.io/b.svg", href: "https://x.io/ci" }]);
+  assert.deepEqual(picturesOf("[![a](x.svg)](y) ![b](z.png)\t[![](w.png)](v)\n![c](u.png)"), [
+    { alt: "a", src: "x.svg", href: "y" }, { alt: "b", src: "z.png", href: null }, { alt: "", src: "w.png", href: "v" }, { alt: "c", src: "u.png", href: null },
+  ]);
+});
+
+test("picturesOf: a title and the <…> around an address are dropped, and the spaces around it", () => {
+  const src = text => picturesOf(text)[0].src;
+  assert.equal(src('![a](x.png "A title")'), "x.png");
+  assert.equal(src("![a](x.png 'A title')"), "x.png");
+  assert.equal(src("![a](  x.png  )"), "x.png");
+  assert.equal(src("![a](<my pics/x y.png>)"), "my pics/x y.png");
+  assert.equal(src('![a](<x y.png> "t")'), "x y.png");
+  assert.equal(src("![a](<  x.png  >)"), "x.png");
+  assert.equal(src("![a]()"), "");
+  assert.equal(src("![a](<>)"), "");
+  const linked = picturesOf('[![a](x.png "t")](<https://x.io/a b> "t2")')[0];
+  assert.deepEqual(linked, { alt: "a", src: "x.png", href: "https://x.io/a b" });
+});
+
+test("picturesOf: an empty link address is no link", () => {
+  assert.equal(picturesOf("[![a](x.png)]()")[0].href, null);
+  assert.equal(picturesOf("[![a](x.png)](<>)")[0].href, null);
+});
+
+test("picturesOf: anything that is not only images is []", () => {
+  for (const text of ["", "plain text", "![a](x.png) and text", "text ![a](x.png)", "[![a](x.png)]", "![a](x(1).png)", "[a](b)", "![a][ref]", "<img src=\"a.png\">", "![a](x.png)\n\n![b](y.png)"]) {
+    assert.deepEqual(picturesOf(text), [], JSON.stringify(text));
+  }
+  assert.deepEqual(picturesOf(undefined), []);
+});
+
+test("picturesOf: finds an image in every image-only paragraph of the CommonMark and GFM examples and the documents", () => {
+  let images = 0, others = 0;
+  for (const c of corpus()) {
+    for (const b of parse(c.text).blocks) {
+      if (b.image) {
+        images++;
+        assert.ok(picturesOf(b.content).length > 0, `${c.name}: ${JSON.stringify(b.content)}`);
+      } else if (b.kind === "paragraph") {
+        others++;
+        assert.deepEqual(picturesOf(b.content), [], `${c.name}: ${JSON.stringify(b.content)}`);
+      }
+    }
+  }
+  assert.ok(images > 20 && others > 500, `${images} image paragraphs, ${others} other paragraphs`);
+});
+
+test("pictureSource: a path is relative to the document, absolute, or a file:// address, and loses its ?query and #fragment", () => {
+  const file = "/n/docs/a.md";
+  assert.deepEqual(pictureSource("img/x.png", file), { kind: "file", path: "/n/docs/img/x.png" });
+  assert.deepEqual(pictureSource("./x.png", file), { kind: "file", path: "/n/docs/x.png" });
+  assert.deepEqual(pictureSource("../x.png", file), { kind: "file", path: "/n/x.png" });
+  assert.deepEqual(pictureSource("/abs/x.png", file), { kind: "file", path: "/abs/x.png" });
+  assert.deepEqual(pictureSource("img/my%20pic.png?raw=true#top", file), { kind: "file", path: "/n/docs/img/my pic.png" });
+  assert.deepEqual(pictureSource("file:///abs/my%20pic.png", file), { kind: "file", path: "/abs/my pic.png" });
+  assert.deepEqual(pictureSource("file://localhost/abs/x.png", file), { kind: "file", path: "/abs/x.png" });
+});
+
+test("pictureSource: a path that ends like a Markdown file is still a file", () => {
+  assert.deepEqual(pictureSource("notes.md", "/n/a.md"), { kind: "file", path: "/n/notes.md" });
+});
+
+test("pictureSource: https is a web picture and keeps its query; a data: address is a data picture", () => {
+  assert.deepEqual(pictureSource("https://img.shields.io/badge/a-b.svg?style=flat#x", "/n/a.md"), { kind: "web", url: "https://img.shields.io/badge/a-b.svg?style=flat#x" });
+  assert.deepEqual(pictureSource("HTTPS://X.IO/a.png", "/n/a.md"), { kind: "web", url: "HTTPS://X.IO/a.png" });
+  assert.deepEqual(pictureSource("data:image/png;base64,AAAA", "/n/a.md"), { kind: "data", url: "data:image/png;base64,AAAA" });
+  assert.deepEqual(pictureSource("DATA:image/svg+xml,%3Csvg/%3E", "/n/a.md"), { kind: "data", url: "DATA:image/svg+xml,%3Csvg/%3E" });
+});
+
+test("pictureSource: no address, http, an anchor and other schemes say why there is no picture", () => {
+  const why = src => pictureSource(src, "/n/a.md");
+  assert.deepEqual(why(""), { kind: "none", why: "No picture address" });
+  assert.deepEqual(why("   "), { kind: "none", why: "No picture address" });
+  assert.deepEqual(why("http://x.io/a.png"), { kind: "none", why: "Pictures load over https only" });
+  assert.deepEqual(why("HTTP://x.io/a.png"), { kind: "none", why: "Pictures load over https only" });
+  assert.deepEqual(why("#top"), { kind: "none", why: "Not a picture address" });
+  assert.deepEqual(why("mailto:me@x.io"), { kind: "none", why: "Can't show a picture from mailto:" });
+  assert.deepEqual(why("ftp://x.io/a.png"), { kind: "none", why: "Can't show a picture from ftp:" });
+  assert.deepEqual(why("FTP://x.io/a.png"), { kind: "none", why: "Can't show a picture from ftp:" });
+});
+
+test("touches: a reported path is the file, a folder above it (the root is all of them), or a path with the file's name", () => {
+  const file = "/n/docs/pic.png";
+  for (const path of [file, "/n/docs", "/n/docs/", "/n", "/", "/private/n/docs/pic.png"]) assert.ok(touches(path, file), path);
+  for (const path of ["/n/doc", "/n/docs2", "/n/docs/pi", "/n/docs/pic.png2", "/other/place.png"]) assert.ok(!touches(path, file), path);
+});
+
+test("pictureSource: an address that is not a place on this machine is not a picture address", () => {
+  for (const src of ["//cdn.x.io/a.png", "file://other-host/a.png", "file:", "?v=2"]) assert.deepEqual(pictureSource(src, "/n/a.md"), { kind: "none", why: "Not a picture address" }, src);
 });

@@ -4,7 +4,7 @@ import {
   pressToField, snapToWord, tableCells, nextCell, caretRow, isOneRow, columnX, maxOffset, clampOffset, prefixSums, blockAt,
   estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
-  sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX,
+  sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, PICTURE, pictureLayout,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 
@@ -357,4 +357,80 @@ test("the slash menu's left edge is the field's left at offset 0, follows the sl
   assert.equal(slashX({ ...base, col: 80, fieldW: 700 }), 900 - MENU.w - 8, "kept inside the pane on the right");
   assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 1600 }), columnLeft(1600), "the column's left in a wide pane");
   assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 290 }), 290 - MENU.w - 8, "a pane narrower than column and menu: the menu stays in the pane");
+});
+
+const ok = (natW, natH) => ({ state: "ok", natW, natH });
+const pending = { state: "pending", natW: 0, natH: 0 };
+const failed = { state: "error", natW: 0, natH: 0 };
+
+test("pictureLayout: no pictures take no room", () => {
+  assert.deepEqual(pictureLayout([], 700), { boxes: [], height: 0 });
+});
+
+test("pictureLayout: a picture keeps its own size, shrinks to the width, and is never enlarged", () => {
+  assert.deepEqual(pictureLayout([ok(200, 100)], 700), { boxes: [{ x: 0, y: 0, w: 200, h: 100 }], height: 100 });
+  assert.deepEqual(pictureLayout([ok(1600, 900)], 800), { boxes: [{ x: 0, y: 0, w: 800, h: 450 }], height: 450 });
+  assert.deepEqual(pictureLayout([ok(10, 10)], 700), { boxes: [{ x: 0, y: 0, w: 10, h: 10 }], height: 10 });
+  assert.deepEqual(pictureLayout([ok(700, 20)], 700).boxes, [{ x: 0, y: 0, w: 700, h: 20 }], "exactly the width");
+});
+
+test("pictureLayout: a shrunk picture's height is rounded, its width never undershoots the column", () => {
+  assert.deepEqual(pictureLayout([ok(1000, 333)], 300).boxes, [{ x: 0, y: 0, w: 300, h: 100 }]);
+  for (const [natW, width] of [[49, 7], [147, 21], [1234, 617], [3000, 1001]]) assert.equal(pictureLayout([ok(natW, 5)], width).boxes[0].w, width, `${natW} into ${width}`);
+});
+
+test("pictureLayout: a picture is at least 1 px each way", () => {
+  assert.deepEqual(pictureLayout([ok(1, 1)], 700).boxes, [{ x: 0, y: 0, w: 1, h: 1 }]);
+  assert.deepEqual(pictureLayout([ok(5000, 1)], 100).boxes, [{ x: 0, y: 0, w: 100, h: 1 }], "a hairline stays one pixel high");
+});
+
+test("pictureLayout: pictures that fit side by side share a row, a gap apart", () => {
+  const layout = pictureLayout(Array.from({ length: 5 }, () => ok(90, 20)), 700);
+  assert.deepEqual(layout.boxes.map(b => [b.x, b.y]), [[0, 0], [98, 0], [196, 0], [294, 0], [392, 0]]);
+  assert.equal(PICTURE.gap, 8);
+  assert.equal(layout.height, 20);
+});
+
+test("pictureLayout: a picture that no longer fits starts a new row, a gap below the tallest of the one above", () => {
+  const layout = pictureLayout([ok(300, 100), ok(300, 60), ok(300, 40), ok(100, 10)], 700);
+  assert.deepEqual(layout.boxes, [
+    { x: 0, y: 0, w: 300, h: 100 }, { x: 308, y: 0, w: 300, h: 60 },
+    { x: 0, y: 108, w: 300, h: 40 }, { x: 308, y: 108, w: 100, h: 10 },
+  ]);
+  assert.equal(layout.height, 148);
+});
+
+test("pictureLayout: a picture that ends exactly at the width stays in the row; one pixel more wraps", () => {
+  assert.deepEqual(pictureLayout([ok(296, 10), ok(296, 10)], 600).boxes.map(b => [b.x, b.y]), [[0, 0], [304, 0]]);
+  assert.deepEqual(pictureLayout([ok(296, 10), ok(297, 10)], 600).boxes.map(b => [b.x, b.y]), [[0, 0], [0, 18]]);
+});
+
+test("pictureLayout: a picture as wide as the column fills its row, and what comes after starts the next", () => {
+  const layout = pictureLayout([ok(900, 50), ok(20, 20), ok(20, 20)], 600);
+  assert.deepEqual(layout.boxes.map(b => [b.x, b.y, b.w, b.h]), [[0, 0, 600, 33], [0, 41, 20, 20], [28, 41, 20, 20]]);
+});
+
+test("pictureLayout: a picture that is not ready (pending, failed, or no size) is a box of the column's width and boxH high", () => {
+  assert.equal(PICTURE.boxH, 40);
+  assert.deepEqual(pictureLayout([pending], 300), { boxes: [{ x: 0, y: 0, w: 300, h: 40 }], height: 40 });
+  assert.deepEqual(pictureLayout([failed], 300).boxes, [{ x: 0, y: 0, w: 300, h: 40 }]);
+  assert.deepEqual(pictureLayout([ok(0, 10)], 300).boxes, [{ x: 0, y: 0, w: 300, h: 40 }]);
+  assert.deepEqual(pictureLayout([{ state: "pending", natW: 50, natH: 50 }], 300).boxes, [{ x: 0, y: 0, w: 300, h: 40 }], "a size on a pending picture is not used");
+});
+
+test("pictureLayout: ready, pending and failed pictures mixed", () => {
+  const layout = pictureLayout([ok(100, 50), pending, failed, ok(40, 30), ok(40, 30)], 300);
+  assert.deepEqual(layout.boxes, [
+    { x: 0, y: 0, w: 100, h: 50 },
+    { x: 0, y: 58, w: 300, h: 40 },
+    { x: 0, y: 106, w: 300, h: 40 },
+    { x: 0, y: 154, w: 40, h: 30 },
+    { x: 48, y: 154, w: 40, h: 30 },
+  ]);
+  assert.equal(layout.height, 184);
+});
+
+test("pictureLayout: the shrink is by the whole column, not by what is left in the row", () => {
+  const layout = pictureLayout([ok(200, 100), ok(1000, 500)], 400);
+  assert.deepEqual(layout.boxes, [{ x: 0, y: 0, w: 200, h: 100 }, { x: 0, y: 108, w: 400, h: 200 }]);
 });

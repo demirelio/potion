@@ -1,4 +1,5 @@
 // Pure helpers for the Markdown reader/editor and its picker. No imports from herdr or gpui-*: node tests load this file as it is.
+import { IMAGE_ITEM, IMAGE_ONLY } from "./blocks.js";
 
 export const MARKDOWN_EXT = /\.(md|markdown|mdown|mkd|mkdn|mdx)$/i;
 export const isMarkdown = name => MARKDOWN_EXT.test(String(name ?? ""));
@@ -85,6 +86,43 @@ export function resolveLink(url, file) {
   }
   path = normalizePath(path);
   return { kind: isMarkdown(path) ? "markdown" : "file", path };
+}
+
+// A path the watcher reports belongs to `file` when it is the file, a folder above it (a root path means "look at
+// everything"), or has its name (the watcher may spell the folder differently, /private/var for /var).
+export const touches = (path, file) => path === file || file.startsWith(path.endsWith("/") ? path : `${path}/`) || basename(path) === basename(file);
+
+// What an image or link address says before its optional title: `<…>` may hold spaces, a bare address ends at the first one.
+const destinationOf = raw => {
+  const text = raw.trim(), angled = /^<([^<>\n]*)>/.exec(text);
+  return (angled ? angled[1] : text.split(/\s/, 1)[0]).trim();
+};
+
+// -> [{ alt, src, href }], one per image of an image-only paragraph's content (`href` is null unless the image is
+// linked), else [].
+export function picturesOf(content) {
+  const text = String(content ?? "");
+  if (!IMAGE_ONLY.test(text)) return [];
+  return [...text.matchAll(IMAGE_ITEM)].map(m => (m[4] === undefined
+    ? { alt: m[1], src: destinationOf(m[2]), href: destinationOf(m[3]) || null }
+    : { alt: m[4], src: destinationOf(m[5]), href: null }));
+}
+
+const NOT_AN_ADDRESS = "Not a picture address";
+
+// `file` is the document the image is in.
+// -> { kind: "file", path } | { kind: "web", url } | { kind: "data", url } | { kind: "none", why }
+export function pictureSource(src, file) {
+  const url = String(src ?? "").trim();
+  if (!url) return { kind: "none", why: "No picture address" };
+  if (url[0] === "#") return { kind: "none", why: NOT_AN_ADDRESS };
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url)?.[1].toLowerCase();
+  if (scheme === "https") return { kind: "web", url };
+  if (scheme === "data") return { kind: "data", url };
+  if (scheme === "http") return { kind: "none", why: "Pictures load over https only" };
+  if (scheme && scheme !== "file") return { kind: "none", why: `Can't show a picture from ${scheme}:` };
+  const link = resolveLink(url, file);
+  return link.path ? { kind: "file", path: link.path } : { kind: "none", why: NOT_AN_ADDRESS };
 }
 
 // Order: a match in the file name beats one only in the path, a run of the query beats scattered letters, an earlier

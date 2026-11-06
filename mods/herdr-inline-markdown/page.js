@@ -3,6 +3,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextView } from "gpui-base";
 import { theme } from "herdr";
 import { diagramBlock } from "./diagrams.js";
+import { pictureBlock } from "./images.js";
 import { RAW, TEXT } from "./keys.js";
 
 export const owners = new Map();
@@ -38,7 +39,7 @@ export const isRaw = kind => RAW_KINDS.has(kind);
 
 export function lookOf(b) {
   if (b.kind === "heading") return { style: `h${b.level}`, color: "foreground", look: "text" };
-  if (b.kind === "paragraph" && b.image) return { style: "small", color: "dim", look: "lines" };
+  if (b.kind === "paragraph" && b.image) return { style: "small", color: "dim", look: "picture" };
   if (b.kind === "paragraph" || b.kind === "item" || b.kind === "quote") return { style: "p", color: "foreground", look: "text" };
   if (b.kind === "code") return { style: "mono", color: "foreground", look: "code" };
   if (b.kind === "mermaid") return { style: "mono", color: "foreground", look: "diagram" };
@@ -137,6 +138,7 @@ function rendered(owner, d, t) {
     const frame = view && { key: d.key, w: d.frameW, h: d.frameH, ml: d.frameMl, natW: d.natW, natH: d.natH, image: d.imgKey, dim: d.imgDim, selected: d.selected, view };
     return diagramBlock({ id: `md-diagram-${d.key}`, source: d.text, d: owner.shown.get(d.key) ?? { state: "pending" }, frame, t, mono });
   }
+  if (d.look === "picture") return pictureBlock({ id: `md-pictures-${d.key}`, ...owner.pictureOf(d.key, d.pictureW), selected: d.selected, t });
   return div().w_full().h(RULE_H).flex().items_center().child(div().w_full().h(1).bg(t.border));
 }
 
@@ -186,11 +188,13 @@ export function renderBlock(owner, d) {
       .child(div().w(QUOTE_BAR).flex_none().rounded(2).bg(t.input))
       .child(div().flex_1().min_w(0).pl(QUOTE_PAD).child(body));
   }
-  // A diagram's frame draws its own selection tint: it reaches past the block's root, and its picture can be opaque.
+  // A diagram's frame and each picture draw their own selection tint: a picture can be opaque.
+  const shown = d.mode === "rendered", diagram = shown && d.look === "diagram", picture = shown && d.look === "picture";
   return div().id(`md-block-${d.key}`).w_full().pt(d.space).pl(d.depth * INDENT)
-    .when(d.look === "diagram" && d.mode === "rendered", el => el.cursor_pointer())
-    .when(!(d.look === "diagram" && d.mode === "rendered"), el => el.cursor_text())
-    .when(d.selected && !d.frameW, el => el.bg(t.selection).rounded(4))
+    .when(diagram, el => el.cursor_pointer())
+    .when(picture, el => el.cursor_default())
+    .when(!diagram && !picture, el => el.cursor_text())
+    .when(d.selected && !d.frameW && !picture, el => el.bg(t.selection).rounded(4))
     .on_size_change((size, cx) => owner.blockSized(d.key, size, cx))
     .child(body);
 }
