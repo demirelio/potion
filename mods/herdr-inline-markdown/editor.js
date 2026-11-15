@@ -26,11 +26,6 @@ const BIG = 50000; // a longer buffer is counted when it settles (a save timer, 
 // Texts this long are parsed in SLICE_MS slices so the app keeps running: one parse of 1 MiB blocks it for 330 ms or more.
 const SLICE_FROM = 200 * 1024, SLICE_MS = 20;
 const SANS = ".SystemUIFont";
-// A character no file holds in practice: the caret readout writes it at the selection and finds it again.
-const MARK = String.fromCharCode(0xffff);
-const marks = s => s.split(MARK).length - 1;
-// A change that leaves more MARKs than the field had is a readout's leftover; a file's own MARKs are text.
-const addsMark = (d, before) => d.inserted.includes(MARK) && marks(d.inserted) > marks(before.slice(d.at, d.at + d.removed));
 const ARROW_STEP = 48;
 const MOVES = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 const CLICK_SLOP = 4;
@@ -90,6 +85,13 @@ const mapCaret = (d, p) => {
   const q = mapPos(d, p);
   return q < 0 ? d.at + d.inserted.length : q;
 };
+// A field's selection { start, end } in UTF-16 offsets, start first; null when the field cannot say.
+function caretOf(state) {
+  try {
+    const { start, end } = state.selected_range();
+    return { start: Math.min(start, end), end: Math.max(start, end) };
+  } catch { return null; }
+}
 
 const byKey = (doc, key) => doc.blocks.find(b => b.key === key) ?? null;
 // The block whose span or gap holds document offset `at` (the first block for the lead).
@@ -217,12 +219,11 @@ export class Editor {
     // only good for the text it left.
     this.history = createHistory();
 
-    // Markdown state: the source field shows `srcFor` mapped by `src`; `srcSeen` is its value as last seen or set,
-    // `srcCaret` its caret while known.
+    // Markdown state: the source field shows `srcFor` mapped by `src`; `srcSeen` is its value as last seen or set.
     this.source = TextareaState.new({ value: "" });
     this.source.set_soft_wrap(true);
     this.source.on("change", (_e, cx) => this.sourceChanged(cx));
-    this.src = toSource(""); this.srcFor = ""; this.srcSeen = ""; this.srcCaret = null;
+    this.src = toSource(""); this.srcFor = ""; this.srcSeen = "";
     this.viewer = this.remote ? EditorState.new({ language: "markdown", readonly: true, line_numbers: false, folding: false, soft_wrap: true, font_family: monoFont(), font_size: 13.5 }) : null;
 
     // Reading: one Block entity per block of `doc` (and a pending one) inside the Column entity, scrolled by `offset`.
@@ -247,7 +248,8 @@ export class Editor {
 
     // The edited block: `field` is its text state, `spare` the one armed over the block under the pointer (they trade
     // places when a press lands in the spare). `f` is its field map, `seen` the field's value as last seen or set,
-    // `opened` its value when the block was opened, `known` the caret while known, `act` the activation number,
+    // `opened` its value when the block was opened, `known` the caret as last read or set (what a key-up's caret is
+    // compared with, and where typing went in when its change alone cannot tell), `act` the activation number,
     // `stale` that text was typed since `doc`. `armedValue` is what the spare holds; `armedNewText` that the armed
     // block's text was replaced while armed, so it has no rendered height for it.
     this.field = TextareaState.new({ value: "" });
@@ -261,7 +263,7 @@ export class Editor {
     }
     this.activeKey = null; this.armedKey = null; this.armedValue = null; this.armedNewText = false; this.pending = null; this.pendings = 0;
     this.f = null; this.seen = ""; this.opened = ""; this.known = NO_CARET; this.act = 0; this.rows = "many";
-    this.stale = false; this.reading = 0; this.stored = null; this.disarmed = new Set(); this.focusedState = null;
+    this.stale = false; this.stored = null; this.disarmed = new Set(); this.focusedState = null;
     this.ownKeyUp = null; this.menuKeyUp = null; this.revealNext = false; this.inbox = []; this.watching = false; this.swapping = false; this.shiftField = null;
     // `owed`: per field state, the change events still to come for changes already taken in (our own replace() calls,
     // and typing an action took in before its event). An unowed change that leaves the value as it was is forward
@@ -415,7 +417,6 @@ export class Editor {
   // -> true while a long text is not parsed yet: Reading shows Loading… until it is.
   waitForPage(cx) {
     if (this.doc || this.text.length < SLICE_FROM) return false;
-    this.sourceCaret();
     this.readWhenParsed = true;
     // A focused field that is not drawn keeps the keyboard, but its keys reach none of the root's handlers.
     this.handle.focus();
@@ -445,10 +446,6 @@ export class Editor {
   // Only the state that shows takes it in at once; the other one catches up when it is next shown.
   apply(text, cx, { disk = text, clear = false } = {}) {
     this.commit(cx);
-    if (this.activeKey && !this.pending && !this.known.valid && this.editable()) {
-      const c = this.caretOf(this.field);
-      if (c) this.known = { start: c.start, end: c.end, valid: true };
-    }
     if (clear) this.history.clear();
     else if (text !== this.text) this.history.rebase(spliceOf(diff(this.text, text)));
     this.text = this.settled = text;
@@ -497,12 +494,10 @@ export class Editor {
   sourceChanged(cx) {
     if (this.closed || !this.loaded || this.remote || this.locked) return;
     const value = this.source.value();
-    if (value === this.srcSeen) return; // our own edits, a readout, set_value reporting itself
+    if (value === this.srcSeen) return; // our own edits, set_value reporting itself
     const d = diff(this.srcSeen, value);
-    if (addsMark(d, this.srcSeen)) return this.restoreSource();
     const s = sourceSplice(this.src, d, eolOf(this.text), this.srcSeen.charAt(d.at - 1));
     this.srcSeen = value;
-    this.srcCaret = { start: d.at + d.inserted.length, end: d.at + d.inserted.length };
     const text = applySplice(this.text, s);
     this.srcFor = text;
     this.setText(text, cx, { ...this.typing(SOURCE_TYPING, s.end, s.start + s.insert.length), splice: s });
@@ -511,14 +506,6 @@ export class Editor {
   // A value that differs from what we last saw is typing whose change event has not arrived yet.
   syncSource(cx) {
     if (this.mode === "markdown" && !this.remote && !this.locked && this.source.value() !== this.srcSeen) this.sourceChanged(cx);
-  }
-
-  restoreSource() {
-    const caret = this.srcCaret;
-    this.guard(() => {
-      this.source.set_value(this.srcSeen);
-      if (caret) this.source.set_selected_range(caret);
-    });
   }
 
   // Text the field refuses (a lone surrogate makes set_value throw) leaves the file read-only.
@@ -534,7 +521,7 @@ export class Editor {
   fillSource() {
     if (this.srcFor === this.text && this.srcSeen === this.source.value()) return;
     const map = toSource(this.text);
-    this.src = map; this.srcFor = this.text; this.srcSeen = map.value; this.srcCaret = null;
+    this.src = map; this.srcFor = this.text; this.srcSeen = map.value;
     this.guard(() => this.source.set_value(map.value));
   }
 
@@ -545,13 +532,13 @@ export class Editor {
   // caret is first moved onto the old text as the incoming value shows it.
   patchSource(caret = null) {
     if (this.remote || this.locked || this.srcFor === this.text) return;
-    const old = caret === null ? this.sourceCaret() : null, was = toSource(this.srcFor), map = toSource(this.text), d = diff(was.value, map.value);
+    const old = caret === null ? caretOf(this.source) : null, was = toSource(this.srcFor), map = toSource(this.text), d = diff(was.value, map.value);
     const shift = x => (x <= d.at ? x : x >= d.at + d.removed ? x + d.inserted.length - d.removed : d.at + d.inserted.length);
     const move = f => shift(docToSource(was, sourceToDoc(this.src, f)));
     const at = caret === null ? null : docToSource(map, caret);
     const next = at !== null ? { start: at, end: at } : old && { start: move(old.start), end: move(old.end) };
     const edit = diff(this.srcSeen, map.value);
-    this.src = map; this.srcFor = this.text; this.srcSeen = map.value; this.srcCaret = next;
+    this.src = map; this.srcFor = this.text; this.srcSeen = map.value;
     this.guard(() => {
       if (!this.keysBound) this.source.set_value(map.value);
       else if (edit.removed || edit.inserted) {
@@ -561,44 +548,6 @@ export class Editor {
       }
       if (next) this.showSource(next);
     });
-  }
-
-  sourceCaret() {
-    if (!this.srcCaret) this.srcCaret = this.caretOf(this.source);
-    return this.srcCaret;
-  }
-
-  // A field's selection { start, end }, read by writing MARK over it and putting back what it covered; null when that
-  // failed (the field is then restored whole). Its change events arrive after we are done and find the value we left,
-  // which is the one we saw.
-  caretOf(state) {
-    let before, range = null;
-    this.reading++;
-    try {
-      before = state.value();
-      this.replaceIn(state, MARK);
-      const d = diff(before, state.value());
-      if (d.inserted === MARK) range = { start: d.at, end: d.at + d.removed };
-    } catch { /* restored below */ } finally {
-      try {
-        if (range) {
-          state.set_selected_range({ start: range.start, end: range.start + 1 });
-          this.replaceIn(state, before.slice(range.start, range.end));
-          state.set_selected_range(range);
-        }
-        if (before !== undefined && state.value() !== before) { state.set_value(before); range = null; }
-      } catch {
-        try { state.set_value(before); } catch { /* the field refuses its own text: nothing more to do */ }
-        range = null;
-      }
-      this.reading--;
-    }
-    return range;
-  }
-
-  replaceIn(state, text) {
-    state.replace(text);
-    this.owe(state);
   }
 
   owe(state) {
@@ -620,23 +569,16 @@ export class Editor {
 
   placeSource(f, cx) {
     if (this.remote) return this.handle.focus();
-    const placed = { start: f, end: f };
     const go = () => {
-      this.guard(() => this.showSource(placed));
+      this.guard(() => this.showSource({ start: f, end: f }));
       this.source.focus();
     };
-    this.srcCaret = placed;
+    const untouched = () => {
+      const c = caretOf(this.source);
+      return c?.start === f && c.end === f;
+    };
     go();
-    cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.mode === "markdown" && this.srcCaret === placed) go(); });
-  }
-
-  forgetSourceCaret() {
-    this.srcCaret = null;
-  }
-
-  // Typing is known from its change; a key that only moves the caret or the selection is not.
-  sourceKeyUp(e) {
-    if (e?.modifiers?.shift || MOVES.has(e?.key) || e?.keystroke === "cmd-a") this.forgetSourceCaret();
+    cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.mode === "markdown" && untouched()) go(); });
   }
 
   writable() {
@@ -862,7 +804,7 @@ export class Editor {
   toReading(cx) {
     let at = null;
     if (!this.remote && !this.locked) {
-      const caret = this.sourceCaret();
+      const caret = caretOf(this.source);
       if (caret) at = sourceToDoc(this.src, caret.start);
     }
     this.mode = "reading";
@@ -1042,7 +984,7 @@ export class Editor {
   held() {
     const b = this.blockByKey(this.activeKey), f = this.f;
     if (!b || !f) return null;
-    return { kind: b.kind, start: b.start, field: f.start0, caret: this.known.valid ? fieldToDoc(f, this.known.end) : null };
+    return { kind: b.kind, start: b.start, field: f.start0, caret: this.caretDoc() };
   }
 
   // Where a change from outside the field leaves the edited block: the caret (or field start) moved across it, else the
@@ -1062,7 +1004,7 @@ export class Editor {
     const f = fieldOf(this.doc, b), value = withInnerLine(b, f.value);
     this.activeKey = b.key; this.f = f;
     if (value === this.seen) return;
-    const c = caretDoc !== null && caretDoc !== undefined ? docToField(f, caretDoc) : mapCaret(diff(this.seen, value), this.known.valid ? this.known.end : 0);
+    const c = caretDoc !== null && caretDoc !== undefined ? docToField(f, caretDoc) : mapCaret(diff(this.seen, value), caretOf(this.field)?.end ?? 0);
     const n = clamp(c, 0, value.length);
     this.slash = null;
     if (!this.setField(value, { start: n, end: n })) return this.drop();
@@ -2154,7 +2096,7 @@ export class Editor {
 
   writeHeld(cx) {
     if (!this.pending || !this.seen.trim() || !this.editable()) return false;
-    return this.writePending(this.seen, this.known.valid ? this.known.end : this.seen.length, cx, true);
+    return this.writePending(this.seen, caretOf(this.field)?.end ?? this.seen.length, cx, true);
   }
 
   originDoc(p) {
@@ -2192,8 +2134,8 @@ export class Editor {
   // action finding its value moved on. `own`: our own replace(), whose event is owed already; any other change is the
   // user's, whose event is this one or one still to come.
   fieldChanged(state, cx, { event = true, own = false } = {}) {
-    if (state !== this.field || this.reading || !this.activeKey || !this.editable()) {
-      // Nobody types in a field that is not open: its changes are owed ones, such as a readout's made on leaving.
+    if (state !== this.field || !this.activeKey || !this.editable()) {
+      // Nobody types in a field that is not open: its changes are owed ones, from our replace() just before it was left.
       if (event) this.paid(state);
       return;
     }
@@ -2205,7 +2147,6 @@ export class Editor {
       return;
     }
     const d = diff(before, value);
-    if (addsMark(d, before)) return this.repairField();
     if (this.pending) return this.pendingTyped(value, d, own, cx);
     const hint = this.known.valid && this.known.start === this.known.end ? this.known.start : undefined;
     // The field showed what its source does not have yet (withInnerLine): that goes in first.
@@ -2238,17 +2179,8 @@ export class Editor {
     return true;
   }
 
-  // A readout's marker found in the field outside a readout: the last good value and caret come back.
-  repairField() {
-    const k = this.known;
-    this.guard(() => {
-      this.field.set_value(this.seen);
-      if (k.valid) this.field.set_selected_range(k);
-    });
-  }
-
   syncField(cx, own = false) {
-    if (this.activeKey && this.mode === "reading" && !this.reading && this.field.value() !== this.seen) this.fieldChanged(this.field, cx, { event: false, own });
+    if (this.activeKey && this.mode === "reading" && this.field.value() !== this.seen) this.fieldChanged(this.field, cx, { event: false, own });
   }
 
   fieldFocus(state, on, cx) {
@@ -2275,7 +2207,7 @@ export class Editor {
 
   // The y in the column (block tops are 0-based there) of the row holding the active field's offset `at`, or null for a
   // block not drawn yet.
-  caretTop(i, at = this.known.valid ? this.known.end : 0) {
+  caretTop(i, at = caretOf(this.field)?.end ?? 0) {
     const d = this.data.get(this.blocks[i]?.key);
     if (!d) return null;
     const c = this.chromeOf(d, true);
@@ -2369,35 +2301,35 @@ export class Editor {
 
   // Up or Down in a one-row field, which the table takes from it: the caret crosses at once, so a held key glides.
   crossRow(dir, cx) {
-    const c = this.known.valid ? this.known : this.caretOf(this.field);
+    const c = caretOf(this.field);
     this.cross(dir, cx, c ? this.columnOf(c.start) : null);
     this.ownKeyUp = dir < 0 ? "up" : "down";
   }
 
-  // A key-up in the active field, handed over by its wrapper: the caret is read out after a key that moved it, and a
-  // plain Up or Down that left it where it was crossed the block's edge. The key-up of a key whose press crossed into
-  // this block is no edge signal, but a held key's repeats may have moved the caret here since: it is read out too.
+  // A key-up in the active field, handed over by its wrapper: the caret is read after a key that moved it, and a plain
+  // Up or Down that left it where it was crossed the block's edge. The key-up of a key whose press crossed into this
+  // block is no edge signal, but a held key's repeats may have moved the caret here since: it is read too. Other keys,
+  // Shift ones included (a capital, `/` on some layouts), move the caret only as typing does, which its change tracks.
   keyUp(e, cx) {
     if (!this.activeKey || !this.editable()) return;
     const k = e?.key, m = e?.modifiers ?? {}, crossed = this.ownKeyUp === k, menuTook = this.menuKeyUp === k;
     const selects = e?.keystroke === "cmd-a" || (m.shift && MOVES.has(k));
     this.ownKeyUp = null; this.menuKeyUp = null;
-    // Shift also types characters (a capital, `/` on some layouts), which move no caret but the one typing tracks.
-    if (m.shift || selects) {
-      this.known = { ...this.known, valid: false };
-      if (selects) this.closeSlash(cx);
+    if (selects) {
+      this.syncField(cx);
+      this.caretNow();
+      this.closeSlash(cx);
       return;
     }
     if (!MOVES.has(k)) return;
     const plainVertical = (k === "up" || k === "down") && !m.alt && !m.platform && !m.control;
     // A plain Up or Down the menu took moved its highlight, not the caret. One it did not take (Cmd with it, or a press
-    // in the frame before the menu's binding applies) moved the caret, and the readout closes the menu.
+    // in the frame before the menu's binding applies) moved the caret, and reading it closes the menu.
     if (menuTook && plainVertical) return;
     this.syncField(cx);
-    const before = this.known, c = this.caretOf(this.field);
+    const before = this.known, c = this.caretNow();
     this.slashCaret(c, cx);
-    if (!c) { this.known = NO_CARET; return; }
-    this.known = { start: c.start, end: c.end, valid: true };
+    if (!c) return;
     const still = before.valid && before.start === before.end && c.start === c.end && c.start === before.start;
     if (!crossed && plainVertical && this.rows === "many" && still) return this.cross(k === "up" ? -1 : 1, cx, this.columnOf(c.start));
     this.revealCaret(cx);
@@ -2409,16 +2341,15 @@ export class Editor {
     cx.timer.after(READ_AFTER_UP_MS, cx => {
       if (this.closed || this.act !== act || !this.activeKey || !this.editable()) return;
       this.syncField(cx);
-      const c = this.caretOf(this.field);
-      this.known = c ? { start: c.start, end: c.end, valid: true } : NO_CARET;
-      this.slashCaret(c, cx);
+      this.slashCaret(this.caretNow(), cx);
     });
   }
 
   // The field's wrapper lives in the block's view, whose cx cannot redraw this one: what needs a cx goes to the size
   // task. The press is marked so the viewport, if it hears it too, leaves it to the field. An armed block opens on
   // mouse-up only when the press began in its field; with Shift the press selects blocks and the field's focus is not
-  // taken.
+  // taken. A press in the edited field leaves its caret unknown until it is read after the mouse-up, so that a key-up
+  // meanwhile crosses no edge.
   fieldDown(key, e) {
     this.fieldPress = { kind: "down", x: e?.position?.x, y: e?.position?.y };
     this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e);
@@ -2517,16 +2448,15 @@ export class Editor {
     else this.openPending(cx);
   }
 
-  // The caret as the field has it, for a key that acts on it. `known` can be a native move behind: the key-up that
-  // reads such a move out may come after the next key's press.
   caretNow() {
-    const c = this.caretOf(this.field);
-    this.known = c ? { start: c.start, end: c.end, valid: true } : NO_CARET;
+    const c = caretOf(this.field);
+    this.known = c ? { ...c, valid: true } : NO_CARET;
     return c;
   }
 
   caretDoc() {
-    return this.f && !this.pending && this.known.valid ? fieldToDoc(this.f, this.known.end) : null;
+    const c = this.f && !this.pending ? caretOf(this.field) : null;
+    return c ? fieldToDoc(this.f, c.end) : null;
   }
 
   // A structural op is an entry of its own in the history, parsed in at once. Then the block at document offset `at`
@@ -2696,12 +2626,11 @@ export class Editor {
     });
   }
 
-  // Forward Delete at the end of a block, which the field reports as a change that left its value alone: once a
-  // readout confirms the caret is there, the next text block joins this one or the rule after it goes.
+  // Forward Delete at the end of a block, which the field reports as a change that left its value alone: when the
+  // caret is there, the next text block joins this one or the rule after it goes.
   deleteAtEnd(cx) {
     if (this.pending || !this.activeKey) return;
-    const c = this.caretOf(this.field), end = this.seen.length;
-    this.known = c ? { start: c.start, end: c.end, valid: true } : NO_CARET;
+    const c = this.caretNow(), end = this.seen.length;
     if (!c || c.start !== c.end || c.end !== end) return;
     this.commit(cx);
     const b = this.blockByKey(this.activeKey), i = b ? this.at.get(b.key) : undefined, next = i === undefined ? null : this.blocks[i + 1];
@@ -2734,7 +2663,6 @@ export class Editor {
   // The page and the caret move a page, the caret to the start of the row at its place on screen unless the page
   // could not move that far; past the first or last block it goes to that block's start or end.
   pageCaret(dir, cx) {
-    this.caretNow();
     const i = this.at.get(this.activeKey), top = i === undefined ? null : this.caretTop(i), blocks = this.blocks;
     if (top === null || !this.viewport || this.sums.length !== blocks.length + 1) return;
     const page = pageStep(this.viewH()), y = top + dir * page, edge = y < 0 || y >= this.sums[blocks.length];
@@ -2785,11 +2713,10 @@ export class Editor {
       const s = type(this.f, text, 0, b.depth > 0 ? b.contPrefix : "");
       return s && this.pasted(s, cx);
     }
-    this.known = { start: r.start, end: r.end, valid: true };
     this.commit(cx);
-    const now = this.blockByKey(this.activeKey);
+    const now = this.blockByKey(this.activeKey), c = caretOf(this.field);
     if (!now) return;
-    const s = isText(now) && this.known.valid ? paste(this.doc, now, this.known.start, this.known.end, text) : null;
+    const s = isText(now) && c ? paste(this.doc, now, c.start, c.end, text) : null;
     if (s) this.pasted(s, cx);
     else this.typeText(text, cx);
   }
@@ -2803,7 +2730,7 @@ export class Editor {
 
   typeOwn(text, cx) {
     this.syncField(cx);
-    if (!this.guard(() => this.replaceIn(this.field, text))) return false;
+    if (!this.guard(() => { this.field.replace(text); this.owe(this.field); })) return false;
     this.syncField(cx, true);
     return true;
   }
@@ -2932,8 +2859,6 @@ export class Editor {
     const s = this.slash;
     this.closeSlash(cx);
     if (this.pending) return this.slashPending(c, cx);
-    // A Shift key-up (`/` on some layouts) leaves the caret unknown, and the pick's undo puts it back where it was.
-    if (!this.known.valid) this.caretNow();
     const opened = this.opened;
     this.commit(cx);
     const b = this.blockByKey(this.activeKey);
@@ -3294,8 +3219,6 @@ export class Editor {
       : Textarea.new(this.source).size_full().font_family(mono).text_size(13.5);
     return div().id("md-source").flex_1().min_h(0).flex()
       .child(v_flex().id("md-source-column").w_full().max_w(860).h_full().mx_auto().px(24).py(16).key_context(SOURCE)
-        .on_mouse_down("left", () => this.forgetSourceCaret())
-        .on_key_up(e => this.sourceKeyUp(e))
         .child(inner));
   }
 

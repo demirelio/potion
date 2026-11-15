@@ -13,7 +13,7 @@ const { stats, fileKey, diagramKey, mermaidConfig, sharpName } = await import(".
 const { owners, STYLES, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { theme } = await import("./mocks/herdr.mjs");
 const { liveFields, TextareaState } = await import("./mocks/gpui-base.mjs");
-const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
+const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, INSTALLED } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
@@ -24,7 +24,7 @@ const DOC = "# Title\n\nHello **world**.\n\n```mermaid\ngraph TD\nA-->B\n```\n\n
 // The blocks of DOC: the heading, the paragraph, the diagram (block 2), the last paragraph.
 const MERMAID = "/home/user/.local/share/herdr-inline-markdown/mermaid";
 const SANS = ".SystemUIFont";
-const MARK = String.fromCharCode(0xffff), BOM = String.fromCharCode(0xfeff);
+const NONCHAR = String.fromCharCode(0xffff), BOM = String.fromCharCode(0xfeff);
 
 // Herdr draws the Column and Block views itself; the mock draws them when they are looked into.
 const keyAt = (m, i) => m.view.doc.blocks[i].key;
@@ -80,7 +80,13 @@ async function mount({ file = FILE, machine, disk, props } = {}) {
     view, cx, tree, watching,
     send: async name => { commands.shift()(name); await flush(); },
     touch: async paths => { watching.shift().done(paths); await flush(); },
-    type: async text => { view.source.edit(text, cx); await flush(); },
+    // Typing in the source, which leaves its caret after what changed.
+    type: async text => {
+      const d = diff(view.source.value(), text);
+      view.source.edit(text, cx);
+      view.source.select(d.at + d.inserted.length);
+      await flush();
+    },
     click: async id => { fire(must(tree(), id), "on_click", {}, cx); await flush(); },
     key: async keystroke => { fire(must(tree(), "md-root"), "on_key_down", { keystroke }, cx); await flush(); },
     save: async () => { await fire_timers(cx, { ms: 700 }); },
@@ -964,7 +970,6 @@ test("a change on disk while the source shows is set into the field, and its car
   await m.click("md-markdown");
   const field = m.view.source;
   field.set_selected_range({ start: 8, end: 8 }); // inside "beta", where the user clicked
-  m.view.srcCaret = { start: 8, end: 8 };
   const before = field.log.length;
   state.disk.set(FILE, "intro\nalpha\nbeta\ngamma\n");
   await m.touch([FILE]);
@@ -1021,18 +1026,15 @@ test("without the key table the field keeps its own Cmd+Z: a disk change goes in
   delete globalThis[INSTALLED];
 });
 
-test("with the caret unknown (a click in the field), a disk change reads it out first and leaves no marker behind", async () => {
+test("a selection made in the source with no event reaching the mod (a drag) stays on its text across a disk change", async () => {
   const m = await mount({ disk: "alpha\nbeta\n" });
   await m.click("md-markdown");
-  const field = m.view.source, column = must(m.tree(), "md-source-column");
-  fire(column, "on_mouse_down:left", press({ x: 10, y: 10 }), m.cx);
-  field.set_selected_range({ start: 7, end: 9 }); // "et" selected by the press
-  assert.equal(m.view.srcCaret, null, "a press in the field makes the caret unknown");
-  state.disk.set(FILE, "alpha\nbeta\nend\n");
+  const field = m.view.source;
+  field.select(7, 9); // "et"
+  state.disk.set(FILE, "intro\nalpha\nbeta\n");
   await m.touch([FILE]);
-  assert.equal(field.value(), "alpha\nbeta\nend\n");
-  assert.ok(!field.value().includes(MARK) && !m.view.text.includes(MARK));
-  assert.deepEqual(field.selection, { start: 7, end: 9 }, "the selection came back");
+  assert.equal(field.value(), "intro\nalpha\nbeta\n");
+  assert.deepEqual(field.selection, { start: 13, end: 15 }, "still \"et\"");
 });
 
 test("the watcher's paths: the file, a folder above it or a root path are ours; other files in the folder are not", async () => {
@@ -1708,7 +1710,6 @@ test("a \\r\\n pasted into the Markdown field of a CRLF file is written as one C
   await m.save();
   assert.equal(state.disk.get(FILE), "# Plan\r\n\r\nstep one\r\nstep two\r\nlast\r\n");
   field.set_selected_range({ start: 13, end: 13 }); // before "one", ahead of the pasted "\r\n"
-  m.view.srcCaret = { start: 13, end: 13 };
   state.disk.set(FILE, "intro\r\n# Plan\r\n\r\nstep one\r\nstep two\r\nlast\r\n");
   await m.touch([FILE]);
   assert.equal(field.value(), "intro\n# Plan\n\nstep one\nstep two\nlast\n");
@@ -1732,7 +1733,6 @@ test("Reading to Markdown: the source caret goes to the start of the first block
   await m.click("md-markdown");
   assert.equal(m.view.activeKey, keyAt(m, 4), "back in Reading, block 4 holds the caret");
   m.view.field.select(5);
-  m.view.known = { ...m.view.known, valid: false }; // the user clicked in the field
   await m.click("md-markdown");
   assert.deepEqual(field.selection, { start: at + 5, end: at + 5 }, "with a block open, the source caret goes to its caret");
   await m.click("md-markdown");
@@ -1769,17 +1769,14 @@ test("Markdown to Reading: the block holding the source caret is put a third of 
   await m.click("md-markdown");
   const at = doc.indexOf("Paragraph 8") + 3;
   m.view.source.set_selected_range({ start: at, end: at });
-  m.view.srcCaret = { start: at, end: at };
   await m.click("md-markdown");
   const top = 28 + 24 + 38 * 7;
   assert.equal(m.view.offset, top + 14 - 100, "the row is at a third of 300 px");
   await m.click("md-markdown");
   const blank = doc.indexOf("Paragraph 3") - 1;
   m.view.source.set_selected_range({ start: blank, end: blank });
-  m.view.srcCaret = null; // the user clicked there: read out
   await m.click("md-markdown");
   assert.equal(m.view.offset, 28 + 24 + 38 * 2 + 14 - 100);
-  assert.ok(!m.view.text.includes(MARK));
   await heights(m, { 0: 124 });
   assert.equal(m.view.offset, 28 + 124 + 38 * 2 + 14 - 100, "the reveal holds while heights above it change");
   fire(must(m.tree(), "md-viewport"), "on_scroll_wheel", { delta: { x: 0, y: -10 }, touch_phase: "moved" }, m.cx);
@@ -1795,7 +1792,6 @@ test("a pending reveal whose block an agent rewrote is dropped, and the first vi
   await m.click("md-markdown");
   const at = doc.indexOf("Paragraph 8") + 3;
   m.view.source.set_selected_range({ start: at, end: at });
-  m.view.srcCaret = { start: at, end: at };
   await m.click("md-markdown");
   const revealed = keyAt(m, 8);
   assert.equal(m.view.reveal.key, revealed);
@@ -1840,22 +1836,14 @@ test("the source field is made once, in init, wraps long lines, and is the only 
   assert.deepEqual([...states], [m.view.source], "the same retained state every time");
 });
 
-test("the source caret is known from typing; a key that moves it, or a press, makes leaving read it out once", async () => {
+test("leaving Markdown takes the source caret as the field has it, though no event told the mod of it, and writes nothing to read it", async () => {
   const m = await mount({ disk: "one\n\ntwo\n" });
   await m.click("md-markdown");
-  const column = () => must(m.tree(), "md-source-column");
   await m.type("one!\n\ntwo\n");
-  fire(column(), "on_key_up", { key: "!", keystroke: "shift-1", modifiers: { shift: false } }, m.cx);
-  assert.deepEqual(m.view.srcCaret, { start: 4, end: 4 }, "the change said where the caret is");
-  for (const e of [{ key: "left", keystroke: "left" }, { key: "home", keystroke: "cmd-left" }, { key: "a", keystroke: "cmd-a" }, { key: "x", keystroke: "shift-x", modifiers: { shift: true } }]) {
-    m.view.srcCaret = { start: 0, end: 0 };
-    fire(column(), "on_key_up", { modifiers: { shift: false }, ...e }, m.cx);
-    assert.equal(m.view.srcCaret, null, e.keystroke);
-  }
-  m.view.source.set_selected_range({ start: 7, end: 7 });
+  m.view.source.select(7);
   const before = m.view.source.log.length;
   await m.click("md-markdown");
-  assert.deepEqual(m.view.source.log.slice(before).map(([c]) => c), ["replace", "set_selected_range", "replace", "set_selected_range"], "one readout");
+  assert.deepEqual(m.view.source.log.slice(before), []);
   assert.equal(m.view.reveal.key, keyAt(m, 1), "the caret was in the second block");
   assert.equal(m.view.source.value(), "one!\n\ntwo\n");
 });
@@ -1878,26 +1866,16 @@ test("a file the field cannot hold (set_value refuses it) opens read-only, with 
   assert.equal(calls.writeTextFile.length, 0);
 });
 
-test("a field value holding the readout's marker outside a readout is put back, never written", async () => {
-  const m = await mount({ disk: "abc" });
-  await m.click("md-markdown");
-  await m.type(`ab${MARK}c`);
-  assert.equal(m.view.source.value(), "abc");
-  assert.equal(m.view.text, "abc");
-});
-
-test("a file that holds the marker character itself takes typing in Markdown; only a change that adds one is put back", async () => {
-  const m = await mount({ disk: `a${MARK}b\n` });
-  await m.click("md-markdown");
-  assert.equal(m.view.locked, null);
-  await m.type(`a${MARK}bc\n`);
-  assert.equal(m.view.text, `a${MARK}bc\n`);
-  await m.type(`a${MARK}b${MARK}c\n`);
-  assert.deepEqual([m.view.source.value(), m.view.text], [`a${MARK}bc\n`, `a${MARK}bc\n`], "one more than the field had is a readout's leftover");
+test("U+FFFF is text like any other: typed in a block or in the source, it is written", async () => {
+  const m = await page("abc\n", { 0: 24 });
+  await openBlock(m, 0, 3);
+  m.view.field.type(NONCHAR, m.cx);
+  assert.equal(m.view.text, `abc${NONCHAR}\n`);
+  await m.key("cmd-e");
+  await m.type(`ab${NONCHAR}c${NONCHAR}\n`);
+  assert.deepEqual([m.view.source.value(), m.view.text], [`ab${NONCHAR}c${NONCHAR}\n`, `ab${NONCHAR}c${NONCHAR}\n`]);
   await m.save();
-  assert.equal(state.disk.get(FILE), `a${MARK}bc\n`);
-  await m.type("abc\n");
-  assert.equal(m.view.text, "abc\n", "taking the file's own one out is typing too");
+  assert.equal(state.disk.get(FILE), `ab${NONCHAR}c${NONCHAR}\n`);
 });
 
 test("the document is parsed once for a text; a draw, a size change or a state switch parses nothing, an edit re-parses its span", async () => {
@@ -3387,7 +3365,7 @@ test("the key-up of a held key that crossed blocks reads out the caret its repea
   await flush();
   assert.deepEqual([m.view.activeKey, m.view.known], [keyAt(m, 0), { start: 6, end: 6, valid: true }]);
   await m.key("cmd-e");
-  assert.deepEqual(m.view.srcCaret, { start: 6, end: 6 }, "the source caret goes to the same character");
+  assert.deepEqual(m.view.source.selection, { start: 6, end: 6 }, "the source caret goes to the same character");
   reset();
   const g = await page("- one\n- two\n\n```\nx\ny\nz\n```\n\nAfter\n", { 0: 24, 1: 30, 2: 14 + 26 + 3 * 19.5, 3: 38 });
   await clickAt(g, { x: X + 24 + 15, y: topOf(g, 0) + 10 });
@@ -3737,7 +3715,6 @@ test("the Markdown state and back: no block stays armed with the text it had; th
   assert.deepEqual([m.view.mode, m.view.armedKey], ["markdown", null]);
   await m.type("Plain new words here\n\nOther words\n");
   m.view.source.select(25);
-  fire(must(m.tree(), "md-source-column"), "on_key_up", { key: "right", keystroke: "right", modifiers: NO_MODS }, m.cx);
   await m.key("cmd-e");
   assert.deepEqual([m.view.mode, m.view.activeKey, m.view.armedKey], ["reading", keyAt(m, 1), null], "the source caret was in the other block");
   assert.equal(viewAt(m, 0).markdown, "Plain new words here", "drawn as text, with the new words");
@@ -3783,30 +3760,22 @@ test("typing on line 25 of a 40-line code block in a 500 px viewport keeps the c
   assert.match(m.view.text, /line 25x\ny\n\nz\n\n\nline 26/);
 });
 
-test("an error thrown between the readout's marker and its restore leaves no MARK in the field or the text", async () => {
-  for (const broken of ["value", "set_selected_range"]) {
-    reset();
-    const m = await page("Hello world\n", { 0: 24 });
-    await clickAt(m, { x: X + 20, y: topOf(m, 0) + 10 });
-    const field = m.view.field, real = field[broken].bind(field);
-    let thrown = false;
-    field[broken] = (...args) => {
-      if (!thrown && field.text.includes(MARK)) { thrown = true; throw new Error("boom"); }
-      return real(...args);
-    };
-    field.select(5);
-    keyUp(m, "right");
-    await flush();
-    assert.ok(thrown, broken);
-    assert.equal(field.value(), "Hello world", broken);
-    assert.ok(!m.view.text.includes(MARK), broken);
-    assert.equal(m.view.known.valid, false, "the caret is not known after a readout that failed");
-    field.type("!", m.cx);
-    assert.equal(m.view.text, "Hello world!\n", broken);
-  }
+test("a selected_range() that throws leaves the caret unknown: Enter splits nothing, and typing goes on", async () => {
+  const m = await page("Hello world\n", { 0: 24 });
+  await clickAt(m, { x: X + 20, y: topOf(m, 0) + 10 });
+  const field = m.view.field;
+  field.selected_range = () => { throw new Error("boom"); };
+  field.select(5);
+  keyUp(m, "right");
+  await flush();
+  assert.equal(m.view.known.valid, false, "the caret is not known after a read that failed");
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Hello world\n", "no split at a guessed caret");
+  field.type("!", m.cx);
+  assert.equal(m.view.text, "Hello! world\n");
 });
 
-test("change events arrive in the live order, after the handler: typing is taken in once, a readout's own changes are ignored", async () => {
+test("change events arrive in the live order, after the handler: typing is taken in once, our own edit's change adds nothing, a key-up writes nothing", async () => {
   const m = await page("Hello\n", { 0: 24 });
   await clickAt(m, { x: X + 20, y: topOf(m, 0) + 10 });
   liveFields(true, m.cx);
@@ -3821,11 +3790,10 @@ test("change events arrive in the live order, after the handler: typing is taken
     assert.equal(m.view.text, "Hello!\\\n\n", "written at once, from the field's value");
     await flush();
     assert.equal(m.view.text, "Hello!\\\n\n", "its change, arriving later, adds nothing");
+    const log = field.log.length;
     keyUp(m, "left");
     await flush();
-    await flush();
-    assert.equal(m.view.text, "Hello!\\\n\n", "a readout's two changes find the value they left");
-    assert.ok(!field.value().includes(MARK));
+    assert.deepEqual([m.view.text, field.log.slice(log)], ["Hello!\\\n\n", []]);
   } finally {
     liveFields(false);
   }
@@ -4323,7 +4291,7 @@ test("a merge in Markdown goes into the source as an edit of the field; its care
   await m.click("md-markdown");
   const field = m.view.source;
   await m.type("alpha!\nbeta\n");
-  assert.deepEqual(m.view.srcCaret, { start: 6, end: 6 });
+  assert.deepEqual(field.selection, { start: 6, end: 6 });
   const log = field.log.length;
   state.disk.set(FILE, "intro\nalpha\nbeta\n");
   await m.touch([FILE]);
@@ -4422,6 +4390,82 @@ const pendingOf = m => (m.view.pending && m.view.activeKey === m.view.pending.ke
 // What the field reports for forward Delete at its end: a change that leaves the value as it was.
 const forwardDeleteAtEnd = m => m.view.field.handlers.change({}, m.cx);
 const rootKey = (m, keystroke, more = {}) => fire(must(m.tree(), "md-root"), "on_key_down", { keystroke, key: keystroke, modifiers: { ...NO_MODS }, ...more }, m.cx);
+const replaces = (state, from) => state.log.slice(from).filter(([call]) => call === "replace");
+
+test("reading the caret writes nothing to the field and adds nothing to its undo: a key-up, a mouse-up, a crossing, Enter, Cmd+E and back", async () => {
+  const m = await page("Hello world\n\nSecond line\n\nEnd\n", { 0: 24, 1: 38, 2: 38 });
+  await openBlock(m, 0);
+  const field = m.view.field, source = m.view.source, from = field.log.length, undos = field.undos.length;
+  field.select(5);
+  keyUp(m, "right");
+  await flush();
+  const wrap = must(m.tree(), `md-field-${keyAt(m, 0)}`), p = { x: X + 20, y: topOf(m, 0) + 10 };
+  fire(wrap, "on_mouse_down:left", press(p), m.cx);
+  field.select(3);
+  fire(wrap, "on_mouse_up:left", press(p), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+  assert.deepEqual(m.view.known, { start: 3, end: 3, valid: true }, "read 30 ms after the mouse-up");
+  assert.deepEqual([field.log.slice(from), field.undos.length], [[], undos], "a key-up and a mouse-up: nothing written, nothing to undo");
+  act(m, "mdb-down");
+  assert.deepEqual([m.view.activeKey, field.selection], [keyAt(m, 1), { start: 3, end: 3 }], "crossed at the column read");
+  field.select(6);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Hello world\n\nSecond\n\nline\n\nEnd\n");
+  const crossed = field.log.length;
+  await m.key("cmd-e");
+  const back = source.log.length;
+  await m.key("cmd-e");
+  assert.deepEqual([replaces(field, from), field.log.slice(crossed, crossed + 1), source.log.slice(back)], [[], [["set_value", "line"]], []], "no field is written to read its caret, only to open a block");
+});
+
+test("Enter splits at a selection the mod was not told of (no event reached it), read without writing to the field", async () => {
+  const m = await page("Hello world\n\nNext\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0, 2);
+  const field = m.view.field, from = field.log.length;
+  field.select(5);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Hello\n\nworld\n\nNext\n");
+  assert.deepEqual(replaces(field, from), []);
+});
+
+test("Up in a one-row field crosses at the column of a caret the mod was not told of", async () => {
+  const m = await page("Above words\n\nHello world\n", { 0: 24, 1: 38 });
+  await openBlock(m, 1, 0);
+  m.view.field.select(4);
+  act(m, "mdb-up");
+  assert.deepEqual([m.view.activeKey, m.view.field.selection], [keyAt(m, 0), { start: 4, end: 4 }]);
+});
+
+test("Cmd+E puts the source caret where the field's caret is though the mod was not told of it, and back; the field is read, not written", async () => {
+  const m = await page("Above words\n\nHello world\n", { 0: 24, 1: 38 });
+  await openBlock(m, 1, 0);
+  const field = m.view.field, from = field.log.length;
+  field.select(6);
+  await m.key("cmd-e");
+  const at = m.view.text.indexOf("world");
+  assert.deepEqual([m.view.mode, m.view.source.selection], ["markdown", { start: at, end: at }]);
+  assert.deepEqual(field.log.slice(from), []);
+  m.view.source.select(2);
+  await m.key("cmd-e");
+  assert.deepEqual([m.view.mode, m.view.activeKey, field.selection], ["reading", keyAt(m, 0), { start: 2, end: 2 }]);
+});
+
+test("offsets after an astral character map to the right place in the file: Cmd+E there and back, then Enter", async () => {
+  const doc = "Intro 😀\n\nHi 😀 there\n";
+  const m = await page(doc, { 0: 24, 1: 38 });
+  await openBlock(m, 1, 0);
+  const field = m.view.field, from = field.log.length, after = "Hi 😀 ".length, at = doc.indexOf("there");
+  assert.equal(after, 6, "the emoji is two UTF-16 units");
+  field.select(after);
+  await m.key("cmd-e");
+  assert.deepEqual(m.view.source.selection, { start: at, end: at });
+  await m.key("cmd-e");
+  assert.deepEqual([m.view.activeKey, field.selection], [keyAt(m, 1), { start: after, end: after }]);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Intro 😀\n\nHi 😀\n\nthere\n");
+  assert.deepEqual(replaces(field, from), []);
+});
 
 test("Enter at the end of an item continues the list; on the empty item it moves out a level, then out of the list; empty blocks write nothing", async () => {
   const m = await page("- a\n  - b\n\nEnd\n", { 0: 24, 1: 30, 2: 38 });
@@ -4971,7 +5015,7 @@ test("a page that grows shorter under a resting pointer, pulling the offset back
   assert.deepEqual([m.view.hit(pointer).block.key, m.view.armedKey, m.view.spare.value()], [keyAt(m, 7), keyAt(m, 7), "Paragraph 7"]);
 });
 
-test("a readout's changes that arrive after its block was left (Escape, Cmd+E) are counted off: the next forward Delete at a block's end merges at once", async () => {
+test("leaving a block (Escape, Cmd+E there and back) leaves no change event owed: the next forward Delete at a block's end merges at once", async () => {
   const m = await page("First\n\nSecond\n\nThird\n\nFourth\n", { 0: 24, 1: 38, 2: 38, 3: 38 });
   liveFields(true, m.cx);
   try {
@@ -4981,7 +5025,6 @@ test("a readout's changes that arrive after its block was left (Escape, Cmd+E) a
     await flush();
     keyUp(m, "1", { shift: true });
     await flush();
-    assert.equal(m.view.known.valid, false, "the Shift key-up: the caret is not known");
     escape(m);
     await flush();
     await openBlock(m, 1, 6);
@@ -5111,16 +5154,13 @@ test("a press that moves less than a click's slop across a block's edge is no dr
   assert.deepEqual([...m.view.selKeys], [second, third], "further, it is a drag");
 });
 
-test("Page Down with the caret unknown (a Shift selection) reads it out first: the page is measured from the caret's row", async () => {
+test("Page Down after a selection the mod was not told of: the page is measured from the caret's row", async () => {
   const code = Array.from({ length: 30 }, (_, i) => `line ${i}`);
   const m = await page(`\`\`\`\n${code.join("\n")}\n\`\`\`\n\n${TEN}`, { 0: 26 + 30 * 19.5, ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, 38])) }, 200);
   await openBlock(m, 0);
   const lineStart = k => m.view.field.value().split("\n").slice(0, k).join("\n").length + 1;
   await caretTo(m, lineStart(20));
   m.view.field.select(lineStart(21), lineStart(21) + 4);
-  keyUp(m, "right", { shift: true });
-  await flush();
-  assert.equal(m.view.known.valid, false);
   act(m, "mdb-pagedown");
   assert.equal(m.view.activeKey, keyAt(m, 0), "a page below row 21 is still in the code block");
   assert.deepEqual(m.view.field.selection, { start: lineStart(29), end: lineStart(29) }, "160 px below the caret's row, not below the block's first row");
@@ -5280,7 +5320,6 @@ test("Markdown to Reading in a long note mounts the blocks around the source car
   await m.click("md-markdown");
   const at = m.view.text.indexOf("Paragraph 1500") + 3;
   m.view.source.set_selected_range({ start: at, end: at });
-  m.view.srcCaret = { start: at, end: at };
   await m.click("md-markdown");
   assert.equal(m.view.activeKey, keyAt(m, 1500));
   const on = assertWindow(m);
@@ -5288,14 +5327,12 @@ test("Markdown to Reading in a long note mounts the blocks around the source car
   escape(m);
   await m.click("md-markdown");
   m.view.source.set_selected_range({ start: 3, end: 3 });
-  m.view.srcCaret = { start: 3, end: 3 };
   await m.click("md-markdown");
   assert.ok(assertWindow(m).has(0), "and back at the top");
   escape(m);
   await m.click("md-markdown");
   const blank = m.view.text.indexOf("Paragraph 1700") - 1;
   m.view.source.set_selected_range({ start: blank, end: blank });
-  m.view.srcCaret = { start: blank, end: blank };
   await m.click("md-markdown");
   assert.equal(m.view.activeKey, null, "a blank line opens nothing");
   assert.ok(assertWindow(m).has(1700), "the block after it, put a third of the way down");
@@ -5960,7 +5997,7 @@ test("/text in a quote opening with '<div>', which as a paragraph would be HTML,
   assert.deepEqual([m.view.history.entries.length, menuOf(m)], [entries, null]);
 });
 
-test("after a Shift key-up left the caret unknown ('/' is Shift+7 on some keyboard layouts, a capital in the query), a pick by Enter or a row press still has one Cmd+Z put the caret back after the query", async () => {
+test("after a Shift key-up ('/' is Shift+7 on some keyboard layouts, a capital in the query), a pick by Enter or a row press still has one Cmd+Z put the caret back after the query", async () => {
   const pickH2 = { enter: m => { for (let i = slashRows(m).indexOf("h2"); i > 0; i--) act(m, "mdb-down"); act(m, "mdb-enter"); }, row: m => fire(must(m.tree(), "md-slash-h2"), "on_mouse_down:left", press({ x: X + 30, y: topOf(m, 1) + 5 }), m.cx) };
   for (const [query, shifted, pick] of [[" /", "7", "enter"], [" /", "7", "row"], [" /H", "h", "enter"]]) {
     reset();
@@ -5970,7 +6007,6 @@ test("after a Shift key-up left the caret unknown ('/' is Shift+7 on some keyboa
     typed(m, query);
     keyUp(m, shifted, { shift: true });
     await flush();
-    assert.equal(m.view.known.valid, false, `${where}: the caret is not known`);
     pickH2[pick](m);
     assert.equal(m.view.text, "## Hello \n\nNext\n", where);
     act(m, "mdb-undo");
@@ -6581,8 +6617,10 @@ test("the menu closes when Backspace deletes the slash, a key-up readout or a mo
   const m = await page("Hello\n\nNext\n", { 0: 24, 1: 38 }, 200);
   const open = async () => {
     await openBlock(m, 0, 5);
-    m.view.field.select(5, m.view.field.value().length);
-    m.view.field.type("", m.cx);
+    if (m.view.field.value().length > 5) {
+      m.view.field.select(5, m.view.field.value().length);
+      m.view.field.type("", m.cx);
+    }
     typed(m, " /h");
     assert.ok(menuOf(m), "open");
   };

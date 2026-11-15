@@ -19,7 +19,8 @@ The package holds:
 
 ## Requirements
 
-- **Herdr 0.1.12.** The mod and the patches were built and tested against that version's mod API and shipped mods.
+- **Herdr 0.1.16.** The mod reads the selection of its text fields, which Herdr 0.1.16 added. The patches were built
+  and tested against Herdr 0.1.12's mod API and shipped mods.
 - **Node.js**, for two things `install.sh` does. It merges the keys into your `keys.json` with `node`; without it
   the script leaves that file alone, and the two keys of `keys.json` have to be added by hand. The diagram renderer
   needs Node.js 22.12 or newer; without it the mod works and a diagram shows as a code block. Running the tests

@@ -52,6 +52,9 @@ class TextState {
     this.selection = { start: Math.min(start, end), end: Math.max(start, end) };
     this.log.push(["set_selected_range", { ...this.selection }]);
   }
+  // Read only: no log entry, no undo, no event. Before any selection the whole value counts as selected, as
+  // replace() takes it.
+  selected_range() { return { ...(this.selection ?? { start: 0, end: this.text.length }) }; }
   replace(text) {
     const s = String(text), before = this.text;
     this.log.push(["replace", s]);
