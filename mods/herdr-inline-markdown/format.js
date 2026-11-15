@@ -146,3 +146,10 @@ export function toggleMark(value, range, mark, clipboard = "") {
   if (!out || !word || mark === "link") return out;
   return caretAt(out.value, out.start + sel.start - word.start);
 }
+
+// Whether `mark` is on the selection already: its key would take it off, or, for a link, change nothing.
+export function hasMark(value, range, mark) {
+  if (!MARKS[mark]) return false;
+  const out = toggleMark(value, range, mark);
+  return mark === "link" ? out === null : out.value.length < value.length;
+}

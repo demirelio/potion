@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { toggleMark } from "../mods/herdr-inline-markdown/format.js";
+import { hasMark, toggleMark } from "../mods/herdr-inline-markdown/format.js";
 
 // `text` with the selection written in it: [ and ] around a selection, | for a caret. Neither may be in the text itself.
 const marked = text => {
@@ -150,4 +150,42 @@ test("offsets are UTF-16 code units: an emoji before or inside the selection, an
 test("a reversed or out-of-range selection is taken in order and clamped to the text", () => {
   assert.deepEqual(toggleMark("Hello world", { start: 11, end: 6 }, "bold"), { value: "Hello **world**", start: 8, end: 13 });
   assert.deepEqual(toggleMark("Hello", { start: -3, end: 99 }, "italic"), { value: "*Hello*", start: 1, end: 6 });
+});
+
+const has = (text, mark) => {
+  const { value, range } = marked(text);
+  return hasMark(value, range, mark);
+};
+
+test("a mark is on the selection exactly where its key would take it off", () => {
+  assert.equal(has("Hello **[world]**.", "bold"), true);
+  assert.equal(has("Hello [**world**].", "bold"), true, "the marks inside the selection");
+  assert.equal(has("Hello [world].", "bold"), false);
+  assert.equal(has("Hello **[wor]ld**.", "bold"), false, "part of the bold text");
+  assert.equal(has("Hello ***[world]***.", "bold"), true);
+  assert.equal(has("Hello ***[world]***.", "italic"), true, "three stars are bold and italic");
+  assert.equal(has("Hello **[world]**.", "italic"), false, "two stars are bold only");
+  assert.equal(has("Hello *[world]*.", "bold"), false);
+  assert.equal(has("Hello ~~[world]~~.", "strike"), true);
+  assert.equal(has("Hello ~[world]~.", "strike"), true);
+  assert.equal(has("Hello `[world]`.", "code"), true);
+  assert.equal(has("Hello `` [`x`] ``.", "code"), true);
+  assert.equal(has("Hello `[wor]ld`.", "code"), false, "part of a code span");
+  assert.equal(has("Hello  [world] .", "strike"), false);
+  assert.equal(has("Hello [world].", "underline"), false, "a mark there is no key for");
+  const samples = ["a **[b]** c", "a *[b]* c", "a ***[b]*** c", "a ~~[b]~~ c", "a `[b]` c", "a [**b**] c", "a [b] c", "a [*b] c", "*[a]** b"];
+  for (const text of samples) {
+    for (const mark of ["bold", "italic", "strike", "code"]) {
+      const { value, range } = marked(text);
+      assert.equal(hasMark(value, range, mark), toggleMark(value, range, mark).value.length < value.length, `${text} ${mark}`);
+    }
+  }
+});
+
+test("a link is on the selection when it lies in one, where the key changes nothing", () => {
+  const link = "see [docs](https://x.org) here";
+  for (const [start, end] of [[4, 25], [5, 9], [11, 24]]) assert.equal(hasMark(link, { start, end }, "link"), true, `${start}-${end}`);
+  assert.equal(hasMark(link, { start: 0, end: 3 }, "link"), false);
+  assert.equal(hasMark(link, { start: 0, end: 9 }, "link"), false, "from outside the link into it");
+  assert.equal(hasMark("![a](b.png)", { start: 0, end: 11 }, "link"), false, "a picture is no link");
 });

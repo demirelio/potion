@@ -312,11 +312,27 @@ export function menuPlace({ rowTop, rowH, viewH, n, side = null }) {
   return { side: s, top: s === "below" ? rowTop + rowH + MENU.gap : rowTop - MENU.gap - h, h, visible };
 }
 
-// The slash's x is estimated from the average advance, inside the row a wrapped line put it on. The pane wins over the
-// column when it is too narrow for both.
-export function slashX({ col, advance, fieldW, fieldX, viewW }) {
-  const left = columnLeft(viewW), x = (col * advance) % Math.max(1, fieldW);
-  return Math.max(0, Math.min(viewW - MENU.w - MENU.margin, Math.max(left, left + fieldX + x)));
+// The pane x of field column `col`, estimated from the average advance, inside the row a wrapped line put it on.
+const columnAt = ({ col, advance, fieldW, fieldX, viewW }) => columnLeft(viewW) + fieldX + (col * advance) % Math.max(1, fieldW);
+
+// The pane wins over the column when it is too narrow for both.
+export function slashX(at) {
+  return Math.max(0, Math.min(at.viewW - MENU.w - MENU.margin, Math.max(columnLeft(at.viewW), columnAt(at))));
+}
+
+// The format bar: square buttons in `pad` and a 1 px border, `gap` from the selected rows, `margin` from the pane's edges.
+export const BAR = { button: 28, pad: 3, gap: 6, margin: 8 };
+export const barSize = n => ({ w: n * BAR.button + 2 * BAR.pad + 2, h: BAR.button + 2 * BAR.pad + 2 });
+
+// Over the first selected row at the selection's start column, else under the last when there is no room above (row
+// tops in pane y). -> { side, top, left, w, h }, or null while that row is out of the pane.
+export function barPlace({ firstTop, lastTop, rowH, n, viewW, viewH, ...at }) {
+  const { w, h } = barSize(n), above = firstTop - BAR.gap - h;
+  let side, top;
+  if (above >= BAR.margin && firstTop < viewH) [side, top] = ["above", above];
+  else if (lastTop + rowH > 0 && lastTop < viewH) [side, top] = ["below", Math.min(lastTop + rowH + BAR.gap, viewH - BAR.margin - h)];
+  else return null;
+  return { side, top, left: clamp(columnAt({ ...at, viewW }), BAR.margin, viewW - BAR.margin - w), w, h };
 }
 
 export const startsGesture = (last, phase, now) => !last || phase === "started" || now - last.at > WHEEL.gapMs;

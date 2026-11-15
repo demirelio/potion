@@ -5,7 +5,7 @@ import { v_flex, h_flex, Textarea, TextareaState, TextView, Editor as CodeView, 
 import { theme, settings, home, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { COLUMN, FRAME, MENU, anchorBlock, blockAt, canZoom, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, COLUMN, FRAME, MENU, anchorBlock, barPlace, blockAt, canZoom, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -13,7 +13,7 @@ import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, SOURCE, installKeys } from "./keys.js";
-import { toggleMark } from "./format.js";
+import { hasMark, toggleMark } from "./format.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 
 const SAVE_MS = 700;
@@ -51,6 +51,13 @@ const UNSIZED_VIEW_H = 1200;
 const CAL_GIVE_UP_MS = 2000;
 const UNDO_ACTIONS = { "mdb-undo": -1, "mdb-redo": 1 }, UNDO_KEYS = { "cmd-z": -1, "cmd-shift-z": 1 };
 const MARK_ACTIONS = { "mdb-bold": "bold", "mdb-italic": "italic", "mdb-strike": "strike", "mdb-code": "code", "mdb-link": "link" };
+const FORMAT_BUTTONS = [
+  { action: "mdb-bold", icon: "bold", tip: "Bold (Cmd+B)" },
+  { action: "mdb-italic", icon: "italic", tip: "Italic (Cmd+I)" },
+  { action: "mdb-strike", icon: "strikethrough", tip: "Strikethrough (Cmd+Shift+X)" },
+  { action: "mdb-code", icon: "code", tip: "Code (Cmd+Shift+C)" },
+  { action: "mdb-link", icon: "link", tip: "Link (Cmd+K)" },
+];
 const SOURCE_TYPING = "source";
 const spliceOf = d => ({ start: d.at, end: d.at + d.removed, insert: d.inserted });
 
@@ -296,7 +303,7 @@ export class Editor {
     // `sel` names the selected blocks' two ends by key, `selKeys` the blocks it covers, `gens` each block's TextView
     // generation, raised to drop the TextView's own text selection when the block is selected.
     this.sel = null; this.selKeys = new Set(); this.gens = new Map();
-    this.slash = null;
+    this.slash = null; this.bar = null;
 
     // Calibration: `cal` is in use while `calNext` collects a run's measurements; `look` is the theme, fonts and zoom
     // last drawn in (a change reruns calibration; `calGen` names each run, `calTimed` the last one whose give-up clock
@@ -899,6 +906,7 @@ export class Editor {
     else if (name === "mdb-up" || name === "mdb-down") this.crossRow(name === "mdb-up" ? -1 : 1, cx);
     else if (name === "mdb-left-start") { this.cross(-1, cx); this.ownKeyUp = "left"; }
     else if (name === "mdb-right-end") { this.cross(1, cx); this.ownKeyUp = "right"; }
+    else if (name === "mdb-escape" && this.barOpen()) this.closeBar(cx);
     else if (name === "mdb-escape") this.escape(cx);
     else if (MARK_ACTIONS[name]) this.format(MARK_ACTIONS[name], cx);
   }
@@ -1031,7 +1039,7 @@ export class Editor {
     if (value === this.seen) return;
     const c = caretDoc !== null && caretDoc !== undefined ? docToField(f, caretDoc) : mapCaret(diff(this.seen, value), caretOf(this.field)?.end ?? 0);
     const n = clamp(c, 0, value.length);
-    this.slash = null;
+    this.slash = null; this.bar = null;
     if (!this.setField(value, { start: n, end: n })) return this.drop();
     this.rows = this.rowsFlag();
     this.revealNext = true;
@@ -1603,6 +1611,7 @@ export class Editor {
   // selects blocks.
   viewportDown(e, cx) {
     this.closeSlash(cx);
+    this.closeBar(cx);
     this.endThumb(cx);
     this.endPan(cx);
     this.linked = false;
@@ -2033,7 +2042,7 @@ export class Editor {
     const base = this.doc.text;
     if (gone) this.f = null;
     this.commit(cx);
-    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null;
+    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null;
     if (pending) this.forget(pending.key);
     if (gone) this.setText(applySplice(base, gone), cx);
     this.rebuild(cx, anchor);
@@ -2056,7 +2065,7 @@ export class Editor {
   // an undo, paste or op is about to replace the text around the block, and those rules would record entries of their own.
   release() {
     const pending = this.pending;
-    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null;
+    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null;
     if (pending) this.forget(pending.key);
   }
 
@@ -2172,6 +2181,7 @@ export class Editor {
       if (event && !owed) this.deleteAtEnd(cx);
       return;
     }
+    this.closeBar(cx);
     const d = diff(before, value);
     if (this.pending) return this.pendingTyped(value, d, own, cx);
     const hint = this.known.valid && this.known.start === this.known.end ? this.known.start : undefined;
@@ -2212,6 +2222,7 @@ export class Editor {
   fieldFocus(state, on, cx) {
     if (on) this.focusedState = state;
     else if (this.focusedState === state) this.focusedState = null;
+    if (!on && state === this.field) this.closeBar(cx);
     if (on && state === this.spare && this.armedKey && this.shiftField !== this.armedKey) this.takeArmed(cx);
   }
 
@@ -2345,6 +2356,7 @@ export class Editor {
       this.syncField(cx);
       this.caretNow();
       this.closeSlash(cx);
+      this.openBar(cx);
       return;
     }
     if (!MOVES.has(k)) return;
@@ -2355,6 +2367,7 @@ export class Editor {
     this.syncField(cx);
     const before = this.known, c = this.caretNow();
     this.slashCaret(c, cx);
+    this.openBar(cx);
     if (!c) return;
     const still = before.valid && before.start === before.end && c.start === c.end && c.start === before.start;
     if (!crossed && plainVertical && this.rows === "many" && still) return this.cross(k === "up" ? -1 : 1, cx, this.columnOf(c.start));
@@ -2368,6 +2381,7 @@ export class Editor {
       if (this.closed || this.act !== act || !this.activeKey || !this.editable()) return;
       this.syncField(cx);
       this.slashCaret(this.caretNow(), cx);
+      this.openBar(cx);
     });
   }
 
@@ -2383,6 +2397,7 @@ export class Editor {
     if (key === this.activeKey) {
       this.known = { ...this.known, valid: false }; this.ownKeyUp = null;
       if (this.slash) this.post(cx => this.closeSlash(cx));
+      if (this.bar) this.post(cx => this.closeBar(cx));
     }
     else if (e?.modifiers?.shift) {
       this.fieldHeld = null; this.shiftField = key;
@@ -2766,16 +2781,23 @@ export class Editor {
     return true;
   }
 
-  // A format key's marks (toggleMark) go in as one entry of the history, whose undo puts the selection back.
+  // A format key's marks (toggleMark) go in as one entry of the history, whose undo puts the selection back. An open
+  // format bar stays over what is left selected.
   format(mark, cx) {
-    const b = this.pending ? null : this.blockByKey(this.activeKey);
-    if (!this.pending && !(b && isText(b))) return;
-    const r = this.caretNow(), value = this.seen;
+    if (!this.takesMarks()) return;
+    const bar = this.barOpen(), r = this.caretNow(), value = this.seen;
     const next = r && toggleMark(value, r, mark, mark === "link" ? cx.read_from_clipboard?.() : "");
     if (!next) return;
     const before = this.f && !this.pending ? docRange(this.f, r) : null, was = this.text;
     if (!this.typeEdits(value, marksEdits(value, next.value), cx) || !this.selectField(next)) return;
     if (before && this.text !== was) this.history.select(this.text, before, docRange(this.f, next));
+    if (bar) this.openBar(cx);
+  }
+
+  takesMarks() {
+    if (this.pending) return true;
+    const b = this.blockByKey(this.activeKey);
+    return Boolean(b && isText(b));
   }
 
   // Types the field splices `edits` of `value`, the later first, as one entry of the history. -> false when the field
@@ -3104,6 +3126,67 @@ export class Editor {
       .when(Boolean(c.hint), el => el.child(div().flex_none().font_family(this.fonts.mono).text_size(11.5).text_color(t.dim).child(c.hint)));
   }
 
+  // The format bar belongs to one activation of a writable text block, as the menu does, and shows while the selection
+  // last read or set holds more than spaces and the menu is shut.
+  barOpen() {
+    const k = this.known;
+    return this.bar?.act === this.act && Boolean(this.activeKey) && this.editable() && k.valid
+      && Boolean(this.seen.slice(k.start, k.end).trim()) && !this.slashOpen() && this.takesMarks();
+  }
+
+  // After a readout of the field's selection, or a format key while the bar is open: the bar shows over a selection and
+  // goes at a caret.
+  openBar(cx) {
+    const was = this.bar;
+    this.bar = { act: this.act };
+    if (!this.barOpen()) this.bar = null;
+    if (was || this.bar) cx.notify();
+  }
+
+  closeBar(cx) {
+    if (!this.bar) return;
+    this.bar = null;
+    cx?.notify();
+  }
+
+  // Over the selection's first row or under its last, its left edge at the selection's start. Null while that row is
+  // off the page.
+  placeBar() {
+    const key = this.activeKey, i = this.at.get(key), d = this.data.get(key), k = this.known;
+    if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
+    const c = this.chromeOf(d, true), onPane = at => COLUMN.padTop + this.caretTop(i, at) - this.offset;
+    return barPlace({
+      firstTop: onPane(k.start), lastTop: onPane(k.end), rowH: d.row, n: FORMAT_BUTTONS.length,
+      col: this.columnOf(k.start), advance: this.calOf(d.style).advance, fieldW: c.w, fieldX: c.x,
+      viewW: this.viewport?.width ?? this.size?.width ?? 900, viewH: this.viewport?.height ?? UNSIZED_VIEW_H,
+    });
+  }
+
+  // Drawn by the root over the page, as the menu is. Presses on it reach neither the page nor the field under it, so the
+  // field keeps the keyboard and the selection.
+  formatBar(t) {
+    const place = this.barOpen() ? this.placeBar() : null;
+    if (!place) return null;
+    return h_flex().id("md-format").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(BAR.pad)
+      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg()
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_move((_e, cx) => cx.stop_propagation())
+      .on_mouse_down_out((_e, cx) => this.closeBar(cx))
+      .children(FORMAT_BUTTONS.map(b => this.barButton(b, t)));
+  }
+
+  // Pressed while its mark is on the selection: its key would take the mark off.
+  barButton({ action, icon, tip }, t) {
+    const mark = MARK_ACTIONS[action], pressed = hasMark(this.seen, this.known, mark);
+    return div().id(`md-format-${mark}`).size(BAR.button).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
+      .tooltip(tip)
+      .when(pressed, el => el.bg(t.selected))
+      .when(!pressed, el => el.hover(s => s.bg(t.hover)))
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.action(action, cx); })
+      .child(svg(ICON(icon)).size(16).flex_none().text_color(pressed ? t.foreground : t.muted));
+  }
+
   calSized(gen, name, part, size, cx) {
     if (gen !== this.calGen || !this.calibrating) return;
     const z = zoom(), sizes = (this.calSizes[name] ??= {});
@@ -3265,6 +3348,8 @@ export class Editor {
     }
     const menu = this.slashMenu(t);
     if (menu) vp.child(menu);
+    const bar = this.formatBar(t);
+    if (bar) vp.child(bar);
     if (this.calibrating) {
       vp.child(this.calStrip(t));
       this.giveUpLater(cx);

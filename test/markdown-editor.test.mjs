@@ -17,7 +17,7 @@ const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, INSTALLED } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { PICTURE, pictureLayout, BAR, barSize } = await import("../mods/herdr-inline-markdown/geometry.js");
 
 const FILE = "/n/docs/note.md";
 const DOC = "# Title\n\nHello **world**.\n\n```mermaid\ngraph TD\nA-->B\n```\n\nBye\n";
@@ -7004,4 +7004,247 @@ test("marks around a selection across the line breaks of a hard-wrapped paragrap
     act(m, "mdb-undo");
     assert.deepEqual([m.view.text, m.view.field.selection], [doc, { start: select[0], end: select[1] }], `${action}: one undo`);
   }
+});
+
+const FORMAT_MARKS = ["bold", "italic", "strike", "code", "link"];
+const barOf = m => find(m.tree(), "md-format");
+const barButtons = m => all(must(m.tree(), "md-format"), n => /^md-format-/.test(n.id ?? "")).map(n => n.id.slice("md-format-".length));
+const pressedMarks = m => FORMAT_MARKS.filter(mark => must(m.tree(), `md-format-${mark}`).style.bg === "selected");
+const barPress = (m, mark) => fire(must(m.tree(), `md-format-${mark}`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+const fieldKeyUp = (m, keystroke, key, modifiers) => fire(must(m.tree(), `md-field-${m.view.activeKey}`), "on_key_up", { key, keystroke, modifiers: { ...NO_MODS, ...modifiers } }, m.cx);
+// A press in the field being edited that leaves [start, end) selected (a drag, or a double-click on a word), read out
+// 30 ms after its mouse-up.
+async function selectByMouse(m, start, end, clicks = 1) {
+  const p = { x: X + 20, y: topOf(m, m.view.at.get(m.view.activeKey)) + 10 }, wrap = () => must(m.tree(), `md-field-${m.view.activeKey}`);
+  fire(wrap(), "on_mouse_down:left", press(p, { click_count: clicks }), m.cx);
+  m.view.field.select(start, end);
+  fire(wrap(), "on_mouse_up:left", press(p, { click_count: clicks }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+}
+
+test("a drag or a double-click that leaves text selected in the paragraph being edited shows the format bar over the page: Bold, Italic, Strikethrough, Code and Link, each naming its key", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  assert.equal(barOf(m), null, "a caret: no bar");
+  await selectByMouse(m, 6, 11);
+  assert.ok(barOf(m), "after the drag's readout");
+  assert.deepEqual(barButtons(m), FORMAT_MARKS);
+  const t = m.tree();
+  assert.deepEqual(FORMAT_MARKS.map(k => must(t, `md-format-${k}`).style.tooltip), ["Bold (Cmd+B)", "Italic (Cmd+I)", "Strikethrough (Cmd+Shift+X)", "Code (Cmd+Shift+C)", "Link (Cmd+K)"]);
+  assert.deepEqual(FORMAT_MARKS.map(k => all(must(t, `md-format-${k}`), n => n.kind === "svg")[0].path), ["bold", "italic", "strikethrough", "code", "link"].map(icon => `mods/herdr-inline-markdown/${icon}.svg`));
+  assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-format", "md-cal"], "over the page, before the calibration strip");
+  audit(t);
+  await selectByMouse(m, 3, 3);
+  assert.equal(barOf(m), null, "a click: its readout finds a caret");
+  await selectByMouse(m, 0, 5, 2);
+  assert.ok(barOf(m), "a double-click on a word");
+});
+
+test("the key-up readout after Shift+arrows or Cmd+A shows the format bar; one that finds a caret, or only a space selected, takes it away", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0, 6);
+  m.view.field.select(6, 8);
+  keyUp(m, "right", { shift: true });
+  await flush();
+  assert.ok(barOf(m), "Shift+Right");
+  m.view.field.select(8);
+  keyUp(m, "right");
+  await flush();
+  assert.equal(barOf(m), null, "Right left a caret");
+  m.view.field.select(0, 12);
+  fieldKeyUp(m, "cmd-a", "a", { platform: true });
+  await flush();
+  assert.ok(barOf(m), "Cmd+A");
+  m.view.field.select(5, 6);
+  keyUp(m, "left", { shift: true });
+  await flush();
+  assert.equal(barOf(m), null, "a space alone");
+});
+
+test("the format bar shows in a heading, an item and a quote; not in a code block or a table, in the Markdown view, or once the file can't be edited", async () => {
+  const doc = "# Title words\n\n- item words\n\n> quote words\n\n```\ncode words\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+  const m = await page(doc, { 0: 35, 1: 30, 2: 38, 3: 14 + 26 + 19.5, 4: 14 + 26 + 60 });
+  for (const i of [0, 1, 2]) {
+    await openBlock(m, i);
+    await selectByMouse(m, 0, 5);
+    assert.ok(barOf(m), m.view.doc.blocks[i].kind);
+  }
+  for (const i of [3, 4]) {
+    await openBlock(m, i);
+    await selectByMouse(m, 4, 8);
+    assert.equal(barOf(m), null, m.view.doc.blocks[i].kind);
+  }
+  await openBlock(m, 0);
+  await selectByMouse(m, 0, 5);
+  assert.ok(barOf(m));
+  await m.key("cmd-e");
+  assert.equal(m.view.mode, "markdown");
+  await m.key("cmd-e");
+  assert.equal(barOf(m), null, "after Markdown and back");
+  await openBlock(m, 0);
+  await selectByMouse(m, 0, 5);
+  assert.ok(barOf(m));
+  m.view.locked = "Read-only: unusual characters";
+  assert.equal(barOf(m), null, "read-only: the bar goes at once");
+});
+
+test("the format bar and the slash menu never show together: typing a space and / over the selection opens the menu, and a Shift+arrow selection closes it for the bar", async () => {
+  const m = await page("Hello world\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  typed(m, " /");
+  assert.deepEqual([m.view.field.value(), Boolean(menuOf(m)), barOf(m)], ["Hello  /", true, null]);
+  m.view.field.select(7, 8);
+  keyUp(m, "left", { shift: true });
+  await flush();
+  assert.deepEqual([menuOf(m), Boolean(barOf(m))], [null, true]);
+});
+
+test("the format bar goes when the field is typed in, a press lands beside it, another block opens, the block is rewritten from outside or the field loses the keyboard; a change elsewhere in the file keeps it", async () => {
+  const opened = async () => {
+    reset();
+    const m = await page("Hello world.\n\nNext\n", { 0: 24, 1: 38 });
+    await openBlock(m, 0);
+    await selectByMouse(m, 6, 11);
+    assert.ok(barOf(m), "open");
+    return m;
+  };
+  let m = await opened();
+  m.view.field.type("x", m.cx);
+  assert.deepEqual([barOf(m), m.view.text], [null, "Hello x.\n\nNext\n"], "typing");
+  m = await opened();
+  fire(must(m.tree(), "md-format"), "on_mouse_down_out", press({ x: 600, y: 300 }), m.cx);
+  assert.equal(barOf(m), null, "a press outside it");
+  m = await opened();
+  fire(must(m.tree(), "md-viewport"), "on_mouse_down:left", press({ x: 600, y: 300 }), m.cx);
+  assert.equal(barOf(m), null, "a press on the page");
+  m = await opened();
+  await clickAt(m, { x: X + 2, y: topOf(m, 1) + 14 + 5 });
+  assert.deepEqual([m.view.activeKey, barOf(m)], [keyAt(m, 1), null], "another block opened");
+  m = await opened();
+  state.disk.set(FILE, "Hello world.\n\nNext\n\nAgent line\n");
+  await m.touch([FILE]);
+  assert.ok(barOf(m), "a change elsewhere keeps it");
+  state.disk.set(FILE, "Oh hello world.\n\nNext\n\nAgent line\n");
+  await m.touch([FILE]);
+  assert.deepEqual([m.view.field.value(), barOf(m)], ["Oh hello world.", null], "the block rewritten from outside");
+  m = await opened();
+  m.view.field.blur(m.cx);
+  assert.equal(barOf(m), null, "the field lost the keyboard");
+});
+
+test("Escape closes the format bar and keeps the selection; a second Escape stops editing", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  escape(m);
+  assert.deepEqual([barOf(m), ...editing(m)], [null, keyAt(m, 0), "Hello world.", { start: 6, end: 11 }]);
+  escape(m);
+  assert.equal(m.view.activeKey, null);
+});
+
+test("the format bar sits over the selection's first row at its start column, under its last row when there is no room above", async () => {
+  const { h } = barSize(5), advance = STYLES.p.size * 0.47;
+  const m = await page("Intro\n\nHello world.\n\nEnd\n", { 0: 24, 1: 38, 2: 38 });
+  await openBlock(m, 1);
+  await selectByMouse(m, 6, 11);
+  const row = topOf(m, 1) + 14;
+  assert.deepEqual([barOf(m).style.top, barOf(m).style.left], [row - BAR.gap - h, X + 6 * advance], "over the row, its left edge at 'world'");
+  await openBlock(m, 0);
+  await selectByMouse(m, 0, 5);
+  assert.deepEqual([barOf(m).style.top, barOf(m).style.left], [topOf(m, 0) + 24 + BAR.gap, X], "no room over the first block's row: under it");
+  reset();
+  const n = await page("Para one\nline two\n\nEnd\n", { 0: 48, 1: 38 });
+  await openBlock(n, 0);
+  await selectByMouse(n, 5, 13);
+  assert.deepEqual([barOf(n).style.top, barOf(n).style.left], [topOf(n, 0) + 2 * 24 + BAR.gap, X + 5 * advance], "under the last of two rows, at the start's column");
+});
+
+test("the format bar moves with the page as it scrolls, hidden while its row is off the page and back when it returns", async () => {
+  const { h } = barSize(5);
+  const m = await tall(200);
+  await openBlock(m, 3);
+  await selectByMouse(m, 0, 9);
+  const row = topOf(m, 3) + 14;
+  assert.equal(barOf(m).style.top, row - BAR.gap - h);
+  wheel(m, -30);
+  assert.equal(barOf(m).style.top, row - 30 - BAR.gap - h, "up with the page");
+  wheel(m, -150);
+  assert.equal(barOf(m), null, "its row is above the page");
+  wheel(m, 180);
+  assert.equal(barOf(m).style.top, row - BAR.gap - h, "back with its row");
+});
+
+test("a press on a bar button does what its key does: the selection stays inside the marks and the bar stays, its button pressed, so marks stack; a second press takes the mark off", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  assert.deepEqual(pressedMarks(m), []);
+  for (const [mark, marked, n] of [["bold", "**world**", 2], ["italic", "*world*", 1], ["strike", "~~world~~", 2], ["code", "`world`", 1]]) {
+    const stopped = m.cx.stopped;
+    barPress(m, mark);
+    assert.equal(m.cx.stopped - stopped, 1, `${mark}: the press goes no further`);
+    assert.deepEqual([m.view.text, ...editing(m)], [`Hello ${marked}.\n\nEnd\n`, keyAt(m, 0), `Hello ${marked}.`, { start: 6 + n, end: 11 + n }], mark);
+    assert.deepEqual(pressedMarks(m), [mark], `${mark}: the bar stays, its button pressed`);
+    barPress(m, mark);
+    assert.deepEqual([m.view.text, m.view.field.selection, pressedMarks(m)], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }, []], `${mark} again`);
+  }
+  barPress(m, "bold");
+  barPress(m, "italic");
+  assert.deepEqual([m.view.text, m.view.field.selection, pressedMarks(m)], ["Hello ***world***.\n\nEnd\n", { start: 9, end: 14 }, ["bold", "italic"]], "stacked");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world**.\n\nEnd\n", { start: 8, end: 13 }], "one Cmd+Z per press");
+});
+
+test("a format key with the bar open keeps it open over the marked text, showing the new state", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  act(m, "mdb-strike");
+  assert.deepEqual([m.view.text, pressedMarks(m)], ["Hello ~~world~~.\n\nEnd\n", ["strike"]]);
+});
+
+test("a button shows pressed while its mark is on the selection, by the test its key takes the mark off with", async () => {
+  const m = await page("Say **bold** and *it* and ~~gone~~ and `code` and [link](https://a.org).\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const value = m.view.field.value(), span = word => [value.indexOf(word), value.indexOf(word) + word.length];
+  for (const [word, marks] of [["bold", ["bold"]], ["it", ["italic"]], ["gone", ["strike"]], ["code", ["code"]], ["link", ["link"]], ["and", []], ["**bold**", ["bold"]]]) {
+    await selectByMouse(m, ...span(word));
+    assert.deepEqual(pressedMarks(m), marks, word);
+  }
+});
+
+test("Link on the bar closes it, the caret left in the parentheses or after the clipboard's address; inside a link it shows pressed and changes nothing", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  m.cx.held = undefined;
+  await selectByMouse(m, 6, 11);
+  barPress(m, "link");
+  assert.deepEqual([m.view.text, m.view.field.selection, barOf(m)], ["Hello [world]().\n\nEnd\n", { start: 14, end: 14 }, null]);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Hello world.\n\nEnd\n");
+  m.cx.held = "https://a.org";
+  await selectByMouse(m, 6, 11);
+  barPress(m, "link");
+  assert.deepEqual([m.view.text, m.view.field.selection, barOf(m)], ["Hello [world](https://a.org).\n\nEnd\n", { start: 28, end: 28 }, null]);
+  await selectByMouse(m, 7, 12);
+  assert.deepEqual(pressedMarks(m), ["link"]);
+  const log = m.view.field.log.length;
+  barPress(m, "link");
+  assert.deepEqual([m.view.text, replaces(m.view.field, log), Boolean(barOf(m))], ["Hello [world](https://a.org).\n\nEnd\n", [], true], "a link is left as it is");
+});
+
+test("presses and pointer moves on the format bar go no further than it, so the page and the field under it take nothing", async () => {
+  const m = await page("Plain words\n\nHello world.\n\nMore plain words\n", { 0: 24, 1: 38, 2: 38 });
+  calibrate(m);
+  await openBlock(m, 1);
+  await selectByMouse(m, 6, 11);
+  const stopped = m.cx.stopped, p = { x: X + 60, y: topOf(m, 1) };
+  fire(must(m.tree(), "md-format"), "on_mouse_move", { position: p, local_position: p, modifiers: NO_MODS }, m.cx);
+  fire(must(m.tree(), "md-format"), "on_mouse_down:left", press(p), m.cx);
+  fire(must(m.tree(), "md-format"), "on_mouse_up:left", press(p), m.cx);
+  assert.equal(m.cx.stopped - stopped, 3, "none of them goes on");
+  await flush();
+  assert.deepEqual([Boolean(barOf(m)), m.view.press, m.view.sel, ...editing(m)], [true, null, null, keyAt(m, 1), "Hello world.", { start: 6, end: 11 }], "a press on its padding changes nothing");
 });

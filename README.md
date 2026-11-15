@@ -171,12 +171,13 @@ file.
 | Option+Up / Down | Moves the block (an item with its sub-items) above or below its neighbour |
 | Arrow keys | Move inside the block, and on to the block above or below at its edge |
 | Page Up / Page Down | Scrolls a page and takes the caret along |
-| Escape | Stops editing; Enter picks up where you were |
+| Escape | Closes the format bar when it shows, else stops editing; Enter picks up where you were |
 | Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them |
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code |
 | Cmd+B / Cmd+I / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic or strikethrough (`**`, `*`, `~~`) around the selection, or off it when it has them already; the text stays selected. Spaces at the ends of the selection stay outside the marks. On a caret in a word they mark the word; elsewhere they write the two marks with the caret between them |
 | Cmd+Shift+C | The same for inline code: `` `text` ``, with a longer run of backticks when the text holds some |
 | Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
+| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code and Link: each does what its key does, and shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link closes it |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
@@ -190,7 +191,7 @@ needs the Markdown view); typing never re-wraps the source; input methods that c
 Chinese) may misbehave with Enter, while direct typing in any script is fine. **Left out on purpose:** drag handles,
 images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
 (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
-the one toggle and a diagram's zoom.
+the one toggle, a diagram's zoom and the format bar.
 
 ### Slash menu
 

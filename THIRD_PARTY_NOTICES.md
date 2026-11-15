@@ -5,14 +5,15 @@
 ### Lucide icons (ISC; some derived from Feather, MIT)
 
 The line icons in `mods/herdr-inline-markdown/` are Lucide icons (https://lucide.dev) reduced to a bare `<svg>` element:
-`check`, `code`, `file-plus`, `heading-1`, `heading-2`, `heading-3`, `image`, `list`, `list-ordered`, `list-todo`,
-`markdown` (Lucide's `file-text`), `minus`, `plus`, `search`, `table`, `text-quote`, `type` and `workflow`. `code`,
-`heading-1` to `heading-3`, `image`, `list`, `list-ordered`, `list-todo`, `minus`, `search`, `table`, `text-quote`,
-`type` and `workflow` were taken from lucide-static 1.69.0. `check`, `file-plus`, `markdown` and `plus` have the path data of the current
-Lucide icons; the release they were copied from was not recorded.
+`bold`, `check`, `code`, `file-plus`, `heading-1`, `heading-2`, `heading-3`, `image`, `italic`, `link`, `list`,
+`list-ordered`, `list-todo`, `markdown` (Lucide's `file-text`), `minus`, `plus`, `search`, `strikethrough`, `table`,
+`text-quote`, `type` and `workflow`. `bold`, `code`, `heading-1` to `heading-3`, `image`, `italic`, `link`, `list`,
+`list-ordered`, `list-todo`, `minus`, `search`, `strikethrough`, `table`, `text-quote`, `type` and `workflow` were taken
+from lucide-static 1.69.0. `check`, `file-plus`, `markdown` and `plus` have the path data of the current Lucide icons;
+the release they were copied from was not recorded.
 
-`check`, `code`, `minus`, `plus`, `search` and `type` are among the Lucide icons derived from Feather, which is
-under the MIT license below.
+`check`, `code`, `italic`, `link`, `minus`, `plus`, `search` and `type` are among the Lucide icons derived from Feather,
+which is under the MIT license below.
 
 `spinner.svg` and `dots.svg` are not Lucide icons: both were drawn for this package.
 

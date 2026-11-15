@@ -4,7 +4,7 @@ import {
   pressToField, snapToWord, tableCells, nextCell, caretRow, isOneRow, columnX, maxOffset, clampOffset, prefixSums, blockAt,
   estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
-  sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, PICTURE, pictureLayout,
+  sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barSize, barPlace, PICTURE, pictureLayout,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 
@@ -357,6 +357,44 @@ test("the slash menu's left edge is the field's left at offset 0, follows the sl
   assert.equal(slashX({ ...base, col: 80, fieldW: 700 }), 900 - MENU.w - 8, "kept inside the pane on the right");
   assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 1600 }), columnLeft(1600), "the column's left in a wide pane");
   assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 290 }), 290 - MENU.w - 8, "a pane narrower than column and menu: the menu stays in the pane");
+});
+
+const BAR_AT = { rowH: 24, col: 0, advance: 7, fieldW: 500, fieldX: 24, viewW: 900, viewH: 600, n: 5 };
+
+test("the format bar is five square buttons in a bordered strip", () => {
+  assert.deepEqual(barSize(5), { w: 5 * BAR.button + 2 * BAR.pad + 2, h: BAR.button + 2 * BAR.pad + 2 });
+  assert.deepEqual(barSize(6).w - barSize(5).w, BAR.button, "a sixth button widens it by one");
+});
+
+test("the format bar goes over the selection's first row, its left edge at the selection's start column", () => {
+  const { w, h } = barSize(5);
+  assert.deepEqual(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 248 }), { side: "above", top: 200 - BAR.gap - h, left: 92 + 24, w, h });
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 10 }).left, 92 + 24 + 70, "ten characters in");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 100 }).left, 92 + 24 + 200, "past a wrap: the column inside the row");
+  const tight = BAR.margin + BAR.gap + h;
+  assert.equal(barPlace({ ...BAR_AT, firstTop: tight, lastTop: tight }).side, "above", "just room above, 8 px from the pane's top");
+});
+
+test("the format bar goes under the selection's last row when there is no room above its first, kept inside the pane", () => {
+  const { h } = barSize(5), tight = BAR.margin + BAR.gap + h;
+  assert.deepEqual(barPlace({ ...BAR_AT, firstTop: tight - 1, lastTop: tight - 1 }), { ...barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200 }), side: "below", top: tight - 1 + 24 + BAR.gap });
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 28, lastTop: 76 }).top, 76 + 24 + BAR.gap, "under the last of three rows");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: -100, lastTop: 20 }).top, 20 + 24 + BAR.gap, "the first row scrolled off the top");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 10, lastTop: 570 }).top, 600 - BAR.margin - h, "a selection as tall as the pane: the bar stays 8 px over its bottom");
+});
+
+test("the format bar stays inside the pane at both sides", () => {
+  const { w } = barSize(5);
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 95, fieldW: 700 }).left, 900 - BAR.margin - w, "on the right");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, fieldX: 0, viewW: 1600 }).left, columnLeft(1600), "the column's left in a wide pane");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, viewW: w + 10 }).left, BAR.margin, "a pane narrower than the bar and its margins: on the left");
+});
+
+test("the format bar is hidden while the row it goes by is out of the pane", () => {
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 600, lastTop: 648 }), null, "the selection below the pane");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: -200, lastTop: -24 }), null, "the selection above the pane");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 10, lastTop: 620 }), null, "no room over the first row, the last one below the pane");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: -200, lastTop: -23 }).side, "below", "a pixel of the last row in the pane");
 });
 
 const ok = (natW, natH) => ({ state: "ok", natW, natH });
