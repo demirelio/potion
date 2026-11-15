@@ -1,0 +1,219 @@
+// CriticMarkup comments in the text of one block: `{==marked text==}{>>comment<<}`, a comment at a point
+// `{>>comment<<}`, and a highlight with no comment `{==text==}`. Code spans and code blocks hold none. Offsets are
+// UTF-16 indices. No imports.
+
+const OPEN = "{==", CLOSE = "==}", NOTE_OPEN = "{>>", NOTE_CLOSE = "<<}";
+const MAY_HOLD = /\{(?:==|>>)/;
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+const BLANK = /^[ \t]*$/;
+const INDENTED = /^(?: {0,3}\t| {4})/;
+const LINE_BREAK = /\s*(?:\r\n|\r|\n)\s*/g;
+const SPACE = /\s/;
+const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const AMBER = "f5c542";
+// About a third of the colour, so dark text on a light theme and light text on a dark one stay readable through it.
+const ALPHA = "55";
+
+// What a point comment shows in Reading, highlighted.
+export const POINT = "💬";
+
+export const highlight = (inner, color) => `<mark color="${color}">${inner}</mark>`;
+
+// The theme's yellow (ANSI 3, which light and dark themes both name) as #rrggbbaa.
+export function highlightColor(t) {
+  const hex = HEX.exec(String(t?.ansi3 ?? "").trim())?.[1] ?? AMBER;
+  const rgb = hex.length <= 4 ? [...hex.slice(0, 3)].map(ch => ch + ch).join("") : hex.slice(0, 6);
+  return `#${rgb.toLowerCase()}${ALPHA}`;
+}
+
+const closesFence = (line, mark) => {
+  const m = FENCE_CLOSE.exec(line);
+  return Boolean(m) && m[1][0] === mark[0] && m[1].length >= mark.length;
+};
+
+// Each line of `text` as { start, end, kind }: "text", "blank", or "code" (a line of a fenced or indented code block,
+// which a quote can hold).
+function linesOf(text) {
+  const out = [];
+  let at = 0, fence = null, inParagraph = false;
+  for (const line of text.split("\n")) {
+    const blank = BLANK.test(line);
+    let code = false;
+    if (fence) {
+      code = true;
+      if (closesFence(line, fence)) fence = null;
+    } else if (FENCE_OPEN.test(line)) {
+      fence = FENCE_OPEN.exec(line)[1];
+      code = true;
+    } else code = !blank && !inParagraph && INDENTED.test(line);
+    inParagraph = !blank && !code;
+    out.push({ start: at, end: at + line.length, kind: code ? "code" : blank ? "blank" : "text" });
+    at += line.length + 1;
+  }
+  return out;
+}
+
+// Past the code span whose backtick run starts at `i`, or past the run alone when no run as long closes it before `to`.
+function pastCode(text, i, to, spans) {
+  let n = 0;
+  while (text[i + n] === "`") n++;
+  for (let j = i + n; j < to;) {
+    if (text[j] !== "`") { j++; continue; }
+    let m = 0;
+    while (text[j + m] === "`") m++;
+    if (m === n) {
+      spans?.push({ start: i, end: j + m, block: false });
+      return j + m;
+    }
+    j += m;
+  }
+  return i + n;
+}
+
+function noteAt(text, at, to) {
+  const from = at + NOTE_OPEN.length, close = text.indexOf(NOTE_CLOSE, from);
+  return close < 0 || close + NOTE_CLOSE.length > to ? null : { noteAt: from, note: text.slice(from, close), end: close + NOTE_CLOSE.length };
+}
+
+const pointAt = (text, i, to) => {
+  const n = noteAt(text, i, to);
+  return n && { kind: "point", start: i, end: n.end, from: i, to: i, note: n.note, noteAt: n.noteAt };
+};
+
+// Marked text holds no other comment's marks, and code spans in it are skipped while looking for its close.
+function highlightAt(text, i, to) {
+  const from = i + OPEN.length;
+  let j = from;
+  while (j < to && !text.startsWith(CLOSE, j)) {
+    if (text.startsWith(OPEN, j) || text.startsWith(NOTE_OPEN, j) || text.startsWith(NOTE_CLOSE, j)) return null;
+    if (text[j] === "\\") j += 2;
+    else if (text[j] === "`") j = pastCode(text, j, to);
+    else j++;
+  }
+  if (j >= to || j === from) return null;
+  const closed = j + CLOSE.length, n = text.startsWith(NOTE_OPEN, closed) ? noteAt(text, closed, to) : null;
+  return n ? { kind: "comment", start: i, end: n.end, from, to: j, note: n.note, noteAt: n.noteAt }
+    : { kind: "highlight", start: i, end: closed, from, to: j, note: null, noteAt: -1 };
+}
+
+function scan(text, from, to, comments, code) {
+  for (let i = from; i < to;) {
+    if (text[i] === "\\") { i += 2; continue; }
+    if (text[i] === "`") { i = pastCode(text, i, to, code); continue; }
+    const c = text.startsWith(OPEN, i) ? highlightAt(text, i, to) : text.startsWith(NOTE_OPEN, i) ? pointAt(text, i, to) : null;
+    i = c ? c.end : i + 1;
+    if (c) comments.push(c);
+  }
+}
+
+// `stretches`: the runs of text lines (a paragraph each), which is where comments can be; `code`: code block lines and
+// the code spans found in the stretches.
+function layout(text) {
+  const comments = [], code = [], stretches = [];
+  let run = null;
+  for (const line of linesOf(text)) {
+    if (line.kind === "text") {
+      if (run) run.end = line.end;
+      else run = { start: line.start, end: line.end };
+      continue;
+    }
+    if (run) stretches.push(run);
+    run = null;
+    if (line.kind === "code") code.push({ start: line.start, end: line.end, block: true });
+  }
+  if (run) stretches.push(run);
+  for (const s of stretches) scan(text, s.start, s.end, comments, code);
+  return { comments, code, stretches };
+}
+
+// -> [{ kind: "comment" | "point" | "highlight", start, end (the whole markup), from, to (the marked text; at `start`
+// for a point), note (the comment's text, null for a highlight), noteAt (where that text starts) }], in text order.
+export const commentsIn = text => (MAY_HOLD.test(text) ? layout(text).comments : []);
+
+function replaced(text, fill) {
+  let out = "", at = 0;
+  for (const c of commentsIn(text)) {
+    out += text.slice(at, c.start) + fill(c);
+    at = c.end;
+  }
+  return out + text.slice(at);
+}
+
+// The markdown Reading draws: marked text highlighted (its formatting still renders), the marks and the comment gone.
+export const showComments = (text, color) => replaced(text, c => highlight(c.kind === "point" ? POINT : text.slice(c.from, c.to), color));
+
+// The text as Reading shows it, and for each of its offsets (and its end) the offset in `text` it comes from.
+export function hideComments(text) {
+  const at = [];
+  const kept = (from, to) => {
+    for (let i = from; i < to; i++) at.push(i);
+    return text.slice(from, to);
+  };
+  let shown = "", from = 0;
+  for (const c of commentsIn(text)) {
+    shown += kept(from, c.start);
+    if (c.kind === "point") {
+      shown += POINT;
+      for (let i = 0; i < POINT.length; i++) at.push(c.start);
+    } else shown += kept(c.from, c.to);
+    from = c.end;
+  }
+  shown += kept(from, text.length);
+  at.push(text.length);
+  return { text: shown, at };
+}
+
+// A comment is one line, and `<<}` in it would end it early.
+export const oneLine = note => String(note ?? "").replace(LINE_BREAK, " ").replaceAll(NOTE_CLOSE, "<< }").trim();
+
+// Spaces at the ends of a selection stay outside the marks; a selection of spaces only is a caret at its start.
+function trimmed(value, range) {
+  const clampTo = x => Math.max(0, Math.min(value.length, Number(x) || 0));
+  const a = clampTo(range?.start), b = clampTo(range?.end);
+  let s = Math.min(a, b), e = Math.max(a, b);
+  while (s < e && SPACE.test(value[s])) s++;
+  while (e > s && SPACE.test(value[e - 1])) e--;
+  return s === e ? { start: Math.min(a, b), end: Math.min(a, b) } : { start: s, end: e };
+}
+
+function refusal(value, { start: s, end: e }) {
+  const { comments, code, stretches } = layout(value);
+  const caret = s === e;
+  if (comments.some(c => (caret ? c.start < s && s < c.end : s < c.end && e > c.start))) return "overlap";
+  const insideBlock = r => r.block && r.start <= s && e <= r.end;
+  const cuts = r => s < r.end && e > r.start && !(s <= r.start && e >= r.end);
+  if (code.some(r => insideBlock(r) || cuts(r))) return "code";
+  if (!stretches.some(r => r.start <= s && e <= r.end)) return "paragraphs";
+  return null;
+}
+
+// Why a comment can't go on the selection `range` of `value`: "overlap" (it would cut through or hold another one),
+// "code" or "paragraphs" (it would cross a blank line); null when it can.
+export const commentable = (value, range) => refusal(value, trimmed(value, range));
+
+// -> { value, start, end }: the selection marked with `note` (a point comment at a caret), the caret after it; null for
+// an empty note; { refused } with commentable's reason.
+export function addComment(value, range, note) {
+  const text = oneLine(note), sel = trimmed(value, range);
+  if (!text) return null;
+  const why = refusal(value, sel);
+  if (why) return { refused: why };
+  const marks = sel.start === sel.end ? "" : `${OPEN}${value.slice(sel.start, sel.end)}${CLOSE}`, written = `${marks}${NOTE_OPEN}${text}${NOTE_CLOSE}`;
+  const caret = sel.start + written.length;
+  return { value: value.slice(0, sel.start) + written + value.slice(sel.end), start: caret, end: caret };
+}
+
+// Comment `c` of `value` (commentsIn) with its text swapped for `note`, the caret after it; null when nothing changes.
+export function editComment(value, c, note) {
+  const text = oneLine(note);
+  if (!text || c.note === null || text === c.note) return null;
+  const caret = c.end + text.length - c.note.length;
+  return { value: value.slice(0, c.noteAt) + text + value.slice(c.noteAt + c.note.length), start: caret, end: caret };
+}
+
+// Comment `c` taken off `value`, its marked text kept and selected.
+export function resolveComment(value, c) {
+  const kept = value.slice(c.from, c.to);
+  return { value: value.slice(0, c.start) + kept + value.slice(c.end), start: c.start, end: c.start + kept.length };
+}

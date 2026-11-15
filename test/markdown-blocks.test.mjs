@@ -223,6 +223,7 @@ test("armable: one-line plain text blocks; inline syntax, hard breaks, headings 
   assert.deepEqual(a("- [x] done\n- [ ] open\n"), [false, true]);
   assert.deepEqual(a("> quoted\n> text\n"), [true]);
   assert.deepEqual(a("```\ncode\n```\n"), [false]);
+  assert.deepEqual(a("a {==highlight==} here\n"), [false], "Reading draws the highlight, its field the marks");
 });
 
 test("a hard-wrapped README paragraph has a field with spaces at its soft breaks; editing one word changes only that word", () => {

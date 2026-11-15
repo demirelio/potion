@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { reset } from "./mocks/herdr.mjs";
 import { all, find, textOf } from "./mocks/element.mjs";
 import { div } from "./mocks/gpui-kit.mjs";
-import { makeCx } from "./helpers.mjs";
+import { makeCx, must } from "./helpers.mjs";
 
 const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
+const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
+const { NOTES } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { BOX, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
 const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
@@ -78,6 +80,30 @@ test("TextView text: continuation lines are indented past anything that could in
   assert.equal(displayText(quote), "- a\n- b", "a quote's inside is left to TextView");
   const [linked] = blocksOf("see [x]\nnext\n\n[x]: https://e.com\n");
   assert.equal(displayText(linked), "see [x]\n    next\n\n[x]: https://e.com");
+});
+
+test("TextView text: comments are drawn as highlights, their marks and text left out, outside code only", () => {
+  const color = "#e5c07b55", lit = inner => `<mark color="${color}">${inner}</mark>`;
+  const [para] = blocksOf("a {==b **c**==}{>>n<<} d\ne{>>p<<} `{==f==}`\n");
+  assert.equal(displayText(para, color), `a ${lit("b **c**")} d\n    e${lit(POINT)} \`{==f==}\``);
+  assert.equal(displayText(blocksOf("# {==Title==}{>>n<<}\n")[0], color), lit("Title"));
+  const [quote] = blocksOf("> q {==x==}{>>n<<}\n> ```\n> {==y==}\n> ```\n");
+  assert.equal(displayText(quote, color), `q ${lit("x")}\n\`\`\`\n{==y==}\n\`\`\``, "a code block inside a quote is left as it is");
+  const [linked] = blocksOf("see [x] {==y==}\n\n[x]: https://e.com\n");
+  assert.equal(displayText(linked, color), `see [x] ${lit("y")}\n\n[x]: https://e.com`, "the definitions after it untouched");
+  assert.equal(displayText(blocksOf("plain\n")[0], color), "plain");
+});
+
+test("a rendered block with comments shows their count right of its first row, in a box the editor places and hit-tests", () => {
+  const { el, d } = drawn("A {==b==}{>>n<<} c {>>p<<}\n", 0, { notes: 2, notesX: 726, notesY: 1 });
+  const badge = must(el, `md-notes-${d.key}`);
+  assert.deepEqual([badge.style.absolute, badge.style.left, badge.style.top, badge.style.w, badge.style.h], [true, 726, 1, NOTES.w, NOTES.h]);
+  assert.equal(badge.style.tooltip, "2 comments");
+  assert.deepEqual(all(badge, n => n.kind === "svg").map(n => n.path), ["mods/herdr-inline-markdown/message-square.svg"]);
+  assert.equal(textOf(badge).trim(), "2");
+  assert.ok(el.__node.style.relative, "the block places it");
+  const plain = drawn("A plain one\n", 0, { notes: 0, notesX: 0, notesY: 0 });
+  assert.equal(all(plain.el, n => /^md-notes-/.test(n.id ?? "")).length, 0, "no comments, no count");
 });
 
 test("the nested views read their editor through `owners`; once it is gone they draw a placeholder", () => {

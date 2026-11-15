@@ -1,19 +1,20 @@
 // A Markdown pane: one file, shown as a page (Reading) or as its source (Markdown). The file on disk is the truth:
 // typing is saved a moment later, only over the text this pane last saw there, and a change on disk shows up here.
 import { div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
+import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, COLUMN, FRAME, MENU, anchorBlock, barPlace, blockAt, canZoom, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, CARD, COLUMN, FRAME, MENU, NOTES, NOTE_BOX, anchorBlock, barPlace, blockAt, canZoom, cardPlace, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
 import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
-import { ACTIONS, SOURCE, installKeys } from "./keys.js";
+import { ACTIONS, NOTE, SOURCE, installKeys } from "./keys.js";
 import { hasMark, toggleMark } from "./format.js";
+import { addComment, commentable, commentsIn, editComment, highlightColor, resolveComment } from "./comments.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 
 const SAVE_MS = 700;
@@ -52,12 +53,24 @@ const CAL_GIVE_UP_MS = 2000;
 const UNDO_ACTIONS = { "mdb-undo": -1, "mdb-redo": 1 }, UNDO_KEYS = { "cmd-z": -1, "cmd-shift-z": 1 };
 const MARK_ACTIONS = { "mdb-bold": "bold", "mdb-italic": "italic", "mdb-strike": "strike", "mdb-code": "code", "mdb-link": "link" };
 const FORMAT_BUTTONS = [
-  { action: "mdb-bold", icon: "bold", tip: "Bold (Cmd+B)" },
-  { action: "mdb-italic", icon: "italic", tip: "Italic (Cmd+I)" },
-  { action: "mdb-strike", icon: "strikethrough", tip: "Strikethrough (Cmd+Shift+X)" },
-  { action: "mdb-code", icon: "code", tip: "Code (Cmd+Shift+C)" },
-  { action: "mdb-link", icon: "link", tip: "Link (Cmd+K)" },
+  { name: "bold", action: "mdb-bold", icon: "bold", tip: "Bold (Cmd+B)" },
+  { name: "italic", action: "mdb-italic", icon: "italic", tip: "Italic (Cmd+I)" },
+  { name: "strike", action: "mdb-strike", icon: "strikethrough", tip: "Strikethrough (Cmd+Shift+X)" },
+  { name: "code", action: "mdb-code", icon: "code", tip: "Code (Cmd+Shift+C)" },
+  { name: "link", action: "mdb-link", icon: "link", tip: "Link (Cmd+K)" },
+  { name: "comment", action: "mdb-comment", icon: "message-square-plus", tip: "Comment (Cmd+Alt+M)" },
 ];
+const COMMENT_REFUSED = {
+  overlap: "A comment can't cut through another one",
+  code: "Comments can't go in code",
+  paragraphs: "A comment stays within one paragraph",
+};
+const NOTE_CLIP = 80;
+const noted = text => commentsIn(text).filter(c => c.note !== null);
+const clip = (text, n) => {
+  const chars = [...text];
+  return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text;
+};
 const SOURCE_TYPING = "source";
 const spliceOf = d => ({ start: d.at, end: d.at + d.removed, insert: d.inserted });
 
@@ -121,6 +134,18 @@ function marksEdits(a, b) {
     ].filter(e => e.removed);
   }
   return [d];
+}
+// The field splices `edits` of a block's field map `f` (the later first, as marksEdits gives them) as one splice of the
+// document, which keeps what lies between them as the document has it.
+function docSplice(f, edits) {
+  const at = e => fieldToDoc(f, e.at), past = e => fieldToDoc(f, e.at + e.removed);
+  const start = at(edits.at(-1)), end = past(edits[0]);
+  let insert = "", from = start;
+  for (const e of [...edits].reverse()) {
+    insert += f.text.slice(from, at(e)) + e.inserted;
+    from = past(e);
+  }
+  return { start, end, insert: insert + f.text.slice(from, end) };
 }
 
 const byKey = (doc, key) => doc.blocks.find(b => b.key === key) ?? null;
@@ -198,7 +223,8 @@ const withInnerLine = (b, value) => {
 };
 
 // What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, with block 2 in the
-// field and its slash menu open, the spare field over block 4, a diagram frame wider than the column, and a picture.
+// field and its slash menu open, the spare field over block 4, a diagram frame wider than the column, a picture, and
+// the quote's comment listed on its card while the comment box is open.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
@@ -206,7 +232,7 @@ const FIXTURE = [
   "Plain words only, so this paragraph can be armed.", "",
   "- A bullet item", "  - A nested item", "    - A third level", "- [ ] An open task", "- [x] A done task", "",
   "1. First", "2. Second", "",
-  "> A quote with a [reference link][ref].", "",
+  "> A quote with a [reference link][ref] and {==a remark==}{>>a comment on it<<}.", "",
   "```js", "const answer = 42;", "```", "",
   "```mermaid", "graph TD", "A-->B", "```", "",
   "    indented code", "",
@@ -304,6 +330,11 @@ export class Editor {
     // generation, raised to drop the TextView's own text selection when the block is selected.
     this.sel = null; this.selKeys = new Set(); this.gens = new Map();
     this.slash = null; this.bar = null;
+    // Comments: `card` names the block whose comments are listed, `note` the comment the box is writing (`noteField`)
+    // for one activation, `highlight` the colour Reading marks them in, `notesFor` the count of each block of a doc.
+    this.card = null; this.note = null; this.highlight = highlightColor(theme()); this.notesFor = null;
+    this.noteField = InputState.new({ placeholder: "Comment" });
+    this.noteField.on("submit", (_e, cx) => this.saveNote(cx));
 
     // Calibration: `cal` is in use while `calNext` collects a run's measurements; `look` is the theme, fonts and zoom
     // last drawn in (a change reruns calibration; `calGen` names each run, `calTimed` the last one whose give-up clock
@@ -343,6 +374,8 @@ export class Editor {
     });
     const slashAt = this.seen.length - 1;
     this.slash = { act: this.act, at: slashAt, end: slashAt + 1, query: "", items: COMMANDS, index: 0, first: 0, side: null };
+    this.card = { key: this.doc.blocks.find(b => b.kind === "quote").key };
+    this.note = { act: this.act, kind: "add", value: this.seen, range: { start: 2, end: 11 }, comment: null };
     const diagram = this.doc.blocks.find(b => b.kind === "mermaid");
     this.shown.set(diagram.key, FIXTURE_DIAGRAM); this.good.set(diagram.key, FIXTURE_DIAGRAM);
     this.setPictures(this.doc.blocks.find(b => b.image), () => FIXTURE_PICTURE);
@@ -867,6 +900,7 @@ export class Editor {
     const k = e.keystroke;
     if (k === "cmd-s") { cx.stop_propagation(); this.saveNow(cx); return; }
     if (k === "cmd-e") { cx.stop_propagation(); this.toggle(cx); return; }
+    if (k === "escape" && this.card) { cx.stop_propagation(); this.closeCard(cx); return; }
     if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey) return;
     if (this.sel && this.selectionKey(e, cx)) return;
     if (k === "enter" && this.editable()) { cx.stop_propagation(); this.resume(cx); return; }
@@ -885,6 +919,7 @@ export class Editor {
       this.closeSlash(cx);
       return this.undo(UNDO_ACTIONS[name], cx);
     }
+    if (name === "mdb-note-cancel") return this.cancelNote(cx);
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
     this.syncField(cx);
     if (this.slashOpen()) {
@@ -909,6 +944,7 @@ export class Editor {
     else if (name === "mdb-escape" && this.barOpen()) this.closeBar(cx);
     else if (name === "mdb-escape") this.escape(cx);
     else if (MARK_ACTIONS[name]) this.format(MARK_ACTIONS[name], cx);
+    else if (name === "mdb-comment") this.openNote(cx);
   }
 
   listen(cx) {
@@ -921,6 +957,7 @@ export class Editor {
         else if (modeOf(name)) this.setMode(modeOf(name), cx);
         else if (name === "focus") {
           if (this.mode === "markdown" && !this.remote && !this.readWhenParsed) this.source.focus();
+          else if (this.noteOpen()) this.noteField.focus();
           else if (this.activeKey) this.field.focus();
           else this.handle.focus();
         }
@@ -1039,7 +1076,7 @@ export class Editor {
     if (value === this.seen) return;
     const c = caretDoc !== null && caretDoc !== undefined ? docToField(f, caretDoc) : mapCaret(diff(this.seen, value), caretOf(this.field)?.end ?? 0);
     const n = clamp(c, 0, value.length);
-    this.slash = null; this.bar = null;
+    this.slash = null; this.bar = null; this.note = null;
     if (!this.setField(value, { start: n, end: n })) return this.drop();
     this.rows = this.rowsFlag();
     this.revealNext = true;
@@ -1235,10 +1272,11 @@ export class Editor {
 
   dataFor(blocks, i, width) {
     const b = blocks[i], look = lookOf(b), cal = this.calOf(look.style), marker = markerOf(b);
-    const text = look.look === "text" ? displayText(b) : look.look === "boxed" ? b.render : b.content;
+    const text = look.look === "text" ? displayText(b, this.highlight) : look.look === "boxed" ? b.render : b.content;
+    const space = spaceBefore(blocks, i, this.doc.blocks);
     return {
       key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color,
-      space: spaceBefore(blocks, i, this.doc.blocks), depth: b.depth, text,
+      space, depth: b.depth, text, ...this.notesData(b, look, space, cal, width),
       info: b.kind === "code" ? b.info.trim().split(/\s+/)[0] : "",
       marker, label: marker === "number" ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked),
       diagram: look.look === "diagram" ? diagramSig(this.shown.get(b.key), this.good.get(b.key)) : "",
@@ -1249,6 +1287,14 @@ export class Editor {
       ...(look.look === "diagram" ? this.frameData(b, width) : {}),
       ...(look.look === "picture" ? this.pictureData(b, width) : {}),
     };
+  }
+
+  // A text block not being edited shows its comments' count, where notesPlace puts it.
+  notesData(b, look, space, cal, width) {
+    const notes = look.look === "text" && b.key !== this.activeKey ? noted(b.content).length : 0;
+    if (!notes) return { notes: 0, notesX: 0, notesY: 0 };
+    const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: cal.row });
+    return { notes, notesX: at.x, notesY: at.y };
   }
 
   // `answer` says how one picture of the paragraph stands, as { state, path, width, height, error }: Images.get's answer.
@@ -1612,6 +1658,7 @@ export class Editor {
   viewportDown(e, cx) {
     this.closeSlash(cx);
     this.closeBar(cx);
+    this.closeCard(cx);
     this.endThumb(cx);
     this.endPan(cx);
     this.linked = false;
@@ -1651,7 +1698,7 @@ export class Editor {
   // root's keys ignore the page while a block is edited, so the field gets it back. A press on the armed block went
   // into the spare field instead, which takes over once its focus event comes.
   keepKeyboard() {
-    if (this.activeKey && !this.armedKey && this.editable() && this.focusedState !== this.field) this.field.focus();
+    if (this.activeKey && !this.armedKey && this.editable() && this.focusedState !== this.field && !this.noteOpen()) this.field.focus();
   }
 
   // A frame fills much of the pane, so a single click on it (a tap, a click to focus the window) opens nothing: a
@@ -1661,6 +1708,7 @@ export class Editor {
     if (!hit) return;
     if (hit.on === "tool") return this.toolClick(hit.block.key, hit.tool, cx);
     if (hit.on === "task") return this.tick(hit.block, cx);
+    if (hit.on === "notes") return this.openCard(hit.block.key, cx);
     if (hit.on === "picture") return this.pictureClick(hit, p, cx, count);
     if (!this.editable()) return;
     if (hit.on === "frame") {
@@ -1957,6 +2005,8 @@ export class Editor {
       return { block: f.block, on: tool ? "tool" : "frame", tool, fx: f.fx, fy: f.fy };
     }
     const y = p.y + this.offset - COLUMN.padTop, x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0);
+    const counted = this.countAt(x, y);
+    if (counted) return { block: counted, on: "notes" };
     if (x < 0 || x >= this.textWidth()) return { on: "outside" };
     if (!n) return { on: "end" };
     if (y < 0) return { on: "outside" };
@@ -1966,6 +2016,14 @@ export class Editor {
     if (d.look === "picture" && d.mode === "rendered") return { block: b, on: "picture", item: this.pictureAt(d, inX, inY), x, y: y - this.sums[i] };
     const on = d.marker === "task" && inX >= 0 && inX < MARKER_W && inY >= 0 && inY < d.row ? "task" : "block";
     return { block: b, on, x, y: y - this.sums[i] };
+  }
+
+  // The block whose comment count holds column point (x, y), which may lie right of the text column.
+  countAt(x, y) {
+    const n = this.blocks.length;
+    if (!n || y < 0 || y >= this.sums[n]) return null;
+    const i = blockAt(this.sums, y), b = this.blocks[i], d = this.data.get(b.key), by = y - this.sums[i];
+    return d?.notes && x >= d.notesX && x < d.notesX + NOTES.w && by >= d.notesY && by < d.notesY + NOTES.h ? b : null;
   }
 
   tick(b, cx) {
@@ -2022,7 +2080,7 @@ export class Editor {
   focusField(cx) {
     const act = this.act, state = this.field;
     state.focus();
-    cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.act === act && this.activeKey) state.focus(); });
+    cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.act === act && this.activeKey && !this.noteOpen()) state.focus(); });
   }
 
   // What was typed is parsed in, an emptied block goes, and a pending one is never written unless it holds a marker held
@@ -2042,7 +2100,7 @@ export class Editor {
     const base = this.doc.text;
     if (gone) this.f = null;
     this.commit(cx);
-    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null;
+    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
     if (pending) this.forget(pending.key);
     if (gone) this.setText(applySplice(base, gone), cx);
     this.rebuild(cx, anchor);
@@ -2065,7 +2123,7 @@ export class Editor {
   // an undo, paste or op is about to replace the text around the block, and those rules would record entries of their own.
   release() {
     const pending = this.pending;
-    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null;
+    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
     if (pending) this.forget(pending.key);
   }
 
@@ -3127,11 +3185,11 @@ export class Editor {
   }
 
   // The format bar belongs to one activation of a writable text block, as the menu does, and shows while the selection
-  // last read or set holds more than spaces and the menu is shut.
+  // last read or set holds more than spaces and the menu and the comment box are shut.
   barOpen() {
     const k = this.known;
     return this.bar?.act === this.act && Boolean(this.activeKey) && this.editable() && k.valid
-      && Boolean(this.seen.slice(k.start, k.end).trim()) && !this.slashOpen() && this.takesMarks();
+      && Boolean(this.seen.slice(k.start, k.end).trim()) && !this.slashOpen() && !this.noteOpen() && this.takesMarks();
   }
 
   // After a readout of the field's selection, or a format key while the bar is open: the bar shows over a selection and
@@ -3149,14 +3207,14 @@ export class Editor {
     cx?.notify();
   }
 
-  // Over the selection's first row or under its last, its left edge at the selection's start. Null while that row is
-  // off the page.
-  placeBar() {
-    const key = this.activeKey, i = this.at.get(key), d = this.data.get(key), k = this.known;
+  // Over the first row of field range `k` or under its last, its left edge at the range's start; the bar, or a float of
+  // `size`. Null while that row is off the page.
+  placeBar(k = this.known, size = undefined) {
+    const key = this.activeKey, i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
     const c = this.chromeOf(d, true), onPane = at => COLUMN.padTop + this.caretTop(i, at) - this.offset;
     return barPlace({
-      firstTop: onPane(k.start), lastTop: onPane(k.end), rowH: d.row, n: FORMAT_BUTTONS.length,
+      firstTop: onPane(k.start), lastTop: onPane(k.end), rowH: d.row, n: FORMAT_BUTTONS.length, size,
       col: this.columnOf(k.start), advance: this.calOf(d.style).advance, fieldW: c.w, fieldX: c.x,
       viewW: this.viewport?.width ?? this.size?.width ?? 900, viewH: this.viewport?.height ?? UNSIZED_VIEW_H,
     });
@@ -3176,15 +3234,183 @@ export class Editor {
       .children(FORMAT_BUTTONS.map(b => this.barButton(b, t)));
   }
 
-  // Pressed while its mark is on the selection: its key would take the mark off.
-  barButton({ action, icon, tip }, t) {
-    const mark = MARK_ACTIONS[action], pressed = hasMark(this.seen, this.known, mark);
-    return div().id(`md-format-${mark}`).size(BAR.button).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
+  // A mark's button is pressed while its mark is on the selection: its key would take the mark off.
+  barButton({ name, action, icon, tip }, t) {
+    const mark = MARK_ACTIONS[action], pressed = Boolean(mark) && hasMark(this.seen, this.known, mark);
+    return div().id(`md-format-${name}`).size(BAR.button).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
       .tooltip(tip)
       .when(pressed, el => el.bg(t.selected))
       .when(!pressed, el => el.hover(s => s.bg(t.hover)))
       .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.action(action, cx); })
       .child(svg(ICON(icon)).size(16).flex_none().text_color(pressed ? t.foreground : t.muted));
+  }
+
+  // The comment box belongs to one activation of a writable block, as the bar does. The check fixture shows it anyway.
+  noteOpen() {
+    const n = this.note;
+    return Boolean(n) && n.act === this.act && Boolean(this.activeKey) && (!this.file || this.editable());
+  }
+
+  // Cmd+Alt+M or the bar's Comment button: a comment on the selection of a written text block, or at its caret, unless
+  // it would land where a comment can't be.
+  openNote(cx) {
+    const b = this.pending ? null : this.blockByKey(this.activeKey), r = b && isText(b) ? this.caretNow() : null;
+    if (!r) return;
+    const why = commentable(this.seen, r);
+    if (why) return notify({ title: COMMENT_REFUSED[why], level: "info" });
+    this.showNote({ kind: "add", range: r, text: "" }, cx);
+  }
+
+  // The box takes the keyboard, holding `text`, while the field keeps `range` selected.
+  showNote({ kind, range, text, comment = null }, cx) {
+    this.closeSlash(cx);
+    this.closeBar(cx);
+    this.note = { act: this.act, kind, value: this.seen, range, comment };
+    this.guard(() => {
+      this.noteField.set_value(text);
+      this.noteField.set_selected_range({ start: text.length, end: text.length });
+    });
+    this.noteField.focus();
+    cx.notify();
+  }
+
+  // Enter in the box writes the comment as one entry of the history, whose undo puts the selection back, and the field
+  // gets the keyboard back with the caret after it. A field rewritten from outside meanwhile takes nothing.
+  saveNote(cx) {
+    const n = this.note;
+    if (!this.noteOpen() || this.seen !== n.value) return this.closeNote(cx);
+    const text = this.noteField.value();
+    const next = n.kind === "add" ? addComment(n.value, n.range, text) : editComment(n.value, n.comment, text);
+    if (!next || next.refused) return this.cancelNote(cx);
+    this.note = null;
+    const before = docRange(this.f, n.range), was = this.text;
+    if (this.typeEdits(n.value, marksEdits(n.value, next.value), cx) && this.selectField(next) && this.text !== was) {
+      this.history.select(this.text, before, docRange(this.f, next));
+    }
+    this.focusField(cx);
+    cx.notify();
+  }
+
+  // Escape in the box: the field gets the keyboard back with the selection it had.
+  cancelNote(cx) {
+    const n = this.note;
+    if (!this.noteOpen()) return this.closeNote(cx);
+    this.note = null;
+    this.selectField(n.range);
+    this.focusField(cx);
+    cx.notify();
+  }
+
+  closeNote(cx) {
+    if (!this.note) return;
+    this.note = null;
+    cx?.notify();
+  }
+
+  // Drawn by the root where the bar goes. Presses on it go no further, so the field under it keeps its selection.
+  noteBox(t) {
+    const place = this.noteOpen() ? this.placeBar(this.note.range, NOTE_BOX) : null;
+    if (!place) return null;
+    return div().id("md-note").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(NOTE_BOX.pad).flex()
+      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().key_context(NOTE)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_move((_e, cx) => cx.stop_propagation())
+      .on_mouse_down_out((_e, cx) => this.closeNote(cx))
+      .child(Input.new(this.noteField).flex_1().h_full().text_size(13).text_color(t.foreground));
+  }
+
+  openCard(key, cx) {
+    this.card = { key };
+    cx.notify();
+  }
+
+  closeCard(cx) {
+    if (!this.card) return;
+    this.card = null;
+    cx?.notify();
+  }
+
+  // The comments of the card's block as its field shows them (a soft line break a space); null when it has none or is
+  // being edited.
+  cardComments() {
+    const key = this.card?.key, b = key && key !== this.activeKey ? this.blockByKey(key) : null;
+    if (!b || !isText(b)) return null;
+    const f = fieldOf(this.doc, b), list = noted(f.value);
+    return list.length ? { b, f, list } : null;
+  }
+
+  // Edit on the card: the block opens with the comment's marked text selected (a point comment's place), and the box
+  // holds the comment.
+  editNote(i, cx) {
+    const found = this.cardComments(), c = found?.list[i];
+    if (!c || !this.editable()) return;
+    const range = { start: c.from, end: c.to };
+    this.closeCard(cx);
+    if (this.activate(found.b.key, range, cx)) this.showNote({ kind: "edit", range, text: c.note, comment: c }, cx);
+  }
+
+  // Resolve on the card: the comment and its marks go, its marked text stays, as one entry of the history.
+  resolveNote(i, cx) {
+    if (!this.editable()) return;
+    this.commit(cx);
+    const found = this.cardComments(), c = found?.list[i];
+    if (!c) return;
+    const next = resolveComment(found.f.value, c);
+    this.change(docSplice(found.f, marksEdits(found.f.value, next.value)), cx);
+  }
+
+  placeCard({ b, list }) {
+    const i = this.at.get(b.key), d = this.data.get(b.key);
+    if (i === undefined || !d?.notes || this.sums.length !== this.blocks.length + 1) return null;
+    const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
+    const iconTop = COLUMN.padTop + this.sums[i] - this.offset + d.notesY;
+    return cardPlace({ iconTop, iconLeft: columnLeft(viewW) + d.notesX, n: list.length, viewW, viewH });
+  }
+
+  // Drawn by the root by the block's comment count. Presses on it go no further. A file that can't be edited shows
+  // the comments only.
+  commentsCard(t) {
+    const found = this.card ? this.cardComments() : null, place = found && this.placeCard(found);
+    if (!place) return null;
+    const writable = !this.file || this.editable();
+    return v_flex().id("md-notes-card").absolute().left(place.left).w(place.w)
+      .when(place.side === "below", el => el.top(place.top))
+      .when(place.side === "above", el => el.bottom(place.bottom))
+      .p(CARD.pad).gap(10).bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().text_size(12.5)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_move((_e, cx) => cx.stop_propagation())
+      .on_mouse_down_out((_e, cx) => this.closeCard(cx))
+      .children(found.list.map((c, i) => this.cardEntry(found.f.value, c, i, writable, t)));
+  }
+
+  cardEntry(value, c, i, writable, t) {
+    const button = (id, label, run) => div().id(id).h(24).px(8).flex().items_center().rounded(6).cursor_pointer()
+      .bg(t.hover).text_color(t.foreground)
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run(cx); })
+      .child(label);
+    return v_flex().id(`md-note-${i}`).gap(4)
+      .when(c.kind === "comment", el => el.child(div().truncate().text_color(t.muted).child(clip(value.slice(c.from, c.to), NOTE_CLIP))))
+      .child(div().whitespace_normal().text_color(t.foreground).child(c.note))
+      .when(writable, el => el.child(h_flex().gap(6)
+        .child(button(`md-note-edit-${i}`, "Edit", cx => this.editNote(i, cx)))
+        .child(button(`md-note-resolve-${i}`, "Resolve", cx => this.resolveNote(i, cx)))));
+  }
+
+  // The file's comments, those of the block being edited as its field shows them.
+  commentCount() {
+    if (!this.doc) return 0;
+    if (this.notesFor?.doc !== this.doc) {
+      const byKey = new Map();
+      for (const b of this.doc.blocks) {
+        const n = isText(b) ? noted(b.content).length : 0;
+        if (n) byKey.set(b.key, n);
+      }
+      this.notesFor = { doc: this.doc, byKey, total: [...byKey.values()].reduce((sum, n) => sum + n, 0) };
+    }
+    const { byKey, total } = this.notesFor, b = this.activeKey && !this.pending ? this.blockByKey(this.activeKey) : null;
+    return b && isText(b) ? total - (byKey.get(b.key) ?? 0) + noted(this.seen).length : total;
   }
 
   calSized(gen, name, part, size, cx) {
@@ -3214,6 +3440,7 @@ export class Editor {
     if (this.look === look) return;
     const first = this.look === null;
     this.look = look;
+    this.highlight = highlightColor(t);
     if (!first) cx.timer.after(0, cx => this.restyle(cx));
   }
 
@@ -3346,6 +3573,10 @@ export class Editor {
           .on_mouse_down("left", (e, cx) => this.thumbDown(e, cx)));
       }
     }
+    const card = this.commentsCard(t);
+    if (card) vp.child(card);
+    const note = this.noteBox(t);
+    if (note) vp.child(note);
     const menu = this.slashMenu(t);
     if (menu) vp.child(menu);
     const bar = this.formatBar(t);
@@ -3378,11 +3609,12 @@ export class Editor {
   }
 
   footer(t) {
-    const { words, lines } = this.counts(), status = this.diagramStatus();
+    const { words, lines } = this.counts(), status = this.diagramStatus(), comments = this.mode === "reading" ? this.commentCount() : 0;
     const path = !this.file ? "" : this.remote ? `${this.machine}:${this.file}` : tildePath(this.file, home());
     return h_flex().id("md-footer").h(26).flex_none().px(14).gap(12).items_center().border_t(1).border_color(t.border).text_size(11.5).text_color(t.dim)
       .child(this.saveState(t))
       .child(div().id("md-counts").flex_none().child(`${count(words, "word", "words")} · ${count(lines, "line", "lines")}`))
+      .when(comments > 0, el => el.child(div().id("md-comments").flex_none().child(count(comments, "comment", "comments"))))
       .when(Boolean(status), el => el.child(div().id("md-diagrams").flex_none().child(status)))
       .child(div().flex_1().min_w(0).truncate().text_right().child(path));
   }

@@ -1,5 +1,6 @@
 // No imports from herdr or gpui-*. Lengths are logical pixels.
 import { codeIndent, visibleMap } from "./blocks.js";
+import { hideComments } from "./comments.js";
 
 export const COLUMN = { maxWidth: 780, padX: 32, padTop: 28, padBottom: 160 };
 export const REVEAL = { top: 24, bottom: 72 };
@@ -56,12 +57,17 @@ export function snapToWord(line, at) {
   return best;
 }
 
+function shownMap(line) {
+  const shown = hideComments(line);
+  return visibleMap(shown.text).map(k => shown.at[k]);
+}
+
 function textPress(t, x, y, cal) {
   const lines = t.value.split("\n"), starts = lineStarts(lines);
   const perRow = Math.max(1, Math.floor(t.width / cal.advance));
   let row = Math.max(0, Math.floor(y / cal.rowPx));
   for (let i = 0; i < lines.length; i++) {
-    const map = visibleMap(lines[i]), visible = map.length - 1;
+    const map = shownMap(lines[i]), visible = map.length - 1;
     const rows = Math.max(1, Math.ceil((visible * cal.advance) / t.width));
     if (row < rows || i === lines.length - 1) {
       const v = clamp(Math.min(row, rows - 1) * perRow + Math.round(Math.max(0, x) / cal.advance), 0, visible);
@@ -324,15 +330,39 @@ export function slashX(at) {
 export const BAR = { button: 28, pad: 3, gap: 6, margin: 8 };
 export const barSize = n => ({ w: n * BAR.button + 2 * BAR.pad + 2, h: BAR.button + 2 * BAR.pad + 2 });
 
+export const NOTE_BOX = { w: 320, h: 44, pad: 6 };
+
 // Over the first selected row at the selection's start column, else under the last when there is no room above (row
-// tops in pane y). -> { side, top, left, w, h }, or null while that row is out of the pane.
-export function barPlace({ firstTop, lastTop, rowH, n, viewW, viewH, ...at }) {
-  const { w, h } = barSize(n), above = firstTop - BAR.gap - h;
+// tops in pane y). `size` is the float's when it is not a bar of `n` buttons. -> { side, top, left, w, h }, or null
+// while that row is out of the pane.
+export function barPlace({ firstTop, lastTop, rowH, n, size = barSize(n), viewW, viewH, ...at }) {
+  const { w, h } = size, above = firstTop - BAR.gap - h;
   let side, top;
   if (above >= BAR.margin && firstTop < viewH) [side, top] = ["above", above];
   else if (lastTop + rowH > 0 && lastTop < viewH) [side, top] = ["below", Math.min(lastTop + rowH + BAR.gap, viewH - BAR.margin - h)];
   else return null;
   return { side, top, left: clamp(columnAt({ ...at, viewW }), BAR.margin, viewW - BAR.margin - w), w, h };
+}
+
+export const NOTES = { w: 40, h: 22, gap: 10, margin: 12 };
+
+// A block's comment count: at its first row, `gap` right of the text column when that leaves `margin` before the pane's
+// edge, else inside the column at its right edge. -> { x, y } from the block's top-left.
+export function notesPlace({ viewW, textW, space, rowH }) {
+  const outside = columnLeft(viewW) + textW + NOTES.gap + NOTES.w + NOTES.margin <= viewW;
+  return { x: outside ? textW + NOTES.gap : textW - NOTES.w, y: space + (rowH - NOTES.h) / 2 };
+}
+
+// `entryH` estimates the height of one comment on the card.
+export const CARD = { w: 300, pad: 10, entryH: 76, gap: 6, margin: 8 };
+
+// Under the count icon, right edges aligned, else over it when only that has room. -> { side, top | bottom, left, w }
+export function cardPlace({ iconTop, iconLeft, n, viewW, viewH }) {
+  const h = 2 * CARD.pad + n * CARD.entryH, below = iconTop + NOTES.h + CARD.gap;
+  const left = clamp(iconLeft + NOTES.w - CARD.w, CARD.margin, viewW - CARD.margin - CARD.w);
+  const roomAbove = iconTop - CARD.gap - h >= CARD.margin;
+  if (below + h <= viewH - CARD.margin || !roomAbove) return { side: "below", top: below, left, w: CARD.w };
+  return { side: "above", bottom: viewH - iconTop + CARD.gap, left, w: CARD.w };
 }
 
 export const startsGesture = (last, phase, now) => !last || phase === "started" || now - last.at > WHEEL.gapMs;

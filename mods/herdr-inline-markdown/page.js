@@ -5,6 +5,8 @@ import { theme } from "herdr";
 import { diagramBlock } from "./diagrams.js";
 import { pictureBlock } from "./images.js";
 import { RAW, TEXT } from "./keys.js";
+import { showComments } from "./comments.js";
+import { NOTES } from "./geometry.js";
 
 export const owners = new Map();
 let owned = 0;
@@ -18,6 +20,7 @@ export const BOX = { px: 14, py: 12 };
 export const FRONT_BOX = { px: 12, py: 10 };
 const RULE_H = 24;
 const CHECK = "mods/herdr-inline-markdown/check.svg";
+const COMMENTS_ICON = "mods/herdr-inline-markdown/message-square.svg";
 
 // `size` is in px and `lh` a multiple of it; the same rendered and in the field.
 export const STYLES = {
@@ -74,10 +77,10 @@ const sameList = (tree, a, b) => {
 
 const BLOCK_START = /^(?:#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|>|`{3}|~{3}|\d{1,9}[.)](?:[ \t]|$)|(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$)/;
 // A heading's text that would start a block of its own is escaped, and continuation lines are indented past anything
-// that could interrupt a paragraph: the source said they continue it.
-export function displayText(b) {
-  const content = b.content, defs = b.render.slice(content.length);
-  if (b.kind === "quote") return b.render;
+// that could interrupt a paragraph: the source said they continue it. Comments show as highlights in `color`.
+export function displayText(b, color) {
+  const content = showComments(b.content, color), defs = b.render.slice(b.content.length);
+  if (b.kind === "quote") return content + defs;
   const lines = content.split("\n");
   if (b.kind === "heading" && BLOCK_START.test(lines[0])) lines[0] = lines[0].replace(/^(\d*)(.)/, "$1\\$2");
   for (let k = 1; k < lines.length; k++) lines[k] = `    ${lines[k]}`;
@@ -196,5 +199,15 @@ export function renderBlock(owner, d) {
     .when(!diagram && !picture, el => el.cursor_text())
     .when(d.selected && !d.frameW && !picture, el => el.bg(t.selection).rounded(4))
     .on_size_change((size, cx) => owner.blockSized(d.key, size, cx))
-    .child(body);
+    .child(body)
+    .when(d.notes > 0, el => el.relative().child(commentCount(d, t)));
+}
+
+// The editor takes a press on it from the page, as it does a task box's.
+function commentCount(d, t) {
+  return h_flex().id(`md-notes-${d.key}`).absolute().left(d.notesX).top(d.notesY).w(NOTES.w).h(NOTES.h).gap(3).items_center().justify_center()
+    .rounded(6).cursor_pointer().text_size(11.5).text_color(t.muted).hover(s => s.bg(t.hover))
+    .tooltip(d.notes === 1 ? "1 comment" : `${d.notes} comments`)
+    .child(svg(COMMENTS_ICON).size(14).flex_none())
+    .child(String(d.notes));
 }

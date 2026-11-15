@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeCx } from "./helpers.mjs";
 
-const { BINDINGS, INSTALLED, RAW, SOURCE, TEXT, installKeys } = await import("../mods/herdr-inline-markdown/keys.js");
+const { BINDINGS, INSTALLED, NOTE, RAW, SOURCE, TEXT, installKeys } = await import("../mods/herdr-inline-markdown/keys.js");
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -66,12 +66,13 @@ test("installKeys binds the table once per run, under a flag that carries the ve
   } finally { delete globalThis[INSTALLED]; }
   assert.ok(version(TEXT), "the contexts end in a version");
   for (const name of [RAW, SOURCE, INSTALLED]) assert.equal(version(name), version(TEXT), name);
-  for (const { context } of BINDINGS) assert.equal(/^Md(?:Text|Raw|Source)(\d+)/.exec(context)?.[1], version(TEXT), context);
+  for (const name of [NOTE]) assert.equal(version(name), version(TEXT), name);
+  for (const { context } of BINDINGS) assert.equal(/^Md(?:Text|Raw|Source|Note)(\d+)/.exec(context)?.[1], version(TEXT), context);
 });
 
 test("herdr-inline-markdown names its key contexts only through keys.js, so raising VERSION renames every one", () => {
   for (const file of modFiles.filter(f => f !== "keys.js")) {
-    assert.doesNotMatch(code(file).replace(/\/\/.*$/gm, ""), /\bMd(?:Text|Raw|Source)\d/, file);
+    assert.doesNotMatch(code(file).replace(/\/\/.*$/gm, ""), /\bMd(?:Text|Raw|Source|Note)\d/, file);
   }
 });
 

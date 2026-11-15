@@ -3,8 +3,9 @@
 // handler for as long as any build shipped it.
 // A binding at `X > Input` takes the key from the field entirely; one at `X` fires only for the keys the field gives
 // away there (Backspace and Left at offset 0, Right at the end, Tab, Escape).
-const VERSION = 4;
-export const TEXT = `MdText${VERSION}`, RAW = `MdRaw${VERSION}`, SOURCE = `MdSource${VERSION}`;
+const VERSION = 5;
+// NOTE is the comment box's field.
+export const TEXT = `MdText${VERSION}`, RAW = `MdRaw${VERSION}`, SOURCE = `MdSource${VERSION}`, NOTE = `MdNote${VERSION}`;
 
 const deep = ctx => `${ctx} > Input`;
 const oneRow = ctx => `${ctx} && rows == one > Input`;
@@ -32,6 +33,8 @@ export const BINDINGS = [
   ...bind("cmd-shift-x", "mdb-strike", [deep(TEXT)]),
   ...bind("cmd-shift-c", "mdb-code", [deep(TEXT)]),
   ...bind("cmd-k", "mdb-link", [deep(TEXT)]),
+  ...bind("cmd-alt-m", "mdb-comment", [deep(TEXT)]),
+  ...bind("escape", "mdb-note-cancel", [deep(NOTE)]),
   ...bind("cmd-z", "mdb-undo", [...BLOCKS, deep(SOURCE)]),
   ...bind("cmd-shift-z", "mdb-redo", [...BLOCKS, deep(SOURCE)]),
   ...bind("backspace", "mdb-backspace-start", [TEXT, RAW]),

@@ -793,7 +793,7 @@ function baseRender(text, b) {
   return L.map((l, k) => text.slice(s0 + l.body, s0 + (k === L.length - 1 ? l.end : l.eol))).join("\n");
 }
 
-const NOT_ARMABLE = /[`*_~[\]<>\\&@]|:\/\/|www\./;
+const NOT_ARMABLE = /[`*_~[\]<>\\&@]|:\/\/|www\.|\{==/;
 
 function finishRecord(text, r, opts) {
   relLines(text, r);

@@ -5,8 +5,10 @@ import {
   estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barSize, barPlace, PICTURE, pictureLayout,
+  NOTE_BOX, NOTES, CARD, notesPlace, cardPlace,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
+import { POINT } from "../mods/herdr-inline-markdown/comments.js";
 
 const cal = { rowPx: 20, advance: 8, monoAdvance: 7.8 };
 
@@ -395,6 +397,37 @@ test("the format bar is hidden while the row it goes by is out of the pane", () 
   assert.equal(barPlace({ ...BAR_AT, firstTop: -200, lastTop: -24 }), null, "the selection above the pane");
   assert.equal(barPlace({ ...BAR_AT, firstTop: 10, lastTop: 620 }), null, "no room over the first row, the last one below the pane");
   assert.equal(barPlace({ ...BAR_AT, firstTop: -200, lastTop: -23 }).side, "below", "a pixel of the last row in the pane");
+});
+
+test("the comment box goes where the bar goes, at its own size", () => {
+  const size = { w: NOTE_BOX.w, h: NOTE_BOX.h };
+  assert.deepEqual(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, size }), { side: "above", top: 200 - BAR.gap - size.h, left: 92 + 24, w: size.w, h: size.h });
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 95, fieldW: 700, size }).left, 900 - BAR.margin - size.w, "kept inside the pane");
+});
+
+test("prose through comments: a press lands by the text Reading shows, the marks and the comment hidden and a point comment its marker", () => {
+  const t = { kind: "paragraph", value: "see {==this==}{>>a long note<<} and that", width: 700 };
+  assert.equal(pressToField(t, "see this ".length * cal.advance, 5, cal), t.value.indexOf("and"));
+  const p = { kind: "paragraph", value: "a{>>note<<} word", width: 700 };
+  assert.equal(pressToField(p, (2 + POINT.length) * cal.advance, 5, cal), p.value.indexOf("word"));
+});
+
+test("a block's comment count sits right of the text column at its first row when the pane leaves room, else at the column's right edge", () => {
+  assert.deepEqual(notesPlace({ viewW: 900, textW: 716, space: 14, rowH: 24 }), { x: 716 + NOTES.gap, y: 14 + (24 - NOTES.h) / 2 });
+  const fits = columnLeft(900) + 716 + NOTES.gap + NOTES.w + NOTES.margin;
+  assert.equal(notesPlace({ viewW: fits, textW: 716, space: 0, rowH: 24 }).x, 716 + NOTES.gap, "just room");
+  assert.equal(notesPlace({ viewW: 600, textW: 536, space: 0, rowH: 24 }).x, 536 - NOTES.w, "a narrow pane: inside the column");
+  assert.equal(notesPlace({ viewW: 900, textW: 716, space: 32, rowH: 35 }).y, 32 + (35 - NOTES.h) / 2, "a heading's taller row");
+});
+
+test("the comments card goes under its count icon, its right edge under the icon's, over it when there is no room below, inside the pane", () => {
+  const at = { iconTop: 100, iconLeft: 818, n: 2, viewW: 900, viewH: 600 };
+  assert.deepEqual(cardPlace(at), { side: "below", top: 100 + NOTES.h + CARD.gap, left: 818 + NOTES.w - CARD.w, w: CARD.w });
+  const low = cardPlace({ ...at, iconTop: 500 });
+  assert.deepEqual(low, { side: "above", bottom: 600 - 500 + CARD.gap, left: 818 + NOTES.w - CARD.w, w: CARD.w }, "its bottom edge over the icon");
+  assert.equal(cardPlace({ ...at, iconTop: 100, viewH: 160 }).side, "below", "no room either way: under it");
+  assert.equal(cardPlace({ ...at, iconLeft: 10 }).left, CARD.margin, "kept inside the pane's left edge");
+  assert.equal(cardPlace({ ...at, iconLeft: 880 }).left, 900 - CARD.margin - CARD.w, "and its right edge");
 });
 
 const ok = (natW, natH) => ({ state: "ok", natW, natH });

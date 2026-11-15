@@ -129,7 +129,8 @@ gives way to the pane's header, which shows the same file name and toggle.
   elsewhere in the file is merged into yours and saved; only when it touches the lines you changed does a banner say
   "Changed on disk" and offer **Keep mine** or **Load theirs**. If the file is deleted or moved, the banner says so
   and **Save again** writes the buffer back.
-- **Footer:** save state, words and lines, the diagram status, and the path with `~` for the home folder.
+- **Footer:** save state, words and lines, the number of [comments](#comments), the diagram status, and the path with
+  `~` for the home folder.
 - **Limits:** a file over 1 MiB (Herdr's `readTextFile` limit) or an unreadable one shows a message instead of its
   text; one over 200 KB says Loading… for a moment while its page is made. A file holding a character the text field
   cannot hold (a lone UTF-16 surrogate) opens read-only. A file on another machine is read-only for now: it reloads by
@@ -177,7 +178,8 @@ file.
 | Cmd+B / Cmd+I / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic or strikethrough (`**`, `*`, `~~`) around the selection, or off it when it has them already; the text stays selected. Spaces at the ends of the selection stay outside the marks. On a caret in a word they mark the word; elsewhere they write the two marks with the caret between them |
 | Cmd+Shift+C | The same for inline code: `` `text` ``, with a longer run of backticks when the text holds some |
 | Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
-| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code and Link: each does what its key does, and shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link closes it |
+| Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
+| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
@@ -191,7 +193,35 @@ needs the Markdown view); typing never re-wraps the source; input methods that c
 Chinese) may misbehave with Enter, while direct typing in any script is fine. **Left out on purpose:** drag handles,
 images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
 (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
-the one toggle, a diagram's zoom and the format bar.
+the one toggle, a diagram's zoom, the format bar and the comments' cards.
+
+### Comments
+
+Select text in a paragraph, heading, list item or quote you are editing and press Cmd+Alt+M, or Comment on the format
+bar: a small box opens over the selection. Type the comment, then Enter saves it and Escape cancels; an empty comment
+saves nothing. With nothing selected the comment goes at the caret. Spaces at the ends of the selection stay outside
+it. Saving is one undo step, and the caret lands after the comment.
+
+Comments are written into the file as [CriticMarkup](https://criticmarkup.com), so an agent reading the file sees each
+one next to the text it is about:
+
+```
+The release {==ships on Friday==}{>>too early? QA needs a day<<} and the docs follow on Monday.
+A comment at a point{>>check the date<<} marks no text.
+```
+
+- **Reading** highlights the marked text in the theme's yellow, its formatting still drawn, and leaves out the marks
+  and the comment; a comment at a point shows as a highlighted 💬. A highlight with no comment (`{==text==}`) is
+  highlighted too. In the block being edited the marks show as written, as a link's address does.
+- **The count** at the right of a block's first row says how many comments it holds. A click on it opens a card listing
+  them: the marked text, the comment, and **Edit** (the block opens with the marked text selected and the box holds
+  the comment) and **Resolve** (the comment and its marks go, the marked text stays). Each is one undo step. A file
+  that can't be edited shows the card without them. The footer counts the file's comments.
+- **Rules:** a comment is one line (line breaks typed into it become spaces, and `<<}` in it is written `<< }` so it
+  can't end the comment early). It stays within one paragraph and never goes inside inline code, a code block, a
+  diagram or a table, where CriticMarkup is plain text. A selection that would cut through or hold another comment, or
+  reach into code, is refused with a notice; comments don't nest. CriticMarkup's suggestions (`{++ ++}`, `{-- --}`,
+  `{~~ ~> ~~}`) are shown as written.
 
 ### Slash menu
 
@@ -305,7 +335,7 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
 
 - **Rename the mod.** `herdr-inline-markdown` is a personal prefix. It names the two mod folders, the shared-state keys
   (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`, `.picker`, `.imageFolder`), the cache folder (`data/herdr-inline-markdown`), the key
-  contexts (`MdText4`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
+  contexts (`MdText5`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
   clone names `my-tabs`, `my-files`, `my-pane` and `my-new-menu`. Rename them together, with one search and replace
   and `npm test`.
 - **Choose a license** and add `LICENSE`. `package.json` is `"private": true` and carries no author or license.
