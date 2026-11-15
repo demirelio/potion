@@ -174,6 +174,9 @@ file.
 | Escape | Stops editing; Enter picks up where you were |
 | Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them |
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code |
+| Cmd+B / Cmd+I / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic or strikethrough (`**`, `*`, `~~`) around the selection, or off it when it has them already; the text stays selected. Spaces at the ends of the selection stay outside the marks. On a caret in a word they mark the word; elsewhere they write the two marks with the caret between them |
+| Cmd+Shift+C | The same for inline code: `` `text` ``, with a longer run of backticks when the text holds some |
+| Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
@@ -185,9 +188,9 @@ leave empty disappears and writes nothing to the file.
 the second is exact; selecting across blocks selects whole blocks (the middle of one block to the middle of another
 needs the Markdown view); typing never re-wraps the source; input methods that compose characters (Japanese,
 Chinese) may misbehave with Enter, while direct typing in any script is fine. **Left out on purpose:** drag handles,
-Cmd+B / Cmd+I, images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is
-drawn), footnotes (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and
-any button besides the one toggle and a diagram's zoom.
+images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
+(a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
+the one toggle and a diagram's zoom.
 
 ### Slash menu
 
@@ -301,7 +304,7 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
 
 - **Rename the mod.** `herdr-inline-markdown` is a personal prefix. It names the two mod folders, the shared-state keys
   (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`, `.picker`, `.imageFolder`), the cache folder (`data/herdr-inline-markdown`), the key
-  contexts (`MdText3`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
+  contexts (`MdText4`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
   clone names `my-tabs`, `my-files`, `my-pane` and `my-new-menu`. Rename them together, with one search and replace
   and `npm test`.
 - **Choose a license** and add `LICENSE`. `package.json` is `"private": true` and carries no author or license.

@@ -13,6 +13,7 @@ import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, SOURCE, installKeys } from "./keys.js";
+import { toggleMark } from "./format.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 
 const SAVE_MS = 700;
@@ -49,6 +50,7 @@ const UNSIZED_VIEW_H = 1200;
 // A recalibration whose samples, once drawn, never report sizes keeps the measurements it had.
 const CAL_GIVE_UP_MS = 2000;
 const UNDO_ACTIONS = { "mdb-undo": -1, "mdb-redo": 1 }, UNDO_KEYS = { "cmd-z": -1, "cmd-shift-z": 1 };
+const MARK_ACTIONS = { "mdb-bold": "bold", "mdb-italic": "italic", "mdb-strike": "strike", "mdb-code": "code", "mdb-link": "link" };
 const SOURCE_TYPING = "source";
 const spliceOf = d => ({ start: d.at, end: d.at + d.removed, insert: d.inserted });
 
@@ -91,6 +93,27 @@ function caretOf(state) {
     const { start, end } = state.selected_range();
     return { start: Math.min(start, end), end: Math.max(start, end) };
   } catch { return null; }
+}
+const docRange = (f, r) => ({ start: fieldToDoc(f, r.start), end: fieldToDoc(f, r.end) });
+const fieldRange = (f, r) => ({ start: docToField(f, r.start), end: docToField(f, r.end) });
+// Field value `a` to `b` as splices { at, removed, inserted } on either side of the text both keep, the later first. A
+// field shows a soft line break as a space, and typing over it would write the space into the file.
+function marksEdits(a, b) {
+  const d = diff(a, b), removed = a.slice(d.at, d.at + d.removed), inserted = d.inserted;
+  const wrapAt = removed ? inserted.indexOf(removed) : -1, unwrapAt = inserted ? removed.indexOf(inserted) : -1;
+  if (wrapAt >= 0) {
+    return [
+      { at: d.at + removed.length, removed: 0, inserted: inserted.slice(wrapAt + removed.length) },
+      { at: d.at, removed: 0, inserted: inserted.slice(0, wrapAt) },
+    ].filter(e => e.inserted);
+  }
+  if (unwrapAt >= 0) {
+    return [
+      { at: d.at + unwrapAt + inserted.length, removed: removed.length - unwrapAt - inserted.length, inserted: "" },
+      { at: d.at, removed: unwrapAt, inserted: "" },
+    ].filter(e => e.removed);
+  }
+  return [d];
 }
 
 const byKey = (doc, key) => doc.blocks.find(b => b.key === key) ?? null;
@@ -156,6 +179,7 @@ function pendingRecord(key, b) {
 }
 const FENCE_TYPED = /^(```|~~~)[^`\n]*$/;
 const RULE_TYPED = /^(---|\*\*\*|___)$/;
+const EMPTY_MARKS = /^(?:\*{4,}|~{4,})$/;
 // The field of a fenced block or front matter with no line between its fences shows an empty one there, so that the
 // caret never has to sit on a fence line; the source gets that line with the first change typed in the field.
 const withInnerLine = (b, value) => {
@@ -876,6 +900,7 @@ export class Editor {
     else if (name === "mdb-left-start") { this.cross(-1, cx); this.ownKeyUp = "left"; }
     else if (name === "mdb-right-end") { this.cross(1, cx); this.ownKeyUp = "right"; }
     else if (name === "mdb-escape") this.escape(cx);
+    else if (MARK_ACTIONS[name]) this.format(MARK_ACTIONS[name], cx);
   }
 
   listen(cx) {
@@ -2063,13 +2088,14 @@ export class Editor {
   // The first text typed into the pending block writes it where it was opened. Spaces alone write nothing, as they
   // would make no block. A marker alone (`#`, `-`, `1.`, `>`) is held back until the shortcut's space, any other
   // character, Enter or leaving the block writes it as typed (writeHeld). So is a slash that opens the menu, with what
-  // follows it, while the menu is open: a pick writes the block it makes instead.
+  // follows it, while the menu is open: a pick writes the block it makes instead. So are the marks of bold or
+  // strikethrough around nothing, which alone would make a rule or a fence.
   pendingTyped(value, d, own, cx) {
     const k = d.at + d.inserted.length;
     this.seen = value;
     this.known = { start: k, end: k, valid: true };
     this.slashChanged({ a: d.at, r: d.removed, ins: d.inserted }, value, own, cx);
-    if (!value.trim() || loneMarker(value) || this.slashOpen()) return;
+    if (!value.trim() || loneMarker(value) || EMPTY_MARKS.test(value) || this.slashOpen()) return;
     this.writePending(value, k, cx);
   }
 
@@ -2655,9 +2681,14 @@ export class Editor {
 
   toCell(dir, r, cx) {
     const cell = nextCell(this.seen, r.start, dir);
-    if (!cell || !this.guard(() => this.field.set_selected_range(cell))) return;
-    this.known = { start: cell.start, end: cell.end, valid: true };
+    if (!cell || !this.selectField(cell)) return;
     this.revealCaret(cx);
+  }
+
+  selectField({ start, end }) {
+    if (!this.guard(() => this.field.set_selected_range({ start, end }))) return false;
+    this.known = { start, end, valid: true };
+    return true;
   }
 
   // The page and the caret move a page, the caret to the start of the row at its place on screen unless the page
@@ -2735,6 +2766,32 @@ export class Editor {
     return true;
   }
 
+  // A format key's marks (toggleMark) go in as one entry of the history, whose undo puts the selection back.
+  format(mark, cx) {
+    const b = this.pending ? null : this.blockByKey(this.activeKey);
+    if (!this.pending && !(b && isText(b))) return;
+    const r = this.caretNow(), value = this.seen;
+    const next = r && toggleMark(value, r, mark, mark === "link" ? cx.read_from_clipboard?.() : "");
+    if (!next) return;
+    const before = this.f && !this.pending ? docRange(this.f, r) : null, was = this.text;
+    if (!this.typeEdits(value, marksEdits(value, next.value), cx) || !this.selectField(next)) return;
+    if (before && this.text !== was) this.history.select(this.text, before, docRange(this.f, next));
+  }
+
+  // Types the field splices `edits` of `value`, the later first, as one entry of the history. -> false when the field
+  // stops showing what they leave: the first can write a block not written yet, whose parse may change the field.
+  typeEdits(value, edits, cx) {
+    let shown = value, entries = 0;
+    for (const e of edits) {
+      const text = this.text;
+      if (this.field.value() !== shown || !this.selectField({ start: e.at, end: e.at + e.removed }) || !this.typeText(e.inserted, cx)) return false;
+      shown = shown.slice(0, e.at) + e.inserted + shown.slice(e.at + e.removed);
+      if (this.text !== text) entries++;
+    }
+    for (; entries > 1; entries--) this.history.joinLast(this.text);
+    return this.field.value() === shown;
+  }
+
   pasted(s, cx) {
     this.release();
     this.change(s, cx, { caretAfter: s.caret });
@@ -2765,14 +2822,16 @@ export class Editor {
     }
     this.release();
     this.setText(text, cx, false);
-    this.openAt(u.caret, cx);
+    this.openAt(u.caret, cx, null, u.select);
   }
 
-  openAt(at, cx, caret = null) {
+  // The block holding document offset `at` opens with field caret `caret`, else the document range `select` selected,
+  // else the caret where `at` falls.
+  openAt(at, cx, caret = null, select = null) {
     if (!this.editable()) return this.handle.focus();
     const b = this.holding(at);
     if (!b) return this.openPending(cx);
-    if (!this.activate(b.key, caret ?? docToField(fieldOf(this.doc, b), at), cx)) this.handle.focus();
+    if (!this.activate(b.key, caret ?? fieldRange(fieldOf(this.doc, b), select ?? { start: at, end: at }), cx)) this.handle.focus();
   }
 
   // The menu belongs to one activation of a writable block and only while its field shows "/" + query where the menu

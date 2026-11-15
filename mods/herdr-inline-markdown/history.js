@@ -44,7 +44,8 @@ const joinOf = g => g.join ?? g.start + g.inserted.length;
 
 // -> a history. record(text, splice, meta) takes the text before the splice and
 // meta { caretBefore, caretAfter, typing, key, time, join }; undo(text) and redo(text) hand back the splice to apply
-// to `text`, with the caret, or null when there is none or the entry does not match `text`.
+// to `text`, with the caret and, for an entry given them by select(), the `select` range, or null when there is none or
+// the entry does not match `text`.
 export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, groupMs = GROUP_MS } = {}) {
   let done = [], undone = [], open = null, size = 0;
 
@@ -101,33 +102,52 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
     return e;
   };
 
+  // Folds `s`, made on `text` right after the newest entry, into that entry: a fix-up of the same edit (the fence a
+  // commit closes, a shortcut's rewrite of the marker), so that one undo takes back both.
+  const amend = (text, s, meta = {}) => {
+    const e = done.at(-1);
+    if (!e || !matches(text, e.start, e.inserted)) return record(text, s, meta);
+    const before = text.slice(0, e.start) + e.removed + text.slice(e.start + e.inserted.length);
+    const d = diff(before, applySplice(text, s));
+    size -= bytes(e);
+    undone = [];
+    open = null;
+    if (!d.removed && !d.inserted) {
+      done.pop();
+      return null;
+    }
+    e.start = d.at;
+    e.removed = before.slice(d.at, d.at + d.removed);
+    e.inserted = d.inserted;
+    e.caretAfter = meta.caretAfter ?? s.caret ?? e.caretAfter;
+    e.before = null;
+    e.last = null;
+    delete e.join;
+    delete e.selectAfter;
+    size += bytes(e);
+    return e;
+  };
+
   return {
     record,
-    // Folds `s`, made on `text` right after the newest entry, into that entry: a fix-up of the same edit (the fence a
-    // commit closes, a shortcut's rewrite of the marker), so that one undo takes back both.
-    amend(text, s, meta = {}) {
+    amend,
+    // Folds the newest entry, which left `text`, into the one before it: two edits of one key, one undo.
+    joinLast(text) {
       const e = done.at(-1);
-      if (!e || !matches(text, e.start, e.inserted)) return record(text, s, meta);
-      const before = text.slice(0, e.start) + e.removed + text.slice(e.start + e.inserted.length);
-      const d = diff(before, applySplice(text, s));
+      if (done.length < 2 || !matches(text, e.start, e.inserted)) return;
+      done.pop();
       size -= bytes(e);
-      undone = [];
-      open = null;
-      if (!d.removed && !d.inserted) {
-        done.pop();
-        return null;
-      }
-      e.start = d.at;
-      e.removed = before.slice(d.at, d.at + d.removed);
-      e.inserted = d.inserted;
-      e.caretAfter = meta.caretAfter ?? s.caret ?? e.caretAfter;
-      e.before = null;
-      e.last = null;
-      delete e.join;
-      size += bytes(e);
-      return e;
+      const before = text.slice(0, e.start) + e.removed + text.slice(e.start + e.inserted.length);
+      amend(before, { start: e.start, end: e.start + e.removed.length, insert: e.inserted }, { caretBefore: e.caretBefore, caretAfter: e.caretAfter });
     },
     close() { open = null; },
+    // The newest entry, which left `text`, puts back the document range `before` on undo and `after` on redo.
+    select(text, before, after) {
+      const e = done.at(-1);
+      if (!e || !matches(text, e.start, e.inserted)) return;
+      e.selectBefore = before;
+      e.selectAfter = after;
+    },
     // Splits the newest edit off its group into an entry of its own (the space that completed a shortcut).
     isolateLast() {
       const g = done.at(-1);
@@ -146,7 +166,7 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
       size -= bytes(e);
       undone.push(e);
       open = null;
-      return { start: e.start, end: e.start + e.inserted.length, insert: e.removed, caret: e.caretBefore };
+      return { start: e.start, end: e.start + e.inserted.length, insert: e.removed, caret: e.caretBefore, ...(e.selectBefore && { select: e.selectBefore }) };
     },
     redo(text) {
       const e = undone.at(-1);
@@ -156,7 +176,7 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
       done.push(e);
       size += bytes(e);
       open = null;
-      return { start: e.start, end: e.start + e.removed.length, insert: e.inserted, caret: e.caretAfter };
+      return { start: e.start, end: e.start + e.removed.length, insert: e.inserted, caret: e.caretAfter, ...(e.selectAfter && { select: e.selectAfter }) };
     },
     // An outside change E (a reload, a merged disk change), as a splice of the current text: entries before and after it
     // are kept with their offsets moved, an entry it overlaps is dropped with every older one, and redo is cleared.
@@ -167,19 +187,25 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
       open = null;
       for (let i = done.length - 1; i >= 0; i--) {
         const x = done[i], grow = len - (end - start), insEnd = x.start + x.inserted.length;
-        const moveCarets = at => {
-          if (x.caretBefore >= at) x.caretBefore += grow;
-          if (x.caretAfter >= at) x.caretAfter += grow;
+        const past = (p, at) => (p >= at ? p + grow : p);
+        const moveBefore = at => {
+          x.caretBefore = past(x.caretBefore, at);
+          if (x.selectBefore) x.selectBefore = { start: past(x.selectBefore.start, at), end: past(x.selectBefore.end, at) };
+        };
+        const moveAfter = at => {
+          x.caretAfter = past(x.caretAfter, at);
+          if (x.selectAfter) x.selectAfter = { start: past(x.selectAfter.start, at), end: past(x.selectAfter.end, at) };
         };
         if (start >= insEnd) {
-          if (x.caretAfter >= end) x.caretAfter += grow;
+          moveAfter(end);
           const back = x.inserted.length - x.removed.length;
           start -= back;
           end -= back;
-          if (x.caretBefore >= end) x.caretBefore += grow;
+          moveBefore(end);
         } else if (end <= x.start) {
           x.start += grow;
-          moveCarets(end);
+          moveBefore(end);
+          moveAfter(end);
         } else {
           for (const gone of done.splice(0, i + 1)) size -= bytes(gone);
           break;

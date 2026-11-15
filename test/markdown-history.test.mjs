@@ -268,6 +268,75 @@ test("rebase moves an entry's carets with its offsets", () => {
   assert.equal(run("zzabc\n", h.undo()), "zzab\n");
 });
 
+// "Hello world." made bold as one entry, the word selected before and after it.
+function bolded() {
+  const h = createHistory(), before = "Hello world.\n", s = { start: 6, end: 11, insert: "**world**" };
+  h.record(before, s, { caretBefore: 11, caretAfter: 15 });
+  return { h, t: run(before, s) };
+}
+
+test("the newest entry given selections puts back the one before it on undo and the one after it on redo", () => {
+  const { h, t } = bolded();
+  h.select(t, { start: 6, end: 11 }, { start: 8, end: 13 });
+  const u = h.undo();
+  assert.deepEqual(u, { start: 6, end: 15, insert: "world", caret: 11, select: { start: 6, end: 11 } });
+  assert.deepEqual(h.redo(), { start: 6, end: 11, insert: "**world**", caret: 15, select: { start: 8, end: 13 } });
+  const plain = createHistory();
+  plain.record("ab\n", { start: 2, end: 2, insert: "c" }, { caretBefore: 2, caretAfter: 3 });
+  assert.deepEqual(plain.undo(), { start: 2, end: 3, insert: "", caret: 2 }, "an entry without them gives its caret only");
+});
+
+test("select on a text the newest entry did not leave changes nothing", () => {
+  const { h } = bolded();
+  h.select("Hello world.\n", { start: 6, end: 11 }, { start: 8, end: 13 });
+  assert.equal("select" in h.undo(), false);
+});
+
+test("rebase moves an entry's selections with its carets", () => {
+  const { h } = bolded();
+  h.select("Hello **world**.\n", { start: 6, end: 11 }, { start: 8, end: 13 });
+  h.rebase({ start: 0, end: 0, insert: "zz" });
+  assert.deepEqual(h.undo().select, { start: 8, end: 13 });
+  assert.deepEqual(h.redo().select, { start: 10, end: 15 });
+  const after = bolded();
+  after.h.select("Hello **world**.\n", { start: 6, end: 11 }, { start: 8, end: 13 });
+  after.h.rebase({ start: 16, end: 16, insert: "!" });
+  assert.deepEqual(after.h.undo().select, { start: 6, end: 11 }, "a splice after the entry leaves them");
+});
+
+test("joinLast folds the newest entry into the one before it: one undo takes back both, with the caret from before the first", () => {
+  const h = createHistory(), base = "a\nb\nc\n";
+  let t = base;
+  for (const [s, caretBefore, caretAfter] of [[{ start: 3, end: 3, insert: "**" }, 3, 5], [{ start: 2, end: 2, insert: "**" }, 2, 4]]) {
+    h.record(t, s, { caretBefore, caretAfter });
+    t = run(t, s);
+  }
+  h.joinLast(t);
+  assert.deepEqual(h.entries, [{ start: 2, removed: "b", inserted: "**b**", caretBefore: 3, caretAfter: 4 }]);
+  const u = h.undo();
+  assert.deepEqual([run(t, u), u.caret], [base, 3]);
+  const r = h.redo();
+  assert.deepEqual([run(base, r), r.caret], [t, 4]);
+  const one = createHistory();
+  one.record(base, { start: 0, end: 0, insert: "x" });
+  one.joinLast(`x${base}`);
+  assert.equal(one.entries.length, 1, "a lone entry stays");
+  const other = createHistory();
+  other.record(base, { start: 0, end: 0, insert: "x" });
+  other.record(`x${base}`, { start: 1, end: 1, insert: "y" });
+  other.joinLast(base);
+  assert.equal(other.entries.length, 2, "on a text the newest entry did not leave, nothing changes");
+});
+
+test("amend keeps the selection an undo puts back and drops the one a redo would, which the fix-up changed", () => {
+  const { h, t } = bolded();
+  h.select(t, { start: 6, end: 11 }, { start: 8, end: 13 });
+  h.amend(t, { start: 15, end: 16, insert: "!" });
+  const u = h.undo();
+  assert.deepEqual(u.select, { start: 6, end: 11 });
+  assert.equal("select" in h.redo(), false);
+});
+
 test("clear empties both stacks", () => {
   const h = createHistory();
   h.record("", { start: 0, end: 0, insert: "a" });

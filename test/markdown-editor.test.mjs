@@ -3096,7 +3096,12 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
     assert.deepEqual(actions(key), [action], key);
   }
   assert.deepEqual(table.filter(x => /^cmd-shift-(up|down)$/.test(x.keystroke)), [], "the keys that moved a block before are not bound");
-  assert.deepEqual([TEXT, RAW, SOURCE], ["MdText3", "MdRaw3", "MdSource3"], "the table changed, so its contexts are new ones and the old ones stay inert");
+  for (const [key, action] of [["cmd-b", "mdb-bold"], ["cmd-i", "mdb-italic"], ["cmd-shift-x", "mdb-strike"], ["cmd-shift-c", "mdb-code"], ["cmd-k", "mdb-link"]]) {
+    assert.deepEqual(contexts(key), [`${TEXT} > Input`], `${key}: formats the selection in a text block only`);
+    assert.deepEqual(actions(key), [action], key);
+  }
+  assert.deepEqual([TEXT, RAW, SOURCE], ["MdText4", "MdRaw4", "MdSource4"], "the table changed, so its contexts are new ones and the old ones stay inert");
+  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source)[0-3]\b/.test(x.context)), [], "no context of an older table");
   for (const key of ["backspace", "left", "right", "escape"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
   for (const key of ["delete", "cmd-a", "cmd-c", "cmd-x", "home", "end", "shift-up", "alt-left", "cmd-s", "cmd-e", "a"]) assert.deepEqual(contexts(key), [], key);
   const root = must(a.tree(), "md-root");
@@ -6800,4 +6805,203 @@ test("the pane header's Markdown toggle switches this pane's copy at every press
   await press("pa", 4);
   assert.equal(m.view.mode, "markdown", "fourth press");
   assert.deepEqual(state.shared["herdr-inline-markdown.heads"]?.pa, { name: "note.md", mode: "markdown" });
+});
+
+const FORMAT_ACTIONS = ["mdb-bold", "mdb-italic", "mdb-strike", "mdb-code", "mdb-link"];
+
+test("Cmd+B, Cmd+I, Cmd+Shift+X and Cmd+Shift+C put marks around the selection the field holds, which stays selected inside them; the key again takes them off", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const field = m.view.field;
+  field.select(6, 11);
+  act(m, "mdb-bold");
+  assert.equal(m.view.text, "Hello **world**.\n\nEnd\n");
+  assert.deepEqual(editing(m), [keyAt(m, 0), "Hello **world**.", { start: 8, end: 13 }]);
+  act(m, "mdb-italic");
+  assert.deepEqual([m.view.text, field.selection], ["Hello ***world***.\n\nEnd\n", { start: 9, end: 14 }], "italic inside bold adds a star");
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.text, field.selection], ["Hello *world*.\n\nEnd\n", { start: 7, end: 12 }]);
+  act(m, "mdb-italic");
+  assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }]);
+  for (const [action, marked] of [["mdb-strike", "~~world~~"], ["mdb-code", "`world`"]]) {
+    act(m, action);
+    assert.equal(m.view.text, `Hello ${marked}.\n\nEnd\n`, action);
+    act(m, action);
+    assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }], action);
+  }
+  field.select(5, 11);
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.text, field.selection], ["Hello **world**.\n\nEnd\n", { start: 8, end: 13 }], "the space before the word stays outside the marks");
+  await m.save();
+  assert.equal(state.disk.get(FILE), "Hello **world**.\n\nEnd\n");
+});
+
+test("a format key on a caret in a word marks the word, the caret staying in it; on a caret elsewhere it writes the marks around it", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const field = m.view.field;
+  field.select(8);
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.text, field.selection], ["Hello **world**.\n\nEnd\n", { start: 10, end: 10 }]);
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 8, end: 8 }]);
+  field.select(5);
+  act(m, "mdb-italic");
+  assert.deepEqual([m.view.text, field.selection], ["Hello** world.\n\nEnd\n", { start: 6, end: 6 }]);
+  field.type("x", m.cx);
+  assert.equal(m.view.text, "Hello*x* world.\n\nEnd\n", "what is typed next goes between the marks");
+});
+
+test("one Cmd+Z takes back one format key and puts back the text and the selection there was; Cmd+Shift+Z formats again with its selection", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  m.view.field.select(6, 11);
+  act(m, "mdb-bold");
+  act(m, "mdb-strike");
+  assert.equal(m.view.text, "Hello **~~world~~**.\n\nEnd\n");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...editing(m)], ["Hello **world**.\n\nEnd\n", keyAt(m, 0), "Hello **world**.", { start: 8, end: 13 }]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...editing(m)], ["Hello world.\n\nEnd\n", keyAt(m, 0), "Hello world.", { start: 6, end: 11 }]);
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, ...editing(m)], ["Hello **world**.\n\nEnd\n", keyAt(m, 0), "Hello **world**.", { start: 8, end: 13 }]);
+  m.view.field.select(15);
+  m.view.field.type("!", m.cx);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Hello **world**.\n\nEnd\n", "typing after a format key is an entry of its own");
+  m.view.field.select(9);
+  act(m, "mdb-code");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world**.\n\nEnd\n", { start: 9, end: 9 }], "a caret in a word comes back where it was");
+});
+
+test("Cmd+K links the selection with the caret in the parentheses, or with the web address the clipboard holds and the caret after it", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const field = m.view.field;
+  m.cx.held = undefined;
+  field.select(6, 11);
+  act(m, "mdb-link");
+  assert.deepEqual([m.view.text, field.selection], ["Hello [world]().\n\nEnd\n", { start: 14, end: 14 }]);
+  field.type("https://a.org", m.cx);
+  assert.equal(m.view.text, "Hello [world](https://a.org).\n\nEnd\n");
+  act(m, "mdb-undo");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }]);
+  m.cx.held = "  https://example.com/page\n";
+  act(m, "mdb-link");
+  assert.deepEqual([m.view.text, field.selection], ["Hello [world](https://example.com/page).\n\nEnd\n", { start: 39, end: 39 }]);
+  const log = field.log.length;
+  field.select(8, 10);
+  act(m, "mdb-link");
+  assert.equal(m.view.text, "Hello [world](https://example.com/page).\n\nEnd\n", "a link's text is not linked again");
+  assert.deepEqual(replaces(field, log), []);
+});
+
+test("a heading and a list item keep their hidden # and - when their text is formatted", async () => {
+  const m = await page("# Title\n\n- one\n- two\n", { 0: 35, 1: 38, 2: 30 });
+  await openBlock(m, 0);
+  assert.equal(m.view.field.value(), "Title");
+  m.view.field.select(0, 5);
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["# **Title**\n\n- one\n- two\n", "**Title**", { start: 2, end: 7 }]);
+  await openBlock(m, 2);
+  assert.equal(m.view.field.value(), "two");
+  m.view.field.select(1);
+  act(m, "mdb-code");
+  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["# **Title**\n\n- one\n- `two`\n", "`two`", { start: 2, end: 2 }]);
+  assert.deepEqual(m.view.doc.blocks.map(b => b.kind), ["heading", "item", "item"]);
+});
+
+test("the paragraph a first letter writes below the last block can be formatted, and so can the empty one before it", async () => {
+  const m = await page("Intro\n", { 0: 24 });
+  await clickAt(m, { x: X + 50, y: 28 + m.view.sums[1] + 40 });
+  assert.ok(pendingOf(m), "not written yet");
+  typed(m, "bold");
+  assert.equal(m.view.text, "Intro\n\nbold\n");
+  m.view.field.select(0, 4);
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["Intro\n\n**bold**\n", "**bold**", { start: 2, end: 6 }]);
+  reset();
+  const e = await page("Intro\n", { 0: 24 });
+  await clickAt(e, { x: X + 50, y: 28 + e.view.sums[1] + 40 });
+  assert.ok(pendingOf(e));
+  act(e, "mdb-italic");
+  assert.deepEqual([e.view.field.value(), e.view.field.selection], ["**", { start: 1, end: 1 }]);
+  typed(e, "x");
+  assert.equal(e.view.text, "Intro\n\n*x*\n");
+  await e.save();
+  assert.equal(state.disk.get(FILE), "Intro\n\n*x*\n");
+});
+
+test("in a code block or a table the format actions change nothing", async () => {
+  const doc = "Hello\n\n```\ncode\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+  const m = await page(doc, { 0: 24, 1: 14 + 26 + 19.5, 2: 14 + 26 + 60 });
+  for (const i of [1, 2]) {
+    await openBlock(m, i);
+    const field = m.view.field, log = field.log.length;
+    field.select(0, 3);
+    for (const name of FORMAT_ACTIONS) act(m, name);
+    assert.deepEqual([m.view.text, replaces(field, log), m.view.history.canUndo], [doc, [], false], m.view.doc.blocks[i].kind);
+  }
+});
+
+test("a format key closes the slash menu first", async () => {
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  typed(m, "/");
+  assert.ok(menuOf(m));
+  act(m, "mdb-bold");
+  assert.deepEqual([menuOf(m), m.view.slash, m.view.text], [null, null, "Intro\n\n/****\n\nOutro\n"]);
+});
+
+test("offsets after an emoji in the field fall in the right place of the file", async () => {
+  const m = await page("Intro\n\n😀 hello world\n", { 0: 24, 1: 38 });
+  await openBlock(m, 1);
+  m.view.field.select(3, 8);
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Intro\n\n😀 **hello** world\n", { start: 5, end: 10 }]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Intro\n\n😀 hello world\n", { start: 3, end: 8 }]);
+});
+
+test("bold or strikethrough around nothing in the block below the last one waits for a letter, as alone its marks would make a rule or a code fence", async () => {
+  for (const [action, marks, written] of [["mdb-bold", "****", "**x**"], ["mdb-strike", "~~~~", "~~x~~"]]) {
+    reset();
+    const m = await page("Intro\n", { 0: 24 });
+    await clickAt(m, { x: X + 50, y: 28 + m.view.sums[1] + 40 });
+    act(m, action);
+    assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection, Boolean(pendingOf(m))], ["Intro\n", marks, { start: 2, end: 2 }, true], action);
+    act(m, action);
+    assert.deepEqual([m.view.text, m.view.field.value(), Boolean(pendingOf(m))], ["Intro\n", "", true], `${action} again takes them away`);
+    act(m, action);
+    typed(m, "x");
+    assert.deepEqual([m.view.text, m.view.field.value(), m.view.doc.blocks.map(b => b.kind)], [`Intro\n\n${written}\n`, written, ["paragraph", "paragraph"]], action);
+    await m.save();
+    assert.equal(state.disk.get(FILE), `Intro\n\n${written}\n`, action);
+  }
+});
+
+test("marks around a selection across the line breaks of a hard-wrapped paragraph, quote or item leave those breaks in the file", async () => {
+  for (const [doc, select, action, marked] of [
+    ["Para one\nline two\n\nEnd\n", [5, 13], "mdb-italic", "Para *one\nline* two\n\nEnd\n"],
+    ["> one\n> two\n\nEnd\n", [0, 7], "mdb-bold", "> **one\n> two**\n\nEnd\n"],
+    ["- item one\n  more\n\nEnd\n", [5, 13], "mdb-strike", "- item ~~one\n  more~~\n\nEnd\n"],
+    ["Para one\nline two\n\nEnd\n", [5, 13], "mdb-link", "Para [one\nline]() two\n\nEnd\n"],
+  ]) {
+    reset();
+    const m = await page(doc, { 0: 60, 1: 38 });
+    await openBlock(m, 0);
+    const shown = m.view.field.value();
+    m.view.field.select(...select);
+    act(m, action);
+    assert.equal(m.view.text, marked, action);
+    if (action !== "mdb-link") {
+      act(m, action);
+      assert.deepEqual([m.view.text, m.view.field.value()], [doc, shown], `${action} again`);
+      act(m, action);
+    }
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, m.view.field.selection], [doc, { start: select[0], end: select[1] }], `${action}: one undo`);
+  }
 });
