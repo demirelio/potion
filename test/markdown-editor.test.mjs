@@ -12,7 +12,7 @@ const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.j
 const { stats, fileKey, diagramKey, mermaidConfig, sharpName } = await import("../mods/herdr-inline-markdown/lib.js");
 const { owners, STYLES, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { theme } = await import("./mocks/herdr.mjs");
-const { liveFields, TextareaState } = await import("./mocks/gpui-base.mjs");
+const { echoTokenSets, liveFields, TextareaState } = await import("./mocks/gpui-base.mjs");
 const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, NOTE, INSTALLED } = await import("../mods/herdr-inline-markdown/keys.js");
@@ -6818,18 +6818,18 @@ test("the pane header's Markdown toggle switches this pane's copy at every press
 
 const FORMAT_ACTIONS = ["mdb-bold", "mdb-italic", "mdb-strike", "mdb-code", "mdb-link"];
 
-test("Cmd+B, Cmd+I, Cmd+Shift+X and Cmd+Shift+C put marks around the selection the field holds, which stays selected inside them; the key again takes them off", async () => {
+test("Cmd+B, Cmd+I, Cmd+Shift+X and Cmd+Shift+C put marks around the selection the field holds, which stays selected with its hidden marks; the key again takes them off", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
   const field = m.view.field;
   field.select(6, 11);
   act(m, "mdb-bold");
   assert.equal(m.view.text, "Hello **world**.\n\nEnd\n");
-  assert.deepEqual(editing(m), [keyAt(m, 0), "Hello **world**.", { start: 8, end: 13 }]);
+  assert.deepEqual(editing(m), [keyAt(m, 0), "Hello **world**.", { start: 6, end: 15 }]);
   act(m, "mdb-italic");
-  assert.deepEqual([m.view.text, field.selection], ["Hello ***world***.\n\nEnd\n", { start: 9, end: 14 }], "italic inside bold adds a star");
+  assert.deepEqual([m.view.text, field.selection], ["Hello ***world***.\n\nEnd\n", { start: 6, end: 17 }], "italic with bold adds a star");
   act(m, "mdb-bold");
-  assert.deepEqual([m.view.text, field.selection], ["Hello *world*.\n\nEnd\n", { start: 7, end: 12 }]);
+  assert.deepEqual([m.view.text, field.selection], ["Hello *world*.\n\nEnd\n", { start: 6, end: 13 }]);
   act(m, "mdb-italic");
   assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }]);
   for (const [action, marked] of [["mdb-strike", "~~world~~"], ["mdb-code", "`world`"]]) {
@@ -6840,7 +6840,7 @@ test("Cmd+B, Cmd+I, Cmd+Shift+X and Cmd+Shift+C put marks around the selection t
   }
   field.select(5, 11);
   act(m, "mdb-bold");
-  assert.deepEqual([m.view.text, field.selection], ["Hello **world**.\n\nEnd\n", { start: 8, end: 13 }], "the space before the word stays outside the marks");
+  assert.deepEqual([m.view.text, field.selection], ["Hello **world**.\n\nEnd\n", { start: 6, end: 15 }], "the space before the word stays outside the marks");
   await m.save();
   assert.equal(state.disk.get(FILE), "Hello **world**.\n\nEnd\n");
 });
@@ -6867,13 +6867,13 @@ test("one Cmd+Z takes back one format key and puts back the text and the selecti
   m.view.field.select(6, 11);
   act(m, "mdb-bold");
   act(m, "mdb-strike");
-  assert.equal(m.view.text, "Hello **~~world~~**.\n\nEnd\n");
+  assert.equal(m.view.text, "Hello ~~**world**~~.\n\nEnd\n", "the selection holds the bold marks: the strike goes around them");
   act(m, "mdb-undo");
-  assert.deepEqual([m.view.text, ...editing(m)], ["Hello **world**.\n\nEnd\n", keyAt(m, 0), "Hello **world**.", { start: 8, end: 13 }]);
+  assert.deepEqual([m.view.text, ...editing(m)], ["Hello **world**.\n\nEnd\n", keyAt(m, 0), "Hello **world**.", { start: 6, end: 15 }]);
   act(m, "mdb-undo");
   assert.deepEqual([m.view.text, ...editing(m)], ["Hello world.\n\nEnd\n", keyAt(m, 0), "Hello world.", { start: 6, end: 11 }]);
   act(m, "mdb-redo");
-  assert.deepEqual([m.view.text, ...editing(m)], ["Hello **world**.\n\nEnd\n", keyAt(m, 0), "Hello **world**.", { start: 8, end: 13 }]);
+  assert.deepEqual([m.view.text, ...editing(m)], ["Hello **world**.\n\nEnd\n", keyAt(m, 0), "Hello **world**.", { start: 6, end: 15 }]);
   m.view.field.select(15);
   m.view.field.type("!", m.cx);
   act(m, "mdb-undo");
@@ -6913,7 +6913,7 @@ test("a heading and a list item keep their hidden # and - when their text is for
   assert.equal(m.view.field.value(), "Title");
   m.view.field.select(0, 5);
   act(m, "mdb-bold");
-  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["# **Title**\n\n- one\n- two\n", "**Title**", { start: 2, end: 7 }]);
+  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["# **Title**\n\n- one\n- two\n", "**Title**", { start: 0, end: 9 }]);
   await openBlock(m, 2);
   assert.equal(m.view.field.value(), "two");
   m.view.field.select(1);
@@ -6930,7 +6930,7 @@ test("the paragraph a first letter writes below the last block can be formatted,
   assert.equal(m.view.text, "Intro\n\nbold\n");
   m.view.field.select(0, 4);
   act(m, "mdb-bold");
-  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["Intro\n\n**bold**\n", "**bold**", { start: 2, end: 6 }]);
+  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["Intro\n\n**bold**\n", "**bold**", { start: 0, end: 8 }]);
   reset();
   const e = await page("Intro\n", { 0: 24 });
   await clickAt(e, { x: X + 50, y: 28 + e.view.sums[1] + 40 });
@@ -6969,7 +6969,7 @@ test("offsets after an emoji in the field fall in the right place of the file", 
   await openBlock(m, 1);
   m.view.field.select(3, 8);
   act(m, "mdb-bold");
-  assert.deepEqual([m.view.text, m.view.field.selection], ["Intro\n\n😀 **hello** world\n", { start: 5, end: 10 }]);
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Intro\n\n😀 **hello** world\n", { start: 3, end: 12 }]);
   act(m, "mdb-undo");
   assert.deepEqual([m.view.text, m.view.field.selection], ["Intro\n\n😀 hello world\n", { start: 3, end: 8 }]);
 });
@@ -7246,7 +7246,7 @@ test("the format bar moves with the page as it scrolls, hidden while its row is 
   assert.equal(barOf(m).style.top, row - BAR.gap - h, "back with its row");
 });
 
-test("a press on a bar button does what its key does: the selection stays inside the marks and the bar stays, its button pressed, so marks stack; a second press takes the mark off", async () => {
+test("a press on a bar button does what its key does: the selection keeps the word, its marks with it, and the bar stays, its button pressed, so marks stack; a second press takes the mark off", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
   await selectByMouse(m, 6, 11);
@@ -7255,16 +7255,16 @@ test("a press on a bar button does what its key does: the selection stays inside
     const stopped = m.cx.stopped;
     barPress(m, mark);
     assert.equal(m.cx.stopped - stopped, 1, `${mark}: the press goes no further`);
-    assert.deepEqual([m.view.text, ...editing(m)], [`Hello ${marked}.\n\nEnd\n`, keyAt(m, 0), `Hello ${marked}.`, { start: 6 + n, end: 11 + n }], mark);
+    assert.deepEqual([m.view.text, ...editing(m)], [`Hello ${marked}.\n\nEnd\n`, keyAt(m, 0), `Hello ${marked}.`, { start: 6, end: 11 + 2 * n }], mark);
     assert.deepEqual(pressedMarks(m), [mark], `${mark}: the bar stays, its button pressed`);
     barPress(m, mark);
     assert.deepEqual([m.view.text, m.view.field.selection, pressedMarks(m)], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }, []], `${mark} again`);
   }
   barPress(m, "bold");
   barPress(m, "italic");
-  assert.deepEqual([m.view.text, m.view.field.selection, pressedMarks(m)], ["Hello ***world***.\n\nEnd\n", { start: 9, end: 14 }, ["bold", "italic"]], "stacked");
+  assert.deepEqual([m.view.text, m.view.field.selection, pressedMarks(m)], ["Hello ***world***.\n\nEnd\n", { start: 6, end: 17 }, ["bold", "italic"]], "stacked");
   act(m, "mdb-undo");
-  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world**.\n\nEnd\n", { start: 8, end: 13 }], "one Cmd+Z per press");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world**.\n\nEnd\n", { start: 6, end: 15 }], "one Cmd+Z per press");
 });
 
 test("a format key with the bar open keeps it open over the marked text, showing the new state", async () => {
@@ -7280,6 +7280,8 @@ test("a button shows pressed while its mark is on the selection, by the test its
   await openBlock(m, 0);
   const value = m.view.field.value(), span = word => [value.indexOf(word), value.indexOf(word) + word.length];
   for (const [word, marks] of [["bold", ["bold"]], ["it", ["italic"]], ["gone", ["strike"]], ["code", ["code"]], ["link", ["link"]], ["and", []], ["**bold**", ["bold"]]]) {
+    // A drag inside a word drawn whole takes the whole word; with the caret in it first, its letters can be selected.
+    await caretTo(m, span(word)[0] + 1);
     await selectByMouse(m, ...span(word));
     assert.deepEqual(pressedMarks(m), marks, word);
   }
@@ -7404,6 +7406,7 @@ test("a selection that would cut through a comment's marks, or reach into code, 
   act(m, "mdb-comment");
   assert.deepEqual([noteBoxOf(m), calls.notify], [null, [{ title: "A comment can't cut through another one", level: "info" }]]);
   const code = m.view.field.value().indexOf("code");
+  await caretTo(m, code + 1);
   await selectByMouse(m, code + 1, code + 3);
   act(m, "mdb-comment");
   assert.deepEqual([noteBoxOf(m), calls.notify.at(-1)], [null, { title: "Comments can't go in code", level: "info" }]);
@@ -7468,13 +7471,13 @@ test("Edit opens the block with the marked text selected and the box holding the
   await clickCount(m, 0);
   cardPress(m, "md-note-edit-0");
   assert.deepEqual([...editing(m), cardOf(m), Boolean(noteBoxOf(m)), m.view.noteField.value(), m.view.noteField.focused],
-    [keyAt(m, 0), "A {==b==}{>>first<<} c {>>second<<}.", { start: 5, end: 6 }, null, true, "first", true]);
+    [keyAt(m, 0), "A {==b==}{>>first<<} c {>>second<<}.", { start: 2, end: 20 }, null, true, "first", true]);
   writeNote(m, "changed");
   saveNote(m);
   const after = "A {==b==}{>>changed<<}".length;
   assert.deepEqual([m.view.text, m.view.field.selection, noteBoxOf(m)], ["A {==b==}{>>changed<<} c {>>second<<}.\n\nEnd\n", { start: after, end: after }, null]);
   act(m, "mdb-undo");
-  assert.deepEqual([m.view.text, m.view.field.selection], ["A {==b==}{>>first<<} c {>>second<<}.\n\nEnd\n", { start: 5, end: 6 }]);
+  assert.deepEqual([m.view.text, m.view.field.selection], ["A {==b==}{>>first<<} c {>>second<<}.\n\nEnd\n", { start: 2, end: 20 }]);
   await escape(m);
   await clickCount(m, 0);
   cardPress(m, "md-note-edit-1");
@@ -7524,4 +7527,203 @@ test("the comment box closes on a press outside it, or when the block stops bein
   await m.key("cmd-e");
   await m.key("cmd-e");
   assert.deepEqual([noteBoxOf(m), m.view.note, m.view.text], [null, null, "Hello world.\n\nEnd\n"], "after Markdown and back");
+});
+
+// The edited block keeps its rendered look: its formatted words are inline tokens of the field, drawn by the page.
+const fieldEl = m => all(must(m.tree(), `md-field-${m.view.activeKey}`), n => n.kind === "textarea")[0];
+const tokenTexts = m => m.view.field.tokens().map(t => t.token.text);
+const valueSets = m => m.view.field.log.filter(([c]) => c === "set_value").length;
+
+test("opening a formatted paragraph, heading, item or quote sets its tokens, drawn by the page", async () => {
+  const m = await page("# A **big** title\n\nSome *words* here\n\n- an `item` x\n\n> a [link](u) quote\n", { 0: 35, 1: 24, 2: 24, 3: 24 });
+  const expected = [["A **big** title", "**big**"], ["Some *words* here", "*words*"], ["an `item` x", "`item`"], ["a [link](u) quote", "[link](u)"]];
+  for (const [i, [value, token]] of expected.entries()) {
+    await openBlock(m, i, 0);
+    assert.equal(m.view.field.value(), value, "the field keeps the markdown");
+    assert.deepEqual(tokenTexts(m), [token], `block ${i}`);
+    assert.equal(typeof fieldEl(m).token, "function", "the page draws them");
+    assert.equal(typeof fieldEl(m).handlers.on_token_click, "function");
+  }
+});
+
+test("typing plain text next to plain text sets no tokens: the field moves them with the text", async () => {
+  const m = await page("Plain words **bold** end\n", { 0: 24 });
+  await openBlock(m, 0, 2);
+  const sets = valueSets(m);
+  m.view.field.type("x", m.cx);
+  m.view.field.type("y", m.cx);
+  assert.equal(m.view.text, "Plxyain words **bold** end\n");
+  assert.equal(valueSets(m), sets, "no set_value while typing in plain words");
+  assert.deepEqual(m.view.field.tokens().map(t => t.range), [{ start: 14, end: 22 }]);
+});
+
+test("a caret readout into a formatted word splits it into letters, and one out of it joins it again", async () => {
+  const m = await page("Some **bold** text\n", { 0: 24 });
+  await openBlock(m, 0, 0);
+  assert.deepEqual(tokenTexts(m), ["**bold**"]);
+  await caretTo(m, 9);
+  assert.deepEqual(m.view.field.selection, { start: 13, end: 13 }, "an arrow steps over the whole word");
+  assert.deepEqual(tokenTexts(m), ["**b", "o", "l", "d**"], "touching it at its edge splits it");
+  await caretTo(m, 9);
+  assert.deepEqual([m.view.field.selection, m.view.known.start], [{ start: 9, end: 9 }, 9], "now the caret stops between o and l");
+  await caretTo(m, 16);
+  assert.deepEqual(tokenTexts(m), ["**bold**"]);
+  m.view.field.select(5, 16);
+  keyUp(m, "right", { shift: true });
+  await flush();
+  assert.deepEqual(tokenTexts(m), ["**b", "o", "l", "d**"], "a selection's end splits the word it touches");
+});
+
+// How long a token set may still report a change of the same text, before such a change is a forward Delete again.
+const ECHO_MS = 100;
+
+test("token sets report no change: after many of them a forward Delete at the end joins the next block at the first press", async () => {
+  const value = "A **bo** *cd* `ef` **gh**";
+  const m = await page(`${value}\n\nNext\n`, { 0: 24, 1: 24 });
+  await openBlock(m, 0, 0);
+  const sets = valueSets(m);
+  for (const at of [8, 12, 15, 25, 0, 25]) await caretTo(m, at);
+  assert.ok(valueSets(m) - sets >= 5, "the readouts split and joined words");
+  await fire_timers(m.cx, { ms: ECHO_MS });
+  forwardDeleteAtEnd(m);
+  await flush();
+  assert.equal(m.view.text, `${value}Next\n`);
+});
+
+test("a token set is let go after a short while: then a change of the same text at the end is a forward Delete", async () => {
+  const m = await page("Ends **bold**\n\nNext\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0, 13);
+  assert.deepEqual(tokenTexts(m), ["**b", "o", "l", "d**"]);
+  assert.ok(m.cx.timers.some(t => t.after && t.ms === ECHO_MS && !t.ran), "each set is expected for a while");
+  await fire_timers(m.cx, { ms: ECHO_MS });
+  forwardDeleteAtEnd(m);
+  await flush();
+  assert.equal(m.view.text, "Ends **bold**Next\n");
+});
+
+test("a token set whose change does come (were Herdr to report one) is no forward Delete; a real one after it is", async () => {
+  const m = await page("Ends **bold**\n\nNext\n", { 0: 24, 1: 24 });
+  liveFields(true, m.cx);
+  echoTokenSets(true);
+  try {
+    await openBlock(m, 0, 13);
+    await flush();
+    assert.deepEqual(tokenTexts(m), ["**b", "o", "l", "d**"]);
+    assert.equal(m.view.text, "Ends **bold**\n\nNext\n", "the token sets' changes merged nothing");
+    forwardDeleteAtEnd(m);
+    await flush();
+    assert.equal(m.view.text, "Ends **bold**Next\n", "a real Delete at the end merges");
+    await fire_timers(m.cx, { ms: ECHO_MS });
+    assert.equal(m.view.text, "Ends **bold**Next\n", "the timers of sets already answered change nothing");
+  } finally {
+    echoTokenSets(false);
+    liveFields(false);
+  }
+});
+
+test("a format key leaves the formatted word's tokens with its letters split at the selection; undo and redo follow", async () => {
+  const m = await page("Make this bold\n\nOther\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 5, 9);
+  act(m, "mdb-bold");
+  assert.equal(m.view.text, "Make **this** bold\n\nOther\n");
+  assert.deepEqual(tokenTexts(m), ["**t", "h", "i", "s**"]);
+  assert.deepEqual([m.view.field.selection, m.view.known.start, m.view.known.end], [{ start: 5, end: 13 }, 5, 13], "the selection holds the word with its marks");
+  act(m, "mdb-bold");
+  assert.equal(m.view.text, "Make this bold\n\nOther\n", "taken off again");
+  assert.deepEqual(tokenTexts(m), []);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Make **this** bold\n\nOther\n");
+  assert.deepEqual(tokenTexts(m), ["**t", "h", "i", "s**"]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, tokenTexts(m)], ["Make this bold\n\nOther\n", []]);
+});
+
+test("a comment saved on a selection becomes tokens with its marks and note hidden", async () => {
+  const m = await page("Note this word\n\nOther\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 5, 9);
+  act(m, "mdb-comment");
+  writeNote(m, "why");
+  saveNote(m);
+  assert.equal(m.view.text, "Note {==this==}{>>why<<} word\n\nOther\n");
+  assert.deepEqual(tokenTexts(m), ["{==t", "h", "i", "s==}{>>why<<}"]);
+});
+
+test("a change from disk keeps the edited block's tokens, or sets new ones when it changed the block", async () => {
+  const m = await page("Keep *this* here\n\nOther\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0, 0);
+  state.disk.set(FILE, "Keep *this* here\n\nOther **x**\n");
+  await m.touch([FILE]);
+  assert.deepEqual([m.view.activeKey, tokenTexts(m)], [keyAt(m, 0), ["*this*"]]);
+  state.disk.set(FILE, "Keep **this** here\n\nOther **x**\n");
+  await m.touch([FILE]);
+  assert.deepEqual([m.view.activeKey, m.view.field.value(), tokenTexts(m)], [keyAt(m, 0), "Keep **this** here", ["**this**"]]);
+});
+
+test("a click on a token puts the caret at the letter under the press, from the press's x across the token", async () => {
+  const m = await page("Some **bold** text\n", { 0: 24 });
+  await openBlock(m, 0, 0);
+  const wrap = must(m.tree(), `md-field-${keyAt(m, 0)}`), [word] = m.view.field.tokens();
+  const clickToken = async (t, x) => {
+    fire(wrap, "on_mouse_down:left", press({ x, y: 10 }), m.cx);
+    fire(fieldEl(m), "on_token_click", { ...t, bounds: { x: 100, y: 0, width: 100, height: 24 }, modifiers: NO_MODS }, m.cx);
+    await flush();
+  };
+  await clickToken(word, 150);
+  assert.deepEqual([m.view.field.selection, m.view.known.start], [{ start: 9, end: 9 }, 9], "the middle of the word: between o and l");
+  assert.deepEqual(tokenTexts(m), ["**b", "o", "l", "d**"]);
+  await clickToken(m.view.field.tokens()[3], 195);
+  assert.deepEqual(m.view.field.selection, { start: 13, end: 13 }, "the right of the last letter: after its marks");
+  await clickToken(m.view.field.tokens()[0], 101);
+  assert.deepEqual(m.view.field.selection, { start: 5, end: 5 }, "the left of the first letter: before its marks");
+});
+
+test("a token set the field refuses falls back to whole words, then to none, and the field keeps working", async () => {
+  const m = await page("Some **bold** text\n", { 0: 24 });
+  const field = m.view.field, setValue = field.set_value.bind(field);
+  let most = 1;
+  field.set_value = next => {
+    if (typeof next !== "string" && next.tokens.length > most) throw new Error("token range splits a Unicode grapheme");
+    setValue(next);
+  };
+  await openBlock(m, 0, 13);
+  assert.deepEqual(tokenTexts(m), ["**bold**"], "no letters at the caret, the word whole");
+  assert.deepEqual([m.view.locked, field.value(), field.selection], [null, "Some **bold** text", { start: 13, end: 13 }]);
+  most = -1;
+  field.type("!", m.cx);
+  assert.deepEqual([m.view.locked, m.view.text], [null, "Some **bold**! text\n"]);
+  assert.deepEqual([field.value(), field.selection], ["Some **bold**! text", { start: 14, end: 14 }], "the value and the caret stay");
+  field.type("?", m.cx);
+  assert.equal(m.view.text, "Some **bold**!? text\n", "typing goes on");
+});
+
+test("raw blocks and the Markdown view get no tokens", async () => {
+  const m = await page("```\n**x** `y`\n```\n\nText **b**\n", { 0: 70, 1: 24 });
+  await openBlock(m, 0);
+  assert.deepEqual(m.view.field.tokens(), []);
+  assert.equal(fieldEl(m).token, undefined, "a raw block's field draws no tokens");
+  await openBlock(m, 1, 0);
+  assert.deepEqual(tokenTexts(m), ["**b**"]);
+  await m.key("cmd-e");
+  assert.equal(m.view.mode, "markdown");
+  assert.deepEqual(m.view.source.tokens(), []);
+  assert.equal(all(m.tree(), n => typeof n.token === "function").length, 0);
+});
+
+test("the estimates on the edited field count the characters that show: rows, the caret's row, the bar's column, a crossing's column", async () => {
+  const url = `https://example.com/${"a".repeat(120)}`;
+  const m = await page(`See [docs](${url}) now\n\n[x](${url}) tail words here\n`, { 0: 24, 1: 48 });
+  await openBlock(m, 0, 0);
+  assert.equal(m.view.rows, "one", "the address is not drawn: the line fits one row");
+  const value = m.view.seen;
+  await selectByMouse(m, value.length - 3, value.length);
+  assert.ok(Math.abs(m.view.placeBar().left - (X + 9 * STYLES.p.size * 0.47)) < 1e-6, "the bar over 'now', the tenth character drawn");
+  await openBlock(m, 1, 0);
+  const tail = m.view.seen.indexOf("tail");
+  assert.equal(m.view.caretTop(1, tail), m.view.caretTop(1, 0), "'tail' is on the first of the two rows");
+  const c = await page("**Bold** start here\n\nPlain line two\n", { 0: 24, 1: 24 });
+  await openBlock(c, 1, 6);
+  act(c, "mdb-up");
+  assert.deepEqual(editing(c), [keyAt(c, 0), "**Bold** start here", { start: 10, end: 10 }], "column 6 as drawn: the t of start");
 });

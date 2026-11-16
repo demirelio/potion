@@ -21,6 +21,10 @@ export const FRONT_BOX = { px: 12, py: 10 };
 const RULE_H = 24;
 const CHECK = "mods/herdr-inline-markdown/check.svg";
 const COMMENTS_ICON = "mods/herdr-inline-markdown/message-square.svg";
+const PICTURE_ICON = "mods/herdr-inline-markdown/image.svg";
+const BOLD = 700;
+const CODE_SCALE = 0.87;
+const ICON_SCALE = 0.9;
 
 // `size` is in px and `lh` a multiple of it; the same rendered and in the field.
 export const STYLES = {
@@ -147,13 +151,35 @@ function rendered(owner, d, t) {
 
 const frontBox = (t, inner) => div().w_full().rounded(8).bg(t.surface).border_1().border_color(t.border).px(FRONT_BOX.px).py(FRONT_BOX.py).child(inner);
 
+function piece(owner, d, t, p) {
+  const st = STYLES[d.style], { sans, mono } = owner.fonts;
+  if (p.icon) return svg(PICTURE_ICON).size(st.size * ICON_SCALE).flex_none().text_color(t.muted);
+  const size = p.code ? st.size * CODE_SCALE : st.size, color = p.link ? t.accent : p.picture ? t.muted : t[d.color];
+  return type(div().flex_none(), { ...st, size, weight: p.bold ? Math.max(st.weight, BOLD) : st.weight, lh: d.ratio }, color, p.code ? mono : sans)
+    .when(Boolean(p.italic), el => el.italic())
+    .when(Boolean(p.strike) || d.checked, el => el.line_through())
+    .when(Boolean(p.underline || p.link), el => el.underline())
+    .when(Boolean(p.code), el => el.bg(t.surface).rounded(3))
+    .when(Boolean(p.highlight || p.point), el => el.bg(owner.highlight))
+    .when(Boolean(p.mark), el => el.bg(p.mark))
+    .child(p.text);
+}
+
+// One inline token of the edited field: its pieces in a row as tall as the field's.
+function tokenView(owner, d, t, ctx) {
+  return h_flex().flex_none().h(ctx.line_height).items_center()
+    .when(ctx.selected, el => el.bg(t.selection))
+    .children(owner.tokenPieces(ctx.token).map(p => piece(owner, d, t, p)));
+}
+
 // The wrapper hands the field's key-ups and presses to the editor itself, whether or not they would reach the editor's
 // own elements, and declares the key context: the field's row count, and whether the slash menu takes Up and Down.
 function field(owner, d, t) {
   const st = STYLES[d.style], { sans, mono } = owner.fonts, raw = isRaw(d.kind);
-  const input = Textarea.new(d.mode === "active" ? owner.field : owner.spare).w_full()
+  const input = Textarea.new(d.mode === "active" ? owner.field : owner.spare).id(`md-input-${d.key}`).w_full()
     .font_family(st.mono || raw ? mono : sans).text_size(st.size).font_weight(st.weight)
-    .line_height(d.ratio).text_color(t[d.color]);
+    .line_height(d.ratio).text_color(t[d.color])
+    .when(Boolean(d.tokens), el => el.token(ctx => tokenView(owner, d, t, ctx)).on_token_click((ev, cx) => owner.tokenClick(d.key, ev, cx)));
   const wrap = div().id(`md-field-${d.key}`).w_full().pb(d.padActive)
     .when(d.mode === "active", el => el.key_context(`${raw ? RAW : TEXT} rows=${d.rows}${d.menu ? " menu=open" : ""}`))
     .on_key_up((e, cx) => owner.fieldKeyUp(d.key, e, cx))

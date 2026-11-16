@@ -24,9 +24,43 @@ export const Editor = { new: state => makeElement("editor", { state }) };
 // has returned (a setImmediate, which the tests' flush() waits for), to the change handler with `cx`.
 let live = null;
 export function liveFields(on, cx = null) { live = on ? { cx } : null; }
+// Herdr's set_value with tokens reports no change; echoTokenSets(true) makes live fields report one, as a Herdr that did.
+let echo = false;
+export function echoTokenSets(on) { echo = on; }
 
-// set_value() and replace() fire no "change" unless fields are live. replace() takes the whole value until
-// set_selected_range() gives a selection, then replaces it and leaves the caret after what it wrote.
+// Herdr refuses a token whose text or label holds one.
+const CONTROL = /[\p{Cc}\u{2028}\u{2029}]/u;
+
+// Inline tokens as Herdr's field keeps them: set_value with { text, tokens } validates them against the text or throws,
+// edits move the tokens after them and drop one they cut through, and a selection set inside a token goes to its edges
+// (a caret to its end). Grapheme edges are not checked.
+function checkedTokens(text, spans) {
+  const out = [...(spans ?? [])].map(s => ({ range: { start: s.range.start, end: s.range.end }, token: { ...s.token } }))
+    .sort((a, b) => a.range.start - b.range.start);
+  let past = 0;
+  for (const { range: { start, end }, token } of out) {
+    if (!(start >= past && start < end && end <= text.length)) throw new Error("token range is out of bounds or overlaps another");
+    if (text.slice(start, end) !== token.text) throw new Error("token text does not match its range");
+    if (!String(token.id ?? "").trim() || !token.text || !token.label || CONTROL.test(token.text) || CONTROL.test(token.label)) {
+      throw new Error("token requires a nonempty ID, text and label without control characters");
+    }
+    past = end;
+  }
+  return out;
+}
+
+// The change between two texts as the range [at, at + removed) of `a` that `inserted` characters replaced.
+function changeOf(a, b) {
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  let q = 0;
+  while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++;
+  return { at: p, removed: a.length - p - q, inserted: b.length - p - q };
+}
+
+// set_value() and replace() fire no "change" unless fields are live; set_value() fires none even then, unless
+// echoTokenSets(true) and it sets tokens. replace() takes the whole value until set_selected_range() gives a selection,
+// then replaces it and leaves the caret after what it wrote.
 class TextState {
   static new(options = {}) {
     const state = new this();
@@ -37,19 +71,50 @@ class TextState {
     state.selection = null;
     state.log = [];
     state.undos = [];
+    state.spans = [];
     return state;
   }
   value() { return this.text; }
   set_value(next) {
-    this.text = typeof next === "string" ? next : String(next?.text ?? "");
+    const content = typeof next === "string" ? null : next, text = content ? String(content?.text ?? "") : next;
+    const spans = content ? checkedTokens(text, content.tokens) : [];
+    this.text = text;
+    this.spans = spans;
     this.selection = live ? { start: 0, end: 0 } : null;
     this.undos = [];
     this.log.push(["set_value", this.text]);
+    if (content && echo && live) {
+      const cx = live.cx;
+      setImmediate(() => this.handlers.change?.({}, cx));
+    }
+  }
+  tokens() { return this.spans.map(s => ({ range: { ...s.range }, token: { ...s.token } })); }
+  content() { return { text: this.text, tokens: this.tokens() }; }
+  edgeOf(x, toStart) {
+    const t = this.spans.find(s => s.range.start < x && x < s.range.end);
+    return t ? (toStart ? t.range.start : t.range.end) : x;
+  }
+  selectionOf(a, b) {
+    const start = Math.min(a, b), end = Math.max(a, b);
+    if (start === end) {
+      const at = this.edgeOf(start, false);
+      return { start: at, end: at };
+    }
+    return { start: this.edgeOf(start, true), end: this.edgeOf(end, false) };
+  }
+  moveTokens(at, removed, inserted) {
+    const end = at + removed, shift = inserted - removed;
+    this.spans = this.spans.filter(s => !(s.range.start < end && at < s.range.end))
+      .map(s => (s.range.start >= end ? { range: { start: s.range.start + shift, end: s.range.end + shift }, token: s.token } : s));
+  }
+  retext(text) {
+    const c = changeOf(this.text, text);
+    this.moveTokens(c.at, c.removed, c.inserted);
+    this.text = text;
   }
   set_selected_range(range) {
     const clamp = v => Math.max(0, Math.min(this.text.length, Number(v) || 0));
-    const start = clamp(range?.start), end = clamp(range?.end);
-    this.selection = { start: Math.min(start, end), end: Math.max(start, end) };
+    this.selection = this.selectionOf(clamp(range?.start), clamp(range?.end));
     this.log.push(["set_selected_range", { ...this.selection }]);
   }
   // Read only: no log entry, no undo, no event. Before any selection the whole value counts as selected, as
@@ -58,9 +123,10 @@ class TextState {
   replace(text) {
     const s = String(text), before = this.text;
     this.log.push(["replace", s]);
-    if (!this.selection) this.text = s;
+    if (!this.selection) this.retext(s);
     else {
       const { start, end } = this.selection;
+      this.moveTokens(start, end - start, s.length);
       this.text = this.text.slice(0, start) + s + this.text.slice(end);
       this.selection = { start: start + s.length, end: start + s.length };
     }
@@ -83,15 +149,16 @@ class TextState {
   release() { return true; }
   edit(text, cx) {
     if (text !== this.text) this.undos.push(this.text);
-    this.text = text;
+    this.retext(text);
     return this.handlers.change?.({}, cx);
   }
-  // A click, a drag or an arrow key: nothing is reported to the mod.
-  select(start, end = start) { this.selection = { start: Math.min(start, end), end: Math.max(start, end) }; }
+  // A click, a drag or an arrow key: nothing is reported to the mod. The caret never stops inside a token.
+  select(start, end = start) { this.selection = this.selectionOf(start, end); }
   // Types over the selection (at the end when there is none); with live fields the change comes after the current handler.
   type(text, cx) {
     const { start, end } = this.selection ?? { start: this.text.length, end: this.text.length };
     this.undos.push(this.text);
+    this.moveTokens(start, end - start, text.length);
     this.text = this.text.slice(0, start) + text + this.text.slice(end);
     this.selection = { start: start + text.length, end: start + text.length };
     if (live) { const at = live.cx; setImmediate(() => this.handlers.change?.({}, at)); return undefined; }
@@ -99,7 +166,7 @@ class TextState {
   }
   undo(cx) {
     if (!this.undos.length) return undefined;
-    this.text = this.undos.pop();
+    this.retext(this.undos.pop());
     const n = this.text.length;
     if (this.selection) this.selection = { start: Math.min(this.selection.start, n), end: Math.min(this.selection.end, n) };
     return this.handlers.change?.({}, cx);

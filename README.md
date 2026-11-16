@@ -149,12 +149,15 @@ gives way to the pane's header, which shows the same file name and toggle.
 
 ### Block editing
 
-The block you click keeps its size, font and place. Only its own raw marks appear while you are in it (`**bold**`,
-`` `code` ``, link addresses); its `#`, `-`, `1.`, `[ ]` or `>` stays hidden. A code block, table, HTML block, front
-matter or diagram shows its source, fences included, in the terminal font, and a diagram is drawn again when you leave
-it; a paragraph of pictures shows its source in a smaller terminal font and is drawn again the same way. A
-hard-wrapped paragraph shows its line breaks as spaces, so it wraps as it did on the page, and keeps them in the
-file.
+The block you click keeps its size, font, place and look: a paragraph, heading, list item or quote is edited as
+Reading draws it. Bold stays bold, a link shows its text in the link colour with no address, code keeps its font and
+background, a comment's text stays highlighted, and escapes and entities show as their characters. No markdown mark
+ever shows in Reading, its `#`, `-`, `1.`, `[ ]` or `>` included; the marks stay in the file, and the Markdown view
+shows them. A word with formatting moves as one piece until the caret is in it: click into it or arrow up to it, and
+the caret stops between its letters. A code block, table, HTML block, front matter or diagram shows its source, fences
+included, in the terminal font, and a diagram is drawn again when you leave it; a paragraph of pictures shows its source
+in a smaller terminal font and is drawn again the same way. A hard-wrapped paragraph shows its line breaks as spaces,
+so it wraps as it did on the page, and keeps them in the file.
 
 | Key or click | What it does |
 |---|---|
@@ -177,7 +180,7 @@ file.
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code |
 | Cmd+B / Cmd+I / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic or strikethrough (`**`, `*`, `~~`) around the selection, or off it when it has them already; the text stays selected. Spaces at the ends of the selection stay outside the marks. On a caret in a word they mark the word; elsewhere they write the two marks with the caret between them |
 | Cmd+Shift+C | The same for inline code: `` `text` ``, with a longer run of backticks when the text holds some |
-| Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
+| Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, the link shown as written until the caret leaves it, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
 | Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag over one that is not being edited opens it with the words it crossed selected, whole words, and a double-click selects a word, either way with the bar. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
@@ -189,8 +192,9 @@ leave empty disappears and writes nothing to the file.
 
 **Known limits:** in blocks with formatting, code or tables the first click puts the caret near the click, and
 the second is exact; selecting across blocks selects whole blocks (the middle of one block to the middle of another
-needs the Markdown view); typing never re-wraps the source; input methods that compose characters (Japanese,
-Chinese) may misbehave with Enter, while direct typing in any script is fine. **Left out on purpose:** drag handles,
+needs the Markdown view); a drag inside a formatted word that the caret is not in selects the whole word; typing never
+re-wraps the source; input methods that compose characters (Japanese, Chinese) may misbehave with Enter, and inside
+or next to formatted words, while direct typing in any script is fine. **Left out on purpose:** drag handles,
 images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
 (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
 the one toggle, a diagram's zoom, the format bar and the comments' cards.
@@ -212,7 +216,7 @@ A comment at a point{>>check the date<<} marks no text.
 
 - **Reading** highlights the marked text in the theme's yellow, its formatting still drawn, and leaves out the marks
   and the comment; a comment at a point shows as a highlighted 💬. A highlight with no comment (`{==text==}`) is
-  highlighted too. In the block being edited the marks show as written, as a link's address does.
+  highlighted too. The block being edited looks the same: the marks and the comment stay hidden.
 - **The count** at the right of a block's first row says how many comments it holds. A click on it opens a card listing
   them: the marked text, the comment, and **Edit** (the block opens with the marked text selected and the box holds
   the comment) and **Resolve** (the comment and its marks go, the marked text stays). Each is one undo step. A file

@@ -16,6 +16,8 @@ import { ACTIONS, NOTE, SOURCE, installKeys } from "./keys.js";
 import { hasMark, toggleMark } from "./format.js";
 import { addComment, commentable, commentsIn, editComment, highlightColor, resolveComment } from "./comments.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
+import { parseInline, visibleMap } from "./inline.js";
+import { drawnOffset, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
 
 const SAVE_MS = 700;
 const LOCAL_POLL = 4000, REMOTE_POLL = 5000;
@@ -41,6 +43,10 @@ const CAL_MONO = "0123456789abcdefghijklmnopqrstuvwxyz{}()";
 const REFOCUS_MS = 80;
 // The field places its caret a moment after a mouse-up: it is read only then.
 const READ_AFTER_UP_MS = 30;
+const PIECES_KEPT = 2000;
+// Herdr reports no change for a token set; one that did would come within a frame or two. Until this has passed, a
+// change that leaves the text as it was is taken as that report, not as a forward Delete.
+const ECHO_MS = 100;
 // px an armed field may measure off from the block it replaced before that block is never armed again.
 const ARM_SLACK = 1;
 const NO_CARET = { start: 0, end: 0, valid: false };
@@ -326,6 +332,12 @@ export class Editor {
     // and typing an action took in before its event). An unowed change that leaves the value as it was is forward
     // Delete at the end of the field.
     this.owed = new Map();
+    // Inline tokens of the active field: `rich` the layout of its value (tokens.js), kept with what it was made from;
+    // `pieces` what each token draws; `pressX` the x of the last press in the field, which a token click lacks;
+    // `tokensHeld` while the editor's own edits run; `tokensOff` when the field took none; `echoes`, per field state,
+    // the numbers of the token sets made in the last ECHO_MS, oldest first.
+    this.rich = null; this.pieces = new Map(); this.pressX = null; this.tokensHeld = false; this.tokensOff = false;
+    this.echoes = new Map(); this.tokenSets = 0;
     // `sel` names the selected blocks' two ends by key, `selKeys` the blocks it covers, `gens` each block's TextView
     // generation, raised to drop the TextView's own text selection when the block is selected.
     this.sel = null; this.selKeys = new Set(); this.gens = new Map();
@@ -373,6 +385,8 @@ export class Editor {
       this.spare.set_value(this.armedValue);
     });
     const slashAt = this.seen.length - 1;
+    this.known = { start: slashAt + 1, end: slashAt + 1, valid: true };
+    this.retoken();
     this.slash = { act: this.act, at: slashAt, end: slashAt + 1, query: "", items: COMMANDS, index: 0, first: 0, side: null };
     this.card = { key: this.doc.blocks.find(b => b.kind === "quote").key };
     this.note = { act: this.act, kind: "add", value: this.seen, range: { start: 2, end: 11 }, comment: null };
@@ -1078,6 +1092,7 @@ export class Editor {
     const n = clamp(c, 0, value.length);
     this.slash = null; this.bar = null; this.note = null;
     if (!this.setField(value, { start: n, end: n })) return this.drop();
+    this.retoken();
     this.rows = this.rowsFlag();
     this.revealNext = true;
     this.wake();
@@ -1280,7 +1295,7 @@ export class Editor {
       info: b.kind === "code" ? b.info.trim().split(/\s+/)[0] : "",
       marker, label: marker === "number" ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked),
       diagram: look.look === "diagram" ? diagramSig(this.shown.get(b.key), this.good.get(b.key)) : "",
-      mode: b.key === this.activeKey ? "active" : b.key === this.armedKey ? "armed" : "rendered",
+      mode: b.key === this.activeKey ? "active" : b.key === this.armedKey ? "armed" : "rendered", tokens: b.key === this.activeKey && look.look === "text",
       rows: b.key === this.activeKey ? this.rows : "many", menu: b.key === this.activeKey && this.slashOpen(),
       gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key),
       row: cal.row, ratio: cal.ratio, padRendered: cal.padRendered, padActive: cal.padActive,
@@ -1725,7 +1740,9 @@ export class Editor {
   // A double-click's second press that reached the page before the block its first press opened was drawn as a field.
   selectWord(b, p, cx) {
     const r = isText(b) ? this.dragRange(b, p, p) : null;
-    if (r && this.selectField(r)) this.openBar(cx);
+    if (!r || !this.selectField(r)) return;
+    this.retoken();
+    this.openBar(cx);
   }
 
   // A press beside the field (a task box, link, toolbar, banner, scrollbar) can take the keyboard from it, and the
@@ -2093,6 +2110,7 @@ export class Editor {
     const was = this.activeKey;
     this.activeKey = key; this.act++;
     if (this.armedKey === key) this.armedKey = null;
+    this.retoken();
     this.rows = this.rowsFlag();
     if (was === key) this.redraw([key], cx);
     else this.rebuild(cx, anchor);
@@ -2112,6 +2130,111 @@ export class Editor {
       this.field.set_value(value);
       this.field.set_selected_range(range);
     });
+  }
+
+  // The edited text block's layout (tokens.js), made once per value; null for a block that shows its source.
+  richNow() {
+    if (!this.activeKey || this.pending || this.mode !== "reading" || !this.doc) return null;
+    const key = this.activeKey, value = this.seen, defs = this.doc.defs, kept = this.rich;
+    if (kept && kept.key === key && kept.value === value && kept.defs === defs) return kept.layout;
+    const b = this.blockByKey(key);
+    const layout = b && isText(b) && !b.image ? richOf(value, parseInline(value, { defs })) : null;
+    this.rich = { key, value, defs, layout };
+    return layout;
+  }
+
+  // The active field's text as it draws it, for the estimates of rows and columns.
+  drawnNow() {
+    const r = this.tokensOff ? null : this.richNow();
+    return r ? r.drawn : this.seen;
+  }
+
+  drawnAt(at) {
+    const r = this.tokensOff ? null : this.richNow();
+    return r ? drawnOffset(r, at) : at;
+  }
+
+  // The one place the active field's tokens are set: only when they differ from the field's, so typing in plain words
+  // sets none. A set the field refuses is tried again without letters at the caret, then without tokens.
+  retoken() {
+    if (this.tokensHeld || !this.activeKey || this.field.value() !== this.seen) return;
+    const sel = this.known.valid ? this.known : caretOf(this.field);
+    if (!sel) return;
+    const r = this.richNow(), want = r ? tokensFor(r, sel) : { tokens: [], sel };
+    if (sameTokens(this.field.tokens(), want.tokens)) {
+      if (want.sel.start !== sel.start || want.sel.end !== sel.end) this.selectField(want.sel);
+      return;
+    }
+    const tries = [want.tokens, r ? tokensFor(r, null).tokens : null, []];
+    for (const tokens of tries) {
+      if (tokens && this.setTokens(tokens, want.sel)) {
+        this.tokensOff = !tokens.length && want.tokens.length > 0;
+        return;
+      }
+    }
+  }
+
+  // Herdr has no set_tokens: set_value takes the text with its tokens, and the selection goes back after it. A change
+  // of the same text it reported would read as a forward Delete at the end of the block, so for ECHO_MS one is taken as
+  // the set's (takeEcho); a set never outlives that, or it would swallow a real Delete.
+  setTokens(tokens, sel) {
+    const state = this.field, set = ++this.tokenSets, sets = this.echoes.get(state) ?? [];
+    this.echoes.set(state, sets);
+    sets.push(set);
+    try {
+      state.set_value({ text: this.seen, tokens });
+    } catch {
+      this.letGo(state, set);
+      return false;
+    }
+    this.post(cx => cx.timer.after(ECHO_MS, () => this.letGo(state, set)));
+    this.selectField(sel);
+    return true;
+  }
+
+  letGo(state, set) {
+    const sets = this.echoes.get(state), i = sets ? sets.indexOf(set) : -1;
+    if (i >= 0) sets.splice(i, 1);
+  }
+
+  // -> whether a change event of field `state` that left its text alone is the report of a recent token set.
+  takeEcho(state) {
+    const sets = this.echoes.get(state);
+    if (!sets?.length) return false;
+    sets.shift();
+    return true;
+  }
+
+  // What a token draws (page.js), from its id and label.
+  tokenPieces(token) {
+    const key = `${token.id}\u{0}${token.label}`;
+    let pieces = this.pieces.get(key);
+    if (!pieces) {
+      if (this.pieces.size >= PIECES_KEPT) this.pieces.clear();
+      pieces = piecesOf(token.id, token.label);
+      this.pieces.set(key, pieces);
+    }
+    return pieces;
+  }
+
+  // A click on a token gives its bounds, not where it was: the x of the press across them picks the letter edge, and
+  // the word holding it splits into letters there.
+  tokenClick(key, ev) {
+    const x = this.pressX;
+    this.post(cx => this.pressToken(key, ev, x, cx));
+  }
+
+  pressToken(key, ev, x, cx) {
+    if (key !== this.activeKey || !this.editable()) return;
+    this.syncField(cx);
+    const r = this.richNow(), box = ev?.bounds, range = ev?.range;
+    if (!r || !range) return;
+    const at = pressedAt(r, range, typeof x === "number" && box?.width > 0 ? (x - box.x) / box.width : 1);
+    this.known = { start: at, end: at, valid: true };
+    this.retoken();
+    this.selectField(this.known);
+    this.slashCaret(this.known, cx);
+    this.openBar(cx);
   }
 
   focusField(cx) {
@@ -2266,12 +2389,12 @@ export class Editor {
   fieldChanged(state, cx, { event = true, own = false } = {}) {
     if (state !== this.field || !this.activeKey || !this.editable()) {
       // Nobody types in a field that is not open: its changes are owed ones, from our replace() just before it was left.
-      if (event) this.paid(state);
+      if (event && !this.paid(state)) this.takeEcho(state);
       return;
     }
     const value = state.value(), before = this.seen;
     if (value !== before && !own) this.owe(state);
-    const owed = event && this.paid(state);
+    const owed = event && (this.paid(state) || (value === before && this.takeEcho(state)));
     if (value === before) {
       if (event && !owed) this.deleteAtEnd(cx);
       return;
@@ -2284,14 +2407,15 @@ export class Editor {
     const innerLine = this.f.value !== before ? type(this.f, before) : null;
     const s = type(this.f, value, hint);
     this.seen = value;
-    if (!s) return;
+    if (!s) return this.retoken();
     this.known = { start: s.fieldCaret, end: s.fieldCaret, valid: true };
     const a = s.fieldCaret - d.inserted.length;
     this.slashChanged({ a, r: d.removed, ins: value.slice(a, s.fieldCaret) }, value, own, cx);
     const rec = this.typing(this.act, s.end, s.caret);
     if (innerLine) this.edited(applySplice(applySplice(this.text, innerLine), s), cx, rec);
     else this.edited(applySplice(this.text, s), cx, { ...rec, splice: s });
-    if (!d.removed && d.inserted === " " && this.shortcutAt(s.fieldCaret - 1, cx)) return;
+    if (!d.removed && d.inserted === " " && this.shortcutAt(s.fieldCaret - 1, cx)) return this.retoken();
+    this.retoken();
     this.updateRows(cx);
     this.revealCaret(cx);
   }
@@ -2327,7 +2451,7 @@ export class Editor {
     const d = this.data.get(this.activeKey);
     if (!d) return this.seen.includes("\n") ? "many" : "one";
     const cal = this.calOf(d.style), rows = this.rowsOf(d, true) ?? 1;
-    return isOneRow({ value: this.seen, height: rows * d.row, rowPx: d.row, width: this.chromeOf(d, true).w, advance: cal.advance }) ? "one" : "many";
+    return isOneRow({ value: this.drawnNow(), height: rows * d.row, rowPx: d.row, width: this.chromeOf(d, true).w, advance: cal.advance }) ? "one" : "many";
   }
 
   updateRows(cx) {
@@ -2343,7 +2467,7 @@ export class Editor {
     const d = this.data.get(this.blocks[i]?.key);
     if (!d) return null;
     const c = this.chromeOf(d, true);
-    const row = caretRow(this.seen, at, this.rowsOf(d, true));
+    const row = caretRow(this.drawnNow(), this.drawnAt(at), this.rowsOf(d, true));
     return this.sums[i] + c.y + row * d.row;
   }
 
@@ -2390,7 +2514,8 @@ export class Editor {
   }
 
   // Where the caret lands in block b, whose field shows `value`, coming from above (dir > 0) or below: inside a
-  // fence, never on its fence lines; at `column` when the block is one row, else at its start or end.
+  // fence, never on its fence lines; at `column`, counted in characters as drawn, when the block is one row, else at
+  // its start or end.
   entry(b, value, dir, column) {
     const lines = value.split("\n");
     if (b.fence || b.kind === "frontmatter") {
@@ -2398,17 +2523,22 @@ export class Editor {
       if (dir > 0) return lines[0].length + 1;
       return value.length - lines.slice(lastInner + 1).reduce((n, l) => n + l.length + 1, 0);
     }
-    if (column !== null && lines.length === 1 && this.fitsOneRow(b, value)) return Math.min(column, value.length);
-    return dir > 0 ? 0 : value.length;
+    if (column === null || lines.length !== 1) return dir > 0 ? 0 : value.length;
+    const shown = isText(b) && !b.image ? visibleMap(value) : null, count = shown ? shown.length - 1 : value.length;
+    if (!this.fitsOneRow(b, count)) return dir > 0 ? 0 : value.length;
+    return shown ? shown[Math.min(column, count)] : Math.min(column, value.length);
   }
 
-  fitsOneRow(b, value) {
+  // Whether `count` characters, as drawn, fit one row of block b's field.
+  fitsOneRow(b, count) {
     const d = this.data.get(b.key);
-    return Boolean(d) && value.length * this.calOf(d.style).advance < 0.9 * this.chromeOf(d, true).w;
+    return Boolean(d) && count * this.calOf(d.style).advance < 0.9 * this.chromeOf(d, true).w;
   }
 
+  // The column of field offset c on its line, in characters as drawn.
   columnOf(c) {
-    return c - (this.seen.lastIndexOf("\n", c - 1) + 1);
+    const text = this.drawnNow(), at = this.drawnAt(c);
+    return at - (text.lastIndexOf("\n", at - 1) + 1);
   }
 
   // The index of the block that crossing from block i lands in, rules skipped: below 0 past the first block, the
@@ -2455,6 +2585,7 @@ export class Editor {
     if (selects) {
       this.syncField(cx);
       this.caretNow();
+      this.retoken();
       this.closeSlash(cx);
       this.openBar(cx);
       return;
@@ -2466,6 +2597,7 @@ export class Editor {
     if (menuTook && plainVertical) return;
     this.syncField(cx);
     const before = this.known, c = this.caretNow();
+    this.retoken();
     this.slashCaret(c, cx);
     this.openBar(cx);
     if (!c) return;
@@ -2480,7 +2612,9 @@ export class Editor {
     cx.timer.after(READ_AFTER_UP_MS, cx => {
       if (this.closed || this.act !== act || !this.activeKey || !this.editable()) return;
       this.syncField(cx);
-      this.slashCaret(this.caretNow(), cx);
+      const c = this.caretNow();
+      this.retoken();
+      this.slashCaret(c, cx);
       this.openBar(cx);
     });
   }
@@ -2495,7 +2629,7 @@ export class Editor {
     this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e);
     if (this.sel && !e?.modifiers?.shift) this.post(cx => this.setSel(null, cx));
     if (key === this.activeKey) {
-      this.known = { ...this.known, valid: false }; this.ownKeyUp = null;
+      this.known = { ...this.known, valid: false }; this.ownKeyUp = null; this.pressX = e?.position?.x ?? null;
       if (this.slash) this.post(cx => this.closeSlash(cx));
       if (this.bar) this.post(cx => this.closeBar(cx));
     }
@@ -2538,6 +2672,7 @@ export class Editor {
     if (this.field.value() === f.value) this.seen = f.value;
     else if (!this.setField(f.value, { start: 0, end: 0 })) { this.drop(); this.rebuild(cx, anchor); return; }
     this.activeKey = key; this.act++;
+    this.retoken();
     this.rows = this.rowsFlag();
     this.rebuild(cx, anchor);
     if (this.focusedState !== this.field) this.field.focus();
@@ -2889,7 +3024,9 @@ export class Editor {
     const next = r && toggleMark(value, r, mark, mark === "link" ? cx.read_from_clipboard?.() : "");
     if (!next) return;
     const before = this.f && !this.pending ? docRange(this.f, r) : null, was = this.text;
-    if (!this.typeEdits(value, marksEdits(value, next.value), cx) || !this.selectField(next)) return;
+    const typed = this.typeEdits(value, marksEdits(value, next.value), cx) && this.selectField(next);
+    this.retoken();
+    if (!typed) return;
     if (before && this.text !== was) this.history.select(this.text, before, docRange(this.f, next));
     if (bar) this.openBar(cx);
   }
@@ -2902,16 +3039,24 @@ export class Editor {
 
   // Types the field splices `edits` of `value`, the later first, as one entry of the history. -> false when the field
   // stops showing what they leave: the first can write a block not written yet, whose parse may change the field.
+  // The field would widen a range selected inside a token to the token's edges, so the tokens go first and are set
+  // again by the caller once the selection is back.
   typeEdits(value, edits, cx) {
-    let shown = value, entries = 0;
-    for (const e of edits) {
-      const text = this.text;
-      if (this.field.value() !== shown || !this.selectField({ start: e.at, end: e.at + e.removed }) || !this.typeText(e.inserted, cx)) return false;
-      shown = shown.slice(0, e.at) + e.inserted + shown.slice(e.at + e.removed);
-      if (this.text !== text) entries++;
+    if (this.field.tokens().length && !this.setTokens([], this.known.valid ? this.known : { start: 0, end: 0 })) return false;
+    this.tokensHeld = true;
+    try {
+      let shown = value, entries = 0;
+      for (const e of edits) {
+        const text = this.text;
+        if (this.field.value() !== shown || !this.selectField({ start: e.at, end: e.at + e.removed }) || !this.typeText(e.inserted, cx)) return false;
+        shown = shown.slice(0, e.at) + e.inserted + shown.slice(e.at + e.removed);
+        if (this.text !== text) entries++;
+      }
+      for (; entries > 1; entries--) this.history.joinLast(this.text);
+      return this.field.value() === shown;
+    } finally {
+      this.tokensHeld = false;
     }
-    for (; entries > 1; entries--) this.history.joinLast(this.text);
-    return this.field.value() === shown;
   }
 
   pasted(s, cx) {
@@ -3193,7 +3338,7 @@ export class Editor {
     const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
     const place = menuPlace({ rowTop: COLUMN.padTop + top - this.offset, rowH: d.row, viewH, n: s.items.length, side: s.side });
     s.side = place.side;
-    const c = this.chromeOf(d, true), col = s.at - (this.seen.lastIndexOf("\n", s.at - 1) + 1);
+    const c = this.chromeOf(d, true), col = this.columnOf(s.at);
     return { ...place, left: slashX({ col, advance: this.calOf(d.style).advance, fieldW: c.w, fieldX: c.x, viewW }) };
   }
 
@@ -3326,9 +3471,9 @@ export class Editor {
     if (!next || next.refused) return this.cancelNote(cx);
     this.note = null;
     const before = docRange(this.f, n.range), was = this.text;
-    if (this.typeEdits(n.value, marksEdits(n.value, next.value), cx) && this.selectField(next) && this.text !== was) {
-      this.history.select(this.text, before, docRange(this.f, next));
-    }
+    const typed = this.typeEdits(n.value, marksEdits(n.value, next.value), cx) && this.selectField(next);
+    this.retoken();
+    if (typed && this.text !== was) this.history.select(this.text, before, docRange(this.f, next));
     this.focusField(cx);
     cx.notify();
   }
@@ -3339,6 +3484,7 @@ export class Editor {
     if (!this.noteOpen()) return this.closeNote(cx);
     this.note = null;
     this.selectField(n.range);
+    this.retoken();
     this.focusField(cx);
     cx.notify();
   }

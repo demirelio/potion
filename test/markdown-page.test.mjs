@@ -1,7 +1,7 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { reset } from "./mocks/herdr.mjs";
-import { all, find, textOf } from "./mocks/element.mjs";
+import { all, find, fire, nodeOf, textOf } from "./mocks/element.mjs";
 import { div } from "./mocks/gpui-kit.mjs";
 import { makeCx, must } from "./helpers.mjs";
 
@@ -11,13 +11,14 @@ const { NOTES } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { BOX, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
 const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
+const { piecesOf } = await import("../mods/herdr-inline-markdown/tokens.js");
 
 beforeEach(() => reset());
 
 const blocksOf = text => parse(text, { armHeadings: true }).blocks;
 
-// What the editor hands renderBlock for block i of `text`: its data and an owner with the fields and fonts.
-function drawn(text, i, more = {}) {
+// What the editor hands renderBlock for block i of `text`: its data and an owner with the fields and fonts, plus `also`.
+function drawn(text, i, more = {}, also = {}) {
   const blocks = blocksOf(text), b = blocks[i], look = lookOf(b), st = STYLES[look.style];
   const d = {
     key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color, space: spaceBefore(blocks, i), depth: b.depth,
@@ -30,8 +31,21 @@ function drawn(text, i, more = {}) {
     remote: false, shown: new Map(), good: new Map(), links: [], sizes: [], layouts: new Map(),
     link(url) { this.links.push(url); }, blockSized(key, size) { this.sizes.push([key, size]); },
     pictureOf(key, width) { this.asked = [key, width]; return this.layouts.get(key) ?? { items: [], boxes: [], height: 0 }; },
+    ...also,
   };
   return { d, owner, el: renderBlock(owner, d), b };
+}
+
+const HIGHLIGHT = "#f5c54255";
+// An owner that draws tokens as the editor does, and keeps the clicks on them.
+const tokenOwner = () => ({ highlight: HIGHLIGHT, clicks: [], tokenPieces: t => piecesOf(t.id, t.label), tokenClick(key, ev) { this.clicks.push([key, ev]); } });
+const tokenCtx = (id, label, selected = false) => ({ range: { start: 0, end: 1 }, token: { id, text: "x", label }, selected, disabled: false, readonly: false, line_height: 24, available_width: 600 });
+// Each piece a token draws: its text (or "icon") and its style.
+function piecesDrawn(text, i, id, label, { more = {}, selected = false } = {}) {
+  const { el } = drawn(text, i, { mode: "active", tokens: true, ...more }, tokenOwner()), input = all(el, n => n.kind === "textarea")[0];
+  const box = nodeOf(input.token(tokenCtx(id, label, selected), makeCx()));
+  const pieces = all(box, n => n.kind === "svg" || (n.kind === "div" && n.kids.some(k => k.kind === "text")));
+  return { box, pieces: pieces.map(n => ({ text: n.kind === "svg" ? "icon" : textOf(n), ...n.style })) };
 }
 
 test("how Reading draws each kind, in which type and colour", () => {
@@ -250,3 +264,41 @@ test("a picture block being edited shows its source in the small field, with the
   assert.equal(el.__node.style.bg, "selection");
   assert.equal(all(el, n => n.kind === "image").length, 0);
 });
+
+test("the edited text block's field draws each token in the block's type, a row as tall as the field's", () => {
+  const { box, pieces } = piecesDrawn("Some **bold** text\n", 0, "b:2,:2", "bold");
+  assert.equal(box.style.h, 24, "the field's line height");
+  assert.deepEqual(pieces.map(p => [p.text, p.font_weight, p.font_family, p.text_size, p.line_height, p.text_color]), [
+    ["bo", 700, ".SystemUIFont", 15, 1.6, "foreground"], ["ld", 400, ".SystemUIFont", 15, 1.6, "foreground"],
+  ]);
+  const heading = piecesDrawn("# A **b**\n", 0, ":1", "A").pieces[0];
+  assert.deepEqual([heading.text_size, heading.font_weight], [28, 700]);
+  const task = piecesDrawn("- [x] done **b**\n", 0, "b:1", "b", { more: { checked: true } }).pieces[0];
+  assert.equal(task.line_through, true, "a ticked task's words are struck through");
+  assert.equal(piecesDrawn("Some **bold**\n", 0, "b:4", "bold", { selected: true }).box.style.bg, "selection");
+});
+
+test("each piece of a token is formatted as Reading draws it", () => {
+  const one = (id, label) => piecesDrawn("Some **bold** text\n", 0, id, label).pieces;
+  assert.equal(one("i:1", "x")[0].italic, true);
+  assert.equal(one("s:1", "x")[0].line_through, true);
+  assert.equal(one("u:1", "x")[0].underline, true);
+  assert.deepEqual(pick(one("l:1", "x")[0], "text_color", "underline"), { text_color: "accent", underline: true });
+  assert.deepEqual(pick(one("c:1", "x")[0], "font_family", "bg"), { font_family: "Mono", bg: "surface" });
+  assert.equal(one("h:1", "x")[0].bg, HIGHLIGHT, "a comment's text in the comment highlight");
+  assert.equal(one("m#fef08a:1", "x")[0].bg, "#fef08a", "a mark tag in its colour");
+  assert.deepEqual(pick(one(`N:${POINT.length}`, POINT)[0], "text", "bg"), { text: POINT, bg: HIGHLIGHT }, "a point comment's marker");
+  assert.deepEqual(one("P:0,p:3", "cat").map(p => p.text), ["icon", "cat"], "a picture's icon before its alt text");
+  assert.deepEqual(one("E:0", "\u{200b}"), [], "hidden marks alone draw nothing");
+});
+
+test("a click on a token goes to the editor with the block's key; a raw block's field draws no tokens", () => {
+  const { el, d, owner } = drawn("Some **bold** text\n", 0, { mode: "active", tokens: true }, tokenOwner());
+  const ev = { ...tokenCtx("b:4", "bold"), bounds: { x: 0, y: 0, width: 40, height: 24 } };
+  fire(all(el, n => n.kind === "textarea")[0], "on_token_click", ev, makeCx());
+  assert.deepEqual(owner.clicks, [[d.key, ev]]);
+  const code = drawn("```\nx\n```\n", 0, { mode: "active" }, tokenOwner());
+  assert.equal(all(code.el, n => n.kind === "textarea")[0].token, undefined);
+});
+
+const pick = (o, ...keys) => Object.fromEntries(keys.map(k => [k, o[k]]));

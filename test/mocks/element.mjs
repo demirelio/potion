@@ -67,6 +67,11 @@ export function makeElement(kind, extra = {}) {
     methods.scrollable = (value = true) => { node.style.scrollable = value; };
     methods.on_link_click = fn => { node.handlers.on_link_click = fn; };
   }
+  // A text field draws its inline tokens with `token` (a test calls node.token(ctx, cx)) and reports clicks on them.
+  if (kind === "textarea" || kind === "input") {
+    methods.token = fn => { node.token = fn; };
+    methods.on_token_click = fn => { node.handlers.on_token_click = fn; };
+  }
   const proxy = new Proxy(node, {
     get(_target, prop) {
       if (prop === "__node") return node;
