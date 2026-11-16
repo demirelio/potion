@@ -40,3 +40,13 @@ test("text colours come from the theme's ANSI colours, each with a fallback; a c
   assert.equal(colors.textColor(t, "#123456"), "#123456");
   assert.equal(colors.textColor(t, "blue"), null, "not one of the editor's");
 });
+
+test("the active comment's highlight is the same ochre, deeper: further from the page on a dark page and on a light one", () => {
+  const distance = (a, b) => rgb(a).reduce((sum, v, i) => sum + Math.abs(v - rgb(b)[i]), 0);
+  for (const page of ["#191919", "#ffffff", "#122738"]) {
+    const t = { background: page }, deep = colors.deepHighlightColor(t);
+    assert.ok(/^#[0-9a-f]{6}$/.test(deep), `${page}: ${deep} is #rrggbb`);
+    brown(deep, `${page}: still brown`);
+    assert.ok(distance(deep, page) > distance(colors.highlightColor(t), page) + 40, `${page}: ${deep} stands out more than the highlight`);
+  }
+});

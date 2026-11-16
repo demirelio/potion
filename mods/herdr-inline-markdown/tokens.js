@@ -18,9 +18,10 @@ const SPACE = /\s/;
 const SEPARATORS = /[\s\p{Cc}]+/gu;
 const LOOKS = { strong: "b", em: "i", strike: "s", code: "c", link: "l", comment: "h", highlight: "h", image: "p" };
 const TAG_LOOKS = { strong: "b", b: "b", em: "i", i: "i", u: "u", s: "s", del: "s", strike: "s" };
-const LOOK_ORDER = "bisuclhp";
-const LOOK_LETTERS = /^[bisuclhp]*/;
-const LOOK_NAMES = { b: "bold", i: "italic", s: "strike", u: "underline", c: "code", l: "link", h: "highlight", p: "picture" };
+const LOOK_ORDER = "bisuclhdp";
+const LOOK_LETTERS = /^[bisuclhdp]*/;
+const LOOK_NAMES = { b: "bold", i: "italic", s: "strike", u: "underline", c: "code", l: "link", h: "highlight", d: "deep", p: "picture" };
+const POINT_ID = "N";
 const NARROW = new Set("fijlrtI.,:;'!|` ");
 const WIDE = new Set("mwMW");
 const CODE_WIDTH = 1.25;
@@ -97,6 +98,11 @@ class Atoms {
 // A look is a name of letters in LOOK_ORDER, then a mark tag's colour after an "m" and a text colour after an "@":
 // "bi", "l", "hm#fef08a", "b@red". The characters of a run share one ids array, so its look is worked out once.
 const lookLetters = name => LOOK_LETTERS.exec(name)[0];
+const lettersInOrder = on => {
+  let name = "";
+  for (const letter of LOOK_ORDER) if (on.has(letter)) name += letter;
+  return name;
+};
 
 class Looks {
   constructor(spans) {
@@ -135,9 +141,21 @@ class Looks {
       } else if (LOOKS[sp.kind]) on.add(LOOKS[sp.kind]);
     }
     if (bare) on.add("h");
-    let name = "";
-    for (const letter of LOOK_ORDER) if (on.has(letter)) name += letter;
-    return name + mark + color;
+    return lettersInOrder(on) + mark + color;
+  }
+
+  // Look k with look letter `letter` too.
+  withLetter(k, letter) {
+    const name = this.names[k], letters = lookLetters(name);
+    if (letters.includes(letter)) return k;
+    const next = lettersInOrder(new Set([...letters, letter])) + name.slice(letters.length);
+    let tinted = this.index.get(next);
+    if (tinted === undefined) {
+      tinted = this.names.length;
+      this.names.push(next);
+      this.index.set(next, tinted);
+    }
+    return tinted;
   }
 
   hasPicture(k) {
@@ -175,10 +193,11 @@ function loneFlags(spans, o) {
 }
 
 class Builder {
-  constructor(value, inline, everyWord) {
+  constructor(value, inline, everyWord, tint) {
     this.s = value;
     this.inline = inline;
     this.everyWord = everyWord;
+    this.tint = tint;
     this.spans = inline.spans;
     this.owner = markOwners(value.length, this.spans);
     this.atoms = new Atoms(value);
@@ -201,10 +220,16 @@ class Builder {
       const control = isControl(s.charCodeAt(i)), o = owner[i];
       let j = i + 1;
       while (j < k2 && isControl(s.charCodeAt(j)) === control && (control || owner[j] === o)) j++;
-      atoms.add(i, j, i, j, control ? GAP : LONE, 0, null, control ? 0 : loneFlags(spans, o));
+      atoms.add(i, j, i, j, control ? GAP : LONE, control ? 0 : this.tinted(0, i, j), null, control ? 0 : loneFlags(spans, o));
       i = j;
     }
     return k2;
+  }
+
+  // Look k, or its tinted look when [from, to) lies inside the tint.
+  tinted(k, from, to) {
+    const t = this.tint;
+    return t && from >= t.start && to <= t.end ? this.looks.withLetter(k, t.letter) : k;
   }
 
   firstIsLetter(r) {
@@ -231,17 +256,29 @@ class Builder {
       if (hasControl(s, r.start, r.end)) return atoms.add(r.start, r.end, r.start, r.end, GAP, look, null, 0);
       if (r.text === "\n") return atoms.add(r.start, r.end, r.start, r.end, SOLO, look, null, 0);
       const text = hasControl(r.text, 0, r.text.length) ? " " : r.text;
-      return atoms.add(lead, r.end, r.start, r.end, LETTER, look, text, this.iconFor(r.spans, look));
+      return atoms.add(lead, r.end, r.start, r.end, LETTER, this.tinted(look, r.start, r.end), text, this.iconFor(r.spans, look));
     }
     for (let i = r.start; i < r.end;) {
       SEPARATORS.lastIndex = i;
       const m = SEPARATORS.exec(s), from = m && m.index < r.end ? m.index : r.end;
-      if (from > i) atoms.add(i === r.start ? lead : i, from, i, from, LETTER, look, null, this.iconFor(r.spans, look));
+      if (from > i) this.word(i === r.start ? lead : i, i, from, look, r.spans);
       if (from === r.end) break;
       i = Math.min(SEPARATORS.lastIndex, r.end);
-      atoms.add(from, i, from, i, GAP, look, null, 0);
+      atoms.add(from, i, from, i, GAP, this.tinted(look, from, i), null, 0);
     }
     return atoms.count - 1;
+  }
+
+  // The letters [from, to) of a verbatim run as one atom starting at `lead`, cut where the tint begins or ends.
+  word(lead, from, to, look, spans) {
+    const t = this.tint;
+    let start = lead, at = from;
+    for (const cut of t ? [t.start, t.end] : []) {
+      if (cut <= at || cut >= to) continue;
+      this.atoms.add(start, cut, at, cut, LETTER, this.tinted(look, at, cut), null, this.iconFor(spans, look));
+      start = at = cut;
+    }
+    this.atoms.add(start, to, at, to, LETTER, this.tinted(look, at, to), null, this.iconFor(spans, look));
   }
 
   build() {
@@ -311,9 +348,9 @@ function drawnOf(atoms, tokenized) {
 
 // -> the layout tokensFor and the estimates read: { value, drawn (the text the field draws), ... }. `inline` is
 // parseInline's answer for `value`. `everyWord` makes every word a token, as a checked task needs: the field draws no
-// line through plain text.
-export function richOf(value, inline, { everyWord = false } = {}) {
-  return new Builder(String(value ?? ""), inline, everyWord).build();
+// line through plain text. `tint` ({ start, end, letter }) gives what shows of [start, end) look letter `letter` too.
+export function richOf(value, inline, { everyWord = false, tint = null } = {}) {
+  return new Builder(String(value ?? ""), inline, everyWord, tint).build();
 }
 
 // Where a selection end at x may stand: never inside a token. Inside a letter's marks it goes to the side the marks
@@ -378,7 +415,7 @@ function tokenOf(r, a, b) {
   const { atoms } = r, s = r.value;
   if (atoms.kind[a] !== LETTER) {
     const f = atoms.flags[a];
-    if (f & POINTED) return made(s, atoms.start[a], atoms.end[a], `N:${POINT.length}`, POINT);
+    if (f & POINTED) return made(s, atoms.start[a], atoms.end[a], `${POINT_ID}${lookLetters(r.looks[atoms.look[a]])}:${POINT.length}`, POINT);
     return made(s, atoms.start[a], atoms.end[a], f & ICON ? "P:0" : "E:0", EMPTY);
   }
   const d = new Drawing(r.looks);
@@ -521,7 +558,7 @@ export function piecesOf(id, label) {
     if (name === "P") { out.push({ icon: true }); continue; }
     const text = label.slice(at, at + n);
     at += n;
-    out.push(name === "N" ? { text, point: true } : { text, ...lookOf(name) });
+    out.push(name.startsWith(POINT_ID) ? { text, point: true, ...lookOf(name.slice(POINT_ID.length)) } : { text, ...lookOf(name) });
   }
   return out;
 }

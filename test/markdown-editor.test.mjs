@@ -1,4 +1,4 @@
-import test, { beforeEach } from "node:test";
+import test, { beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { state, calls, reset } from "./mocks/herdr.mjs";
@@ -17,8 +17,8 @@ const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, NOTE, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, NOTES, CARD } = await import("../mods/herdr-inline-markdown/geometry.js");
-const { highlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 
 const FILE = "/n/docs/note.md";
@@ -2921,10 +2921,10 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   const quote = view.doc.blocks.find(b => b.kind === "quote");
   const remark = view.blockField(quote.key).tokens().filter(x => x.token.id.startsWith("h:")).map(x => x.token.label);
   assert.deepEqual(remark, ["a ", "remark."], "a comment, its words tokens drawn highlighted");
-  assert.ok(find(t, `md-notes-${quote.key}`), "its count");
-  const card = must(t, "md-notes-card"), box = must(t, "md-note");
-  assert.ok(find(card, "md-note-edit-0") && find(card, "md-note-resolve-0"), "the card with its buttons");
-  assert.equal(all(box, n => n.kind === "input")[0].state, view.noteField, "the comment box");
+  assert.equal(find(t, `md-notes-${quote.key}`), null, "no count: the comments are in the margin");
+  const card = must(t, `md-card-${quote.key}-0`), written = must(t, "md-card-new");
+  assert.ok(find(card, `md-card-${quote.key}-0-time`) && find(card, `md-card-${quote.key}-0-text`), "the quote's comment on its card, with its time");
+  assert.equal(all(written, n => n.kind === "textarea")[0].state, view.noteField, "the card of the comment being written");
   audit(t);
 });
 
@@ -3066,9 +3066,11 @@ test("props come from the init argument when props() has none", async () => {
 // The column's left edge in a 900 px viewport ((900 - 780) / 2 + 32), and block i's top on the screen.
 const X = 92;
 const topOf = (m, i) => 28 + m.view.sums[i] - m.view.offset;
-async function page(disk, sizes, viewH = 600) {
+// The column's left edge wherever the page is drawn: a wide pane, or the margin layout of a file with comments.
+const leftOf = m => columnLeft(m.view.viewport?.width ?? 900, m.view.margin);
+async function page(disk, sizes, viewH = 600, viewW = 900) {
   const m = await mount({ disk });
-  viewportOf(m, 900, viewH);
+  viewportOf(m, viewW, viewH);
   await heights(m, sizes);
   return m;
 }
@@ -3126,7 +3128,8 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   }
   const contexts = key => table.filter(x => x.keystroke === key).map(x => x.context).sort();
   const actions = key => [...new Set(table.filter(x => x.keystroke === key).map(x => x.action))];
-  assert.deepEqual(contexts("enter"), [`${TEXT} > Input`]);
+  assert.deepEqual(contexts("enter"), [`${NOTE} > Input`, `${TEXT} > Input`], "the comment and address boxes save on Enter, which never gets into their field");
+  assert.deepEqual(actions("enter"), ["mdb-enter", "mdb-note-save"]);
   assert.deepEqual(contexts("shift-enter"), [`${TEXT} > Input`]);
   for (const key of ["up", "down"]) {
     assert.deepEqual(contexts(key), [`${RAW} && rows == one > Input`, `${TEXT} && menu == open > Input`, `${TEXT} && rows == one > Input`], `${key}: where the field has one row, and in a text field with the slash menu open`);
@@ -3148,8 +3151,8 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   }
   assert.deepEqual(contexts("cmd-alt-m"), [`${TEXT} > Input`], "a comment on the selection, in a text block only");
   assert.deepEqual(actions("cmd-alt-m"), ["mdb-comment"]);
-  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText6", "MdRaw6", "MdSource6", "MdNote6"], "the table changed, so its contexts are new ones and the old ones stay inert");
-  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-5]\b/.test(x.context)), [], "no context of an older table");
+  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText7", "MdRaw7", "MdSource7", "MdNote7"], "the table changed, so its contexts are new ones and the old ones stay inert");
+  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-6]\b/.test(x.context)), [], "no context of an older table");
   for (const key of ["backspace", "left", "right"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
   assert.deepEqual(contexts("escape"), [`${NOTE} > Input`, RAW, TEXT], "the comment box takes Escape whatever its field holds; the block fields only give it away");
   assert.deepEqual(actions("escape"), ["mdb-note-cancel", "mdb-escape"]);
@@ -4361,7 +4364,7 @@ test("Cmd+Z changes nothing on a page that cannot be written: a remote file, or 
 
 async function openBlock(m, i, caret) {
   const d = m.view.data.get(keyAt(m, i)), boxed = ["code", "mermaid", "table", "html", "frontmatter"].includes(d.kind) ? 13 : 0;
-  await clickAt(m, { x: X + d.depth * 24 + (d.kind === "item" ? 24 : 0) + boxed + 4, y: topOf(m, i) + d.space + boxed + 5 });
+  await clickAt(m, { x: leftOf(m) + d.depth * 24 + (d.kind === "item" ? 24 : 0) + boxed + 4, y: topOf(m, i) + d.space + boxed + 5 });
   assert.equal(m.view.activeKey, keyAt(m, i), `block ${i} opened`);
   if (caret !== undefined) await caretTo(m, caret);
 }
@@ -7610,46 +7613,53 @@ const saveNote = m => m.view.noteField.submit(m.cx);
 const cardOf = m => find(m.tree(), "md-notes-card");
 const badgeOf = (m, i) => find(m.tree(), `md-notes-${keyAt(m, i)}`);
 const cardPress = (m, id) => fire(must(m.tree(), id), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
-// A click on block i's comment count, which sits right of the 716 px text column of a 900 px pane.
-const clickCount = (m, i) => clickAt(m, { x: X + 716 + NOTES.gap + 5, y: topOf(m, i) + m.view.data.get(keyAt(m, i)).notesY + 5 });
+// A click on block i's comment count.
+const clickCount = (m, i) => clickAt(m, { x: leftOf(m) + m.view.data.get(keyAt(m, i)).notesX + 5, y: topOf(m, i) + m.view.data.get(keyAt(m, i)).notesY + 5 });
+// A pane too narrow for the margin: comments show as a count beside their block.
+const NARROW_PANE = 800;
+const narrowPage = (disk, sizes, viewH = 600) => page(disk, sizes, viewH, NARROW_PANE);
 
-test("Cmd+Alt+M on a selection opens the comment box where the bar was, holding the keyboard; Enter writes {==…==}{>>…<<} as one undo step and the field gets the keyboard back, the caret after it", async () => {
-  const advance = STYLES.p.size * 0.47;
-  const m = await page("Intro\n\nHello world.\n\nEnd\n", { 0: 24, 1: 38, 2: 38 });
-  await openBlock(m, 1);
-  await selectByMouse(m, 6, 11);
-  assert.ok(barOf(m));
-  act(m, "mdb-comment");
-  const t = m.tree(), box = must(t, "md-note");
-  assert.equal(barOf(m), null, "the bar gives way to the box");
-  assert.equal(box.style.key_context, NOTE);
-  assert.equal(all(box, n => n.kind === "input")[0].state, m.view.noteField);
-  assert.deepEqual([box.style.top, box.style.left, box.style.w], [topOf(m, 1) + 14 - BAR.gap - NOTE_BOX.h, X + 6 * advance, NOTE_BOX.w], "over the selection, as the bar");
-  assert.deepEqual([m.view.noteField.focused, m.view.noteField.value()], [true, ""]);
-  assert.deepEqual(editing(m), [keyAt(m, 1), "Hello world.", { start: 6, end: 11 }], "the field keeps its selection");
-  audit(t);
-  m.view.field.focused = false;
-  writeNote(m, "too early?");
-  saveNote(m);
-  const after = "Hello {==world==}{>>too early?<<}".length;
-  assert.equal(m.view.text, "Intro\n\nHello {==world==}{>>too early?<<}.\n\nEnd\n");
-  assert.deepEqual([noteBoxOf(m), ...editing(m), m.view.field.focused], [null, keyAt(m, 1), "Hello {==world==}{>>too early?<<}.", { start: after, end: after }, true]);
-  act(m, "mdb-undo");
-  assert.deepEqual([m.view.text, m.view.field.selection], ["Intro\n\nHello world.\n\nEnd\n", { start: 6, end: 11 }], "one Cmd+Z, the selection back");
+test("Cmd+Alt+M on a selection opens the comment box where the bar was, holding the keyboard; Enter writes {==…==}{>>time | …<<} as one undo step and the field gets the keyboard back, the caret after it", async () => {
+  await atTime(NOW, async () => {
+    const advance = STYLES.p.size * 0.47;
+    const m = await page("Intro\n\nHello world.\n\nEnd\n", { 0: 24, 1: 38, 2: 38 });
+    await openBlock(m, 1);
+    await selectByMouse(m, 6, 11);
+    assert.ok(barOf(m));
+    act(m, "mdb-comment");
+    const t = m.tree(), box = must(t, "md-note");
+    assert.equal(barOf(m), null, "the bar gives way to the box");
+    assert.equal(box.style.key_context, NOTE);
+    assert.equal(all(box, n => n.kind === "textarea")[0].state, m.view.noteField);
+    assert.deepEqual([box.style.top, box.style.left, box.style.w], [topOf(m, 1) + 14 - BAR.gap - NOTE_BOX.h, X + 6 * advance, NOTE_BOX.w], "over the selection, as the bar");
+    assert.deepEqual([m.view.noteField.focused, m.view.noteField.value()], [true, ""]);
+    assert.deepEqual(editing(m), [keyAt(m, 1), "Hello world.", { start: 6, end: 11 }], "the field keeps its selection");
+    audit(t);
+    m.view.field.focused = false;
+    writeNote(m, "too early?");
+    saveNote(m);
+    const written = "Hello {==world==}{>>2026-11-16 22:00 | too early?<<}";
+    assert.equal(m.view.text, `Intro\n\n${written}.\n\nEnd\n`);
+    assert.deepEqual([noteBoxOf(m), ...editing(m), m.view.field.focused], [null, keyAt(m, 1), `${written}.`, { start: written.length, end: written.length }, true]);
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, m.view.field.selection], ["Intro\n\nHello world.\n\nEnd\n", { start: 6, end: 11 }], "one Cmd+Z, the selection back");
+  });
 });
 
 test("the bar's Comment button opens the same box, and is never shown pressed", async () => {
-  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
-  await openBlock(m, 0);
-  await selectByMouse(m, 6, 11);
-  assert.equal(isPressed(must(m.tree(), "md-format-comment")), false);
-  const stopped = m.cx.stopped;
-  barPress(m, "comment");
-  assert.equal(m.cx.stopped - stopped, 1, "the press goes no further");
-  assert.deepEqual([Boolean(noteBoxOf(m)), barOf(m), m.view.noteField.focused], [true, null, true]);
-  writeNote(m, "a\nb");
-  saveNote(m);
-  assert.equal(m.view.text, "Hello {==world==}{>>a b<<}.\n\nEnd\n", "one line");
+  await atTime(NOW, async () => {
+    const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+    await openBlock(m, 0);
+    await selectByMouse(m, 6, 11);
+    assert.equal(isPressed(must(m.tree(), "md-format-comment")), false);
+    const stopped = m.cx.stopped;
+    barPress(m, "comment");
+    assert.equal(m.cx.stopped - stopped, 1, "the press goes no further");
+    assert.deepEqual([Boolean(noteBoxOf(m)), barOf(m), m.view.noteField.focused], [true, null, true]);
+    writeNote(m, "a\nb");
+    saveNote(m);
+    assert.equal(m.view.text, "Hello {==world==}{>>2026-11-16 22:00 | a b<<}.\n\nEnd\n", "one line");
+  });
 });
 
 test("Escape in the comment box writes nothing and gives the field its selection back; so does an empty comment", async () => {
@@ -7669,17 +7679,19 @@ test("Escape in the comment box writes nothing and gives the field its selection
 });
 
 test("Cmd+Alt+M at a plain caret writes a point comment there", async () => {
-  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
-  await openBlock(m, 0);
-  await selectByMouse(m, 5, 5);
-  act(m, "mdb-comment");
-  assert.ok(noteBoxOf(m), "a caret gets the box too");
-  writeNote(m, "here");
-  saveNote(m);
-  const after = "Hello{>>here<<}".length;
-  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello{>>here<<} world.\n\nEnd\n", { start: after, end: after }]);
-  act(m, "mdb-undo");
-  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello world.\n\nEnd\n", { start: 5, end: 5 }]);
+  await atTime(NOW, async () => {
+    const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+    await openBlock(m, 0);
+    await selectByMouse(m, 5, 5);
+    act(m, "mdb-comment");
+    assert.ok(noteBoxOf(m), "a caret gets the box too");
+    writeNote(m, "here");
+    saveNote(m);
+    const after = "Hello{>>2026-11-16 22:00 | here<<}".length;
+    assert.deepEqual([m.view.text, m.view.field.selection], ["Hello{>>2026-11-16 22:00 | here<<} world.\n\nEnd\n", { start: after, end: after }]);
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, m.view.field.selection], ["Hello world.\n\nEnd\n", { start: 5, end: 5 }]);
+  });
 });
 
 test("a selection that would cut through a comment's marks, or reach into code, gets a notice and no box", async () => {
@@ -7710,32 +7722,35 @@ test("Reading draws marked text in the muted highlight, the marks and the commen
   assert.equal(field.value(), "Hello {==big **world**==}{>>note<<}, again{>>p<<} <mark>lit</mark>.");
 });
 
-test("a block with comments shows their count right of its first row; a click on it opens a card of its comments: the marked text, the comment, Edit and Resolve", async () => {
-  const doc = "A {==b==}{>>first<<} c {>>second<<}.\n\nOnly {==lit==}.\n\n```\n{>>code<<}\n```\n";
-  const m = await page(doc, { 0: 24, 1: 38, 2: 14 + 26 + 19.5 });
-  let t = m.tree();
-  const badge = must(t, `md-notes-${keyAt(m, 0)}`);
-  assert.deepEqual([textOf(badge).trim(), badge.style.left, badge.style.top], ["2", 716 + NOTES.gap, (24 - NOTES.h) / 2]);
-  assert.deepEqual(all(t, n => /^md-notes-/.test(n.id ?? "")).map(n => n.id), [`md-notes-${keyAt(m, 0)}`], "a highlight alone, or code, has none");
-  await clickCount(m, 0);
-  t = m.tree();
-  const card = must(t, "md-notes-card");
-  assert.equal(m.view.activeKey, null, "a click on the count opens no block");
-  assert.deepEqual([card.style.top, card.style.left, card.style.w], [topOf(m, 0) + (24 - NOTES.h) / 2 + NOTES.h + CARD.gap, X + 716 + NOTES.gap + NOTES.w - CARD.w, CARD.w]);
-  assert.match(textOf(must(card, "md-note-0")), /^b first Edit Resolve$/);
-  assert.match(textOf(must(card, "md-note-1")), /^second Edit Resolve$/, "a point comment has no marked text");
-  assert.ok(find(card, "md-note-edit-1") && find(card, "md-note-resolve-1"));
-  assert.ok(typeof card.handlers.on_mouse_down_out === "function");
-  audit(t);
-  fire(card, "on_mouse_down_out", press({ x: 10, y: 10 }), m.cx);
-  assert.equal(cardOf(m), null, "a press outside closes it");
-  await clickCount(m, 0);
-  await m.key("escape");
-  assert.equal(cardOf(m), null, "so does Escape");
+test("in a narrow pane a block with comments shows their count at its first row; a click on it opens a card of its comments: the marked text, the time, the comment without its stamp, Edit and Resolve", async () => {
+  await atTime(NOW, async () => {
+    const doc = "A {==b==}{>>2026-11-15 08:05 | first<<} c {>>second<<}.\n\nOnly {==lit==}.\n\n```\n{>>code<<}\n```\n";
+    const m = await narrowPage(doc, { 0: 24, 1: 38, 2: 14 + 26 + 19.5 });
+    let t = m.tree();
+    const badge = must(t, `md-notes-${keyAt(m, 0)}`);
+    assert.deepEqual([textOf(badge).trim(), badge.style.left, badge.style.top], ["2", 716 - NOTES.w, (24 - NOTES.h) / 2], "no room right of the column: at its right edge");
+    assert.deepEqual(all(t, n => /^md-notes-/.test(n.id ?? "")).map(n => n.id), [`md-notes-${keyAt(m, 0)}`], "a highlight alone, or code, has none");
+    assert.deepEqual(cardsOf(m, t), [], "no margin");
+    await clickCount(m, 0);
+    t = m.tree();
+    const card = must(t, "md-notes-card");
+    assert.equal(m.view.activeKey, null, "a click on the count opens no block");
+    assert.deepEqual([card.style.top, card.style.left, card.style.w], [topOf(m, 0) + (24 - NOTES.h) / 2 + NOTES.h + CARD.gap, leftOf(m) + 716 - CARD.w, CARD.w]);
+    assert.match(textOf(must(card, "md-note-0")), /^b Nov 15 first Edit Resolve$/);
+    assert.match(textOf(must(card, "md-note-1")), /^second Edit Resolve$/, "a point comment has no marked text, one with no stamp no time");
+    assert.ok(find(card, "md-note-edit-1") && find(card, "md-note-resolve-1"));
+    assert.ok(typeof card.handlers.on_mouse_down_out === "function");
+    audit(t);
+    fire(card, "on_mouse_down_out", press({ x: 10, y: 10 }), m.cx);
+    assert.equal(cardOf(m), null, "a press outside closes it");
+    await clickCount(m, 0);
+    await m.key("escape");
+    assert.equal(cardOf(m), null, "so does Escape");
+  });
 });
 
 test("the block being edited keeps its comment count, which counts what the field holds, and a click on it opens its card", async () => {
-  const m = await page("A {==b==}{>>first<<} c.\n\nEnd\n", { 0: 24, 1: 38 });
+  const m = await narrowPage("A {==b==}{>>first<<} c.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0, 2);
   assert.equal(textOf(must(m.tree(), `md-notes-${keyAt(m, 0)}`)).trim(), "1", "editing does not hide it");
   m.view.field.select(m.view.field.value().length);
@@ -7750,7 +7765,7 @@ test("the block being edited keeps its comment count, which counts what the fiel
 
 test("Resolve takes a comment off and keeps its marked text, one undo step each; the card follows what is left", async () => {
   const doc = "A {==b==}{>>first<<} c {>>second<<}.\n\nEnd\n";
-  const m = await page(doc, { 0: 24, 1: 38 });
+  const m = await narrowPage(doc, { 0: 24, 1: 38 });
   await clickCount(m, 0);
   cardPress(m, "md-note-resolve-0");
   assert.equal(m.view.text, "A b c {>>second<<}.\n\nEnd\n");
@@ -7764,29 +7779,31 @@ test("Resolve takes a comment off and keeps its marked text, one undo step each;
   assert.equal(m.view.text, doc);
 });
 
-test("Edit opens the block with the marked text selected and the box holding the comment; Enter swaps it as one undo step", async () => {
-  const m = await page("A {==b==}{>>first<<} c {>>second<<}.\n\nEnd\n", { 0: 24, 1: 38 });
+test("Edit opens the block with the marked text selected and the box holding the comment without its stamp; Enter swaps it as one undo step, keeping its time", async () => {
+  const value = "A {==b==}{>>2026-11-15 08:05 | first<<} c {>>second<<}.", doc = `${value}\n\nEnd\n`;
+  const m = await narrowPage(doc, { 0: 24, 1: 38 });
   await clickCount(m, 0);
   cardPress(m, "md-note-edit-0");
   assert.deepEqual([...editing(m), cardOf(m), Boolean(noteBoxOf(m)), m.view.noteField.value(), m.view.noteField.focused],
-    [keyAt(m, 0), "A {==b==}{>>first<<} c {>>second<<}.", { start: 2, end: 20 }, null, true, "first", true]);
+    [keyAt(m, 0), value, { start: 2, end: 39 }, null, true, "first", true]);
   writeNote(m, "changed");
   saveNote(m);
-  const after = "A {==b==}{>>changed<<}".length;
-  assert.deepEqual([m.view.text, m.view.field.selection, noteBoxOf(m)], ["A {==b==}{>>changed<<} c {>>second<<}.\n\nEnd\n", { start: after, end: after }, null]);
+  const written = "A {==b==}{>>2026-11-15 08:05 | changed<<}";
+  assert.deepEqual([m.view.text, m.view.field.selection, noteBoxOf(m)], [`${written} c {>>second<<}.\n\nEnd\n`, { start: written.length, end: written.length }, null]);
   act(m, "mdb-undo");
-  assert.deepEqual([m.view.text, m.view.field.selection], ["A {==b==}{>>first<<} c {>>second<<}.\n\nEnd\n", { start: 2, end: 20 }]);
+  assert.deepEqual([m.view.text, m.view.field.selection], [doc, { start: 2, end: 39 }]);
   await escape(m);
   await clickCount(m, 0);
   cardPress(m, "md-note-edit-1");
-  assert.deepEqual([m.view.field.selection, m.view.noteField.value()], [{ start: 23, end: 23 }, "second"], "a point comment: the caret where it is");
+  const point = value.indexOf("{>>second");
+  assert.deepEqual([m.view.field.selection, m.view.noteField.value()], [{ start: point, end: point }, "second"], "a point comment: the caret where it is");
   act(m, "mdb-note-cancel");
-  assert.deepEqual([noteBoxOf(m), m.view.text, m.view.field.selection], [null, "A {==b==}{>>first<<} c {>>second<<}.\n\nEnd\n", { start: 23, end: 23 }]);
+  assert.deepEqual([noteBoxOf(m), m.view.text, m.view.field.selection], [null, doc, { start: point, end: point }]);
 });
 
 test("a file that can't be edited shows the card without Edit and Resolve", async () => {
   const m = await mount({ machine: "devbox", disk: "A {==b==}{>>first<<} c.\n" });
-  viewportOf(m);
+  viewportOf(m, NARROW_PANE);
   await heights(m, { 0: 24 });
   await clickCount(m, 0);
   const card = must(m.tree(), "md-notes-card");
@@ -7825,6 +7842,335 @@ test("the comment box closes on a press outside it, or when the block stops bein
   await m.key("cmd-e");
   await m.key("cmd-e");
   assert.deepEqual([noteBoxOf(m), m.view.note, m.view.text], [null, null, "Hello world.\n\nEnd\n"], "after Markdown and back");
+});
+
+// Comments in the margin: a pane this wide has room for the page column (780) and the card column beside it.
+const WIDE_PANE = 1400;
+const WIDE = marginLayout(WIDE_PANE);
+const XW = WIDE.pageLeft + 32;
+const widePage = (disk, sizes, viewH = 600) => page(disk, sizes, viewH, WIDE_PANE);
+const cardsOf = (m, t = m.tree()) => all(t, n => /^md-card-[^-]+-\d+$|^md-card-new$/.test(n.id ?? ""));
+const cardId = (m, i, n = 0) => `md-card-${keyAt(m, i)}-${n}`;
+const cardAt = (m, i, n = 0, t = m.tree()) => find(t, cardId(m, i, n));
+// A card's top in the scrolled page, where the column starts 28 px down.
+const wantTop = (m, i, row = 0) => 28 + m.view.sums[i] + m.view.data.get(keyAt(m, i)).space + row * m.view.data.get(keyAt(m, i)).row;
+const lookOfCard = (text, header = false, more = {}) => cardLook({ text, header, ...more });
+// The time a test runs at: 22:00 on 16 November 2026.
+const NOW = new Date(2026, 10, 16, 22, 0);
+const atTime = async (now, body) => {
+  mock.timers.enable({ apis: ["Date"], now });
+  try { return await body(); } finally { mock.timers.reset(); }
+};
+
+test("a file with comments in a wide pane makes room for them: the page column and a column of cards, centered together, and no count icons", async () => {
+  const m = await widePage("A {==b==}{>>first<<} c.\n\nEnd\n", { 0: 24, 1: 38 });
+  const t = m.tree(), p = must(t, "md-page"), card = cardAt(m, 0, 0, t);
+  assert.deepEqual([p.style.w, p.style.ml, p.style.mx_auto, p.style.max_w], [780, 168, undefined, undefined], "the page column moves left");
+  assert.ok(card, "a card for the comment");
+  assert.deepEqual([card.style.left, card.style.w, card.style.top], [WIDE.cardLeft, CARDS.w, wantTop(m, 0)]);
+  assert.ok(all(must(t, "md-scroller"), n => n === card).length, "drawn in the scrolled page");
+  assert.equal(find(t, `md-notes-${keyAt(m, 0)}`), null, "no count icon");
+  assert.equal(m.view.textWidth(), 780 - 64);
+  audit(t);
+});
+
+test("at 900 px the page column narrows to make room; a narrower pane, or a file with no comments, keeps the centered page and the count icons", async () => {
+  const doc = "A {==b==}{>>first<<} c.\n\nEnd\n";
+  const at900 = await page(doc, { 0: 24, 1: 38 });
+  const p = must(at900.tree(), "md-page");
+  assert.deepEqual([p.style.w, p.style.ml, at900.view.textWidth()], [584, 16, 584 - 64]);
+  assert.ok(cardAt(at900, 0));
+  reset();
+  const narrow = await page(doc, { 0: 24, 1: 38 }, 600, 800);
+  const q = must(narrow.tree(), "md-page");
+  assert.deepEqual([q.style.max_w, q.style.mx_auto, q.style.w], [780, true, undefined]);
+  assert.deepEqual([cardsOf(narrow), Boolean(find(narrow.tree(), `md-notes-${keyAt(narrow, 0)}`))], [[], true]);
+  reset();
+  const plain = await widePage("No comments, {==a highlight==} only.\n", { 0: 24 });
+  assert.deepEqual([must(plain.tree(), "md-page").style.mx_auto, cardsOf(plain)], [true, []]);
+});
+
+test("the margin comes when the file gains its first comment, goes when it loses its last, and follows the pane's width", async () => {
+  const m = await widePage("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  act(m, "mdb-comment");
+  assert.ok(noteBoxOf(m), "no comment yet: the box floats as in a narrow pane");
+  writeNote(m, "first");
+  saveNote(m);
+  assert.deepEqual([must(m.tree(), "md-page").style.ml, Boolean(cardAt(m, 0))], [168, true], "the first one makes room");
+  viewportOf(m, 800, 600);
+  assert.deepEqual([must(m.tree(), "md-page").style.mx_auto, cardsOf(m), m.view.textWidth()], [true, [], 716], "narrower: the count icon");
+  viewportOf(m, WIDE_PANE, 600);
+  assert.ok(cardAt(m, 0), "wider again");
+  act(m, "mdb-undo");
+  await flush();
+  assert.deepEqual([m.view.text, must(m.tree(), "md-page").style.mx_auto, cardsOf(m)], ["Hello world.\n\nEnd\n", true, []], "the last one gone: no margin");
+});
+
+test("each card sits level with the row its marked text starts on, a point comment's with its point; cards that would overlap go down in document order", async () => {
+  const doc = "Intro\n\nOne {==a==}{>>first<<} {==b==}{>>second<<}\nline {>>third<<}\n\nEnd {==c==}{>>far<<}\n";
+  const m = await widePage(doc, { 0: 24, 1: 14 + 48, 2: 14 + 24 });
+  const t = m.tree(), h = lookOfCard("first").h;
+  assert.deepEqual(cardsOf(m, t).map(n => n.id), [cardId(m, 1, 0), cardId(m, 1, 1), cardId(m, 1, 2), cardId(m, 2, 0)]);
+  const a = wantTop(m, 1), b = a + h + CARDS.gap, third = Math.max(wantTop(m, 1, 1), b + h + CARDS.gap), far = Math.max(wantTop(m, 2), third + h + CARDS.gap);
+  assert.deepEqual(cardsOf(m, t).map(n => n.style.top), [a, b, third, far]);
+  assert.ok(wantTop(m, 1, 1) < b + h, "the point's row is under the first two cards, so it went down");
+  assert.deepEqual(cardsOf(m, t).map(n => n.style.h), [h, h, h, h], "each as tall as its look, so none overlaps the next");
+});
+
+test("a card shows its comment's time and text, never the stamp: the hour today, the day this year, the day and the year before it; none without a stamp", async () => {
+  await atTime(NOW, async () => {
+    const doc = "A {==b==}{>>2026-11-16 20:51 | today<<} c {>>2026-11-15 09:00 | yesterday<<} d {>>2025-11-15 20:51 | last year<<} e {>>plain<<}.\n";
+    const m = await widePage(doc, { 0: 24 });
+    const t = m.tree(), card = n => cardAt(m, 0, n, t), part = (n, name) => find(card(n), `${cardId(m, 0, n)}-${name}`);
+    assert.deepEqual([0, 1, 2].map(n => textOf(part(n, "time")).trim()), ["8:51 PM", "Nov 15", "Nov 15, 2025"]);
+    assert.deepEqual([0, 1, 2, 3].map(n => textOf(part(n, "text")).trim()), ["today", "yesterday", "last year", "plain"]);
+    assert.equal(part(3, "time"), null, "no stamp: no time");
+    assert.deepEqual([card(0).style.h, card(3).style.h], [lookOfCard("today", true).h, lookOfCard("plain").h]);
+    const time = part(0, "time");
+    assert.deepEqual([time.style.text_color, time.style.text_size < 13], ["dim", true], "small and dim");
+  });
+});
+
+test("a long comment is clipped to a few lines with an ellipsis", async () => {
+  const long = "words to read ".repeat(30).trim();
+  const m = await widePage(`A {==b==}{>>${long}<<} c.\n`, { 0: 24 });
+  const card = cardAt(m, 0), text = textOf(must(card, `${cardId(m, 0)}-text`)).trim();
+  assert.deepEqual([text, card.style.h, card.style.overflow_hidden], [lookOfCard(long).text, lookOfCard(long).h, true]);
+  assert.ok(text.endsWith("…") && text.length < long.length);
+});
+
+test("cards move with the page as it scrolls, and only the ones near the viewport are drawn", async () => {
+  const blocks = Array.from({ length: 60 }, (_, i) => `Para ${i} {==marked==}{>>note ${i}<<} here.`);
+  const sizes = Object.fromEntries(blocks.map((_, i) => [i, 60]));
+  const m = await widePage(`${blocks.join("\n\n")}\n`, sizes);
+  let t = m.tree();
+  assert.ok(cardAt(m, 0, 0, t) && !cardAt(m, 50, 0, t), "the first ones, not those far below");
+  const top = cardAt(m, 0, 0, t).style.top;
+  m.view.scrollTo(2800, m.cx);
+  t = m.tree();
+  assert.deepEqual([must(t, "md-scroller").style.top, cardAt(m, 0, 0, t)], [-m.view.offset, null], "scrolled away");
+  assert.equal(cardAt(m, 50, 0, t).style.top, wantTop(m, 50), "in the scrolled page, where its text is");
+  m.view.scrollTo(0, m.cx);
+  assert.equal(cardAt(m, 0).style.top, top, "back where it was");
+});
+
+test("cards are placed once for what places them, not on every draw; a commented block's comments are read again only when it changes", async () => {
+  const doc = "A {==b==}{>>first<<} c.\n\nPlain.\n\nEnd {==d==}{>>far<<}.\n";
+  const m = await widePage(doc, { 0: 24, 1: 38, 2: 38 });
+  m.tree();
+  const list = m.view.cards.list, memo = m.view.cardMemo.get(keyAt(m, 0));
+  m.tree();
+  m.view.scrollTo(10, m.cx);
+  m.tree();
+  assert.equal(m.view.cards.list, list, "the same places over draws and a scroll");
+  await heights(m, { 1: 60 });
+  m.tree();
+  assert.notEqual(m.view.cards.list, list, "a height changed: placed again");
+  assert.equal(cardAt(m, 2).style.top, wantTop(m, 2));
+  state.disk.set(FILE, doc.replace("Plain.", "Plain, changed."));
+  await m.touch([FILE]);
+  m.tree();
+  assert.equal(m.view.cardMemo.get(keyAt(m, 0)), memo, "another block changed: its comments are not read again");
+  state.disk.set(FILE, doc.replace("first", "second"));
+  await m.touch([FILE]);
+  assert.equal(cardText(m, 0), "second");
+});
+
+// The colours block i's field draws its tokens' pieces on, in order.
+const tokenBgs = (m, i) => ownField(m, i).tokens().flatMap(x => all(inputOf(m, i).token({ token: x.token, range: x.range, selected: false, line_height: 24, available_width: 700 }, m.cx), n => n.style.bg !== undefined).map(n => n.style.bg));
+const isRaised = card => card.style.border_color === "muted" && card.style.shadow_lg === true;
+const cardText = (m, i, n = 0) => textOf(must(cardAt(m, i, n), `${cardId(m, i, n)}-text`)).trim();
+const cardInput = card => all(card, n => n.kind === "textarea")[0] ?? null;
+
+test("a press on commented text selects all of it and makes its comment active: the keyboard stays in the field, the text a deeper ochre, its card raised with its whole text and Resolve", async () => {
+  await atTime(NOW, async () => {
+    const long = "a long comment to read ".repeat(12).trim();
+    const doc = `Some {==marked words==}{>>2026-11-16 20:51 | ${long}<<} here.\n\nEnd\n`;
+    const m = await widePage(doc, { 0: 24, 1: 38 });
+    assert.ok(!isRaised(cardAt(m, 0)) && cardText(m, 0).endsWith("…"), "not active yet: clipped");
+    assert.ok(tokenBgs(m, 0).every(bg => bg === highlightColor(theme())));
+    await clickToken(m, 0, tokenShowing(m, 0, "marked "));
+    const value = m.view.field.value(), start = value.indexOf("{=="), end = value.indexOf(" here");
+    assert.deepEqual([m.view.activeKey, m.view.field.selection, m.view.focusedState, m.view.noteField.focused], [keyAt(m, 0), { start, end }, m.view.field, false]);
+    assert.deepEqual([...new Set(tokenBgs(m, 0))], [deepHighlightColor(theme())], "the marked text deeper");
+    const card = cardAt(m, 0);
+    assert.ok(isRaised(card), "its card raised");
+    assert.deepEqual([cardText(m, 0), card.style.h, card.style.overflow_hidden], [long, undefined, undefined], "its whole text");
+    const resolve = must(card, `${cardId(m, 0)}-resolve`);
+    assert.deepEqual([resolve.style.tooltip, all(resolve, n => n.kind === "svg")[0].path], ["Resolve", icon("check")]);
+    assert.deepEqual([barOf(m), popoverOf(m)], [null, null], "no bar and no other popover");
+    audit(m.tree());
+  });
+});
+
+test("a press on a card makes its comment active the same way, opening its block; Escape ends it, and so does a press elsewhere", async () => {
+  const doc = "A {==b==}{>>first<<} c {>>second<<}.\n\nEnd\n";
+  const m = await widePage(doc, { 0: 24, 1: 38 });
+  const stopped = m.cx.stopped;
+  cardPress(m, cardId(m, 0, 1));
+  await flush();
+  const value = m.view.field.value(), point = value.indexOf("{>>second");
+  assert.equal(m.cx.stopped - stopped, 1, "the press goes no further");
+  assert.deepEqual([...editing(m), m.view.field.focused], [keyAt(m, 0), value, { start: point, end: point + "{>>second<<}".length }, true]);
+  assert.deepEqual([isRaised(cardAt(m, 0, 0)), isRaised(cardAt(m, 0, 1))], [false, true]);
+  assert.equal(ownField(m, 0).tokens().find(x => x.token.label === POINT).token.id, `Nd:${POINT.length}`, "a point comment's marker deeper too");
+  escape(m);
+  assert.deepEqual([isRaised(cardAt(m, 0, 1)), m.view.activeKey], [false, keyAt(m, 0)], "Escape: not active, the block still edited");
+  assert.equal(ownField(m, 0).tokens().find(x => x.token.label === POINT).token.id, `N:${POINT.length}`);
+  cardPress(m, cardId(m, 0, 0));
+  await flush();
+  assert.ok(isRaised(cardAt(m, 0, 0)));
+  await openBlock(m, 1);
+  assert.equal(isRaised(cardAt(m, 0, 0)), false, "a press elsewhere");
+});
+
+test("a press on a point comment's marker picks it; a press on a link inside commented text picks the link", async () => {
+  const doc = "Say {>>here<<} and {==see [docs](https://e.com/d)==}{>>n<<} now.\n\nEnd\n";
+  const m = await widePage(doc, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, POINT));
+  const value = m.view.field.value(), point = value.indexOf("{>>here");
+  assert.deepEqual(m.view.field.selection, { start: point, end: point + "{>>here<<}".length });
+  assert.deepEqual([isRaised(cardAt(m, 0, 0)), isRaised(cardAt(m, 0, 1))], [true, false]);
+  await clickToken(m, 0, ownField(m, 0).tokens().find(x => x.token.label.startsWith("docs")));
+  assert.deepEqual([addressOf(m), isRaised(cardAt(m, 0, 1))], ["https://e.com/d", false], "the innermost: the link's popover");
+});
+
+test("a press on a card's text edits it there: its text without the stamp in a field, the caret at the end; Enter saves it as one undo step, keeping its time; Escape leaves it as it was", async () => {
+  await atTime(NOW, async () => {
+    const doc = "A {==b==}{>>2026-11-15 08:05 | first<<} c.\n\nEnd\n";
+    const m = await widePage(doc, { 0: 24, 1: 38 });
+    cardPress(m, `${cardId(m, 0)}-text`);
+    await flush();
+    let card = cardAt(m, 0);
+    assert.ok(isRaised(card) && !find(card, `${cardId(m, 0)}-text`), "edit mode: no text, a field");
+    assert.deepEqual([cardInput(card)?.state, m.view.noteField.value(), m.view.noteField.selection, m.view.noteField.focused], [m.view.noteField, "first", { start: 5, end: 5 }, true]);
+    assert.equal(must(card, `${cardId(m, 0)}-input`).style.key_context, NOTE);
+    assert.equal(noteBoxOf(m), null, "no box over the text");
+    assert.ok(tokenBgs(m, 0).includes(deepHighlightColor(theme())), "still the active one");
+    fire(card, "on_size_change", { width: 260, height: 120 }, m.cx);
+    assert.equal(m.view.cardList()[0].h, 120, "the card grows with its text");
+    writeNote(m, "changed");
+    act(m, "mdb-note-save");
+    assert.equal(m.view.text, "A {==b==}{>>2026-11-15 08:05 | changed<<} c.\n\nEnd\n");
+    card = cardAt(m, 0);
+    assert.deepEqual([cardText(m, 0), textOf(must(card, `${cardId(m, 0)}-time`)).trim(), m.view.field.focused], ["changed", "Nov 15", true]);
+    act(m, "mdb-undo");
+    assert.equal(m.view.text, doc, "one undo step");
+    cardPress(m, `${cardId(m, 0)}-text`);
+    await flush();
+    writeNote(m, "never mind");
+    act(m, "mdb-note-cancel");
+    assert.deepEqual([m.view.text, cardText(m, 0), cardInput(cardAt(m, 0)), m.view.field.focused], [doc, "first", null, true]);
+  });
+});
+
+test("a press outside the card being edited or written closes it, writing nothing; one on another card picks that one", async () => {
+  const doc = "A {==b==}{>>first<<} c {>>second<<}.\n\nEnd\n";
+  const m = await widePage(doc, { 0: 24, 1: 38 });
+  cardPress(m, `${cardId(m, 0, 0)}-text`);
+  await flush();
+  writeNote(m, "changed");
+  const card = cardAt(m, 0, 0);
+  assert.equal(typeof card.handlers.on_mouse_down_out, "function");
+  fire(card, "on_mouse_down_out", press({ x: 10, y: 300 }), m.cx);
+  assert.deepEqual([m.view.text, cardInput(cardAt(m, 0, 0)), m.view.note], [doc, null, null]);
+  cardPress(m, `${cardId(m, 0, 0)}-text`);
+  await flush();
+  fire(cardAt(m, 0, 0), "on_mouse_down_out", press({ x: 10, y: 300 }), m.cx);
+  cardPress(m, cardId(m, 0, 1));
+  await flush();
+  assert.deepEqual([isRaised(cardAt(m, 0, 0)), isRaised(cardAt(m, 0, 1)), m.view.text], [false, true, doc]);
+});
+
+test("an edited comment emptied and saved is resolved, as one undo step", async () => {
+  const doc = "A {==b==}{>>2026-11-15 08:05 | first<<} c.\n\nEnd\n";
+  const m = await widePage(doc, { 0: 24, 1: 38 });
+  cardPress(m, `${cardId(m, 0)}-text`);
+  await flush();
+  writeNote(m, "  ");
+  saveNote(m);
+  assert.deepEqual([m.view.text, cardsOf(m), m.view.field.selection], ["A b c.\n\nEnd\n", [], { start: 2, end: 3 }], "its text stays, selected");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, doc);
+});
+
+test("Resolve on the active card takes the comment off, its text selected, as one undo step whose undo brings it back with its time", async () => {
+  const doc = "A {==b==}{>>2026-11-15 08:05 | first<<} c {>>2026-11-15 09:00 | second<<}.\n\nEnd\n";
+  const m = await widePage(doc, { 0: 24, 1: 38 });
+  cardPress(m, cardId(m, 0, 0));
+  await flush();
+  const stopped = m.cx.stopped;
+  fire(must(cardAt(m, 0, 0), `${cardId(m, 0, 0)}-resolve`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+  assert.equal(m.cx.stopped - stopped, 1);
+  assert.deepEqual([m.view.text, m.view.field.selection], ["A b c {>>2026-11-15 09:00 | second<<}.\n\nEnd\n", { start: 2, end: 3 }]);
+  assert.deepEqual(cardsOf(m).map(n => n.id), [cardId(m, 0, 0)], "the other's card is left");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, doc);
+});
+
+test("Cmd+Alt+M in the margin: the selection keeps a provisional highlight and a new card opens level with it, holding the keyboard; Enter writes the comment with the time it was written", async () => {
+  await atTime(NOW, async () => {
+    const m = await widePage("A {==b==}{>>first<<} c.\n\nHello world.\n", { 0: 60, 1: 38 });
+    await openBlock(m, 1);
+    await selectByMouse(m, 6, 11);
+    act(m, "mdb-comment");
+    const card = must(m.tree(), "md-card-new");
+    assert.deepEqual([card.style.top, card.style.left, isRaised(card), noteBoxOf(m)], [wantTop(m, 1), WIDE.cardLeft, true, null]);
+    assert.deepEqual([cardInput(card)?.state, m.view.noteField.value(), m.view.noteField.focused, m.view.noteField.options.placeholder], [m.view.noteField, "", true, "Add a comment…"]);
+    assert.deepEqual([editing(m)[2], [...new Set(tokenBgs(m, 1))]], [{ start: 6, end: 11 }, [highlightColor(theme())]], "the selection kept, drawn highlighted");
+    writeNote(m, "why");
+    saveNote(m);
+    assert.equal(m.view.text, "A {==b==}{>>first<<} c.\n\nHello {==world==}{>>2026-11-16 22:00 | why<<}.\n");
+    assert.deepEqual([find(m.tree(), "md-card-new"), cardText(m, 1), textOf(must(cardAt(m, 1), `${cardId(m, 1)}-time`)).trim()], [null, "why", "10:00 PM"]);
+    act(m, "mdb-undo");
+    assert.equal(m.view.text, "A {==b==}{>>first<<} c.\n\nHello world.\n");
+  });
+});
+
+test("Escape or an empty Enter drops the new card, and the field gets the keyboard back with its selection", async () => {
+  const m = await widePage("A {==b==}{>>first<<} c.\n\nHello world.\n", { 0: 24, 1: 38 });
+  await openBlock(m, 1);
+  for (const close of [() => act(m, "mdb-note-cancel"), () => { writeNote(m, " "); act(m, "mdb-note-save"); }]) {
+    await selectByMouse(m, 6, 11);
+    act(m, "mdb-comment");
+    assert.ok(find(m.tree(), "md-card-new"));
+    m.view.field.focused = false;
+    close();
+    assert.deepEqual([find(m.tree(), "md-card-new"), editing(m)[2], m.view.field.focused, m.view.history.canUndo], [null, { start: 6, end: 11 }, true, false]);
+    assert.deepEqual([...new Set(tokenBgs(m, 1))], [], "no highlight left");
+  }
+});
+
+test("without room for a margin the comment box floats over the selection and writes the time too", async () => {
+  await atTime(NOW, async () => {
+    const m = await page("A {==b==}{>>first<<} c.\n\nHello world.\n", { 0: 24, 1: 38 }, 600, 800);
+    await openBlock(m, 1);
+    await selectByMouse(m, 6, 11);
+    act(m, "mdb-comment");
+    assert.deepEqual([Boolean(noteBoxOf(m)), find(m.tree(), "md-card-new"), all(noteBoxOf(m), n => n.kind === "textarea")[0].state], [true, null, m.view.noteField]);
+    writeNote(m, "why");
+    saveNote(m);
+    assert.equal(m.view.text, "A {==b==}{>>first<<} c.\n\nHello {==world==}{>>2026-11-16 22:00 | why<<}.\n");
+  });
+});
+
+test("in a narrow pane a press on commented text shows its card under the text, without the stamp; a press on its text edits it in the comment box", async () => {
+  await atTime(NOW, async () => {
+    const doc = "A {==marked==}{>>2026-11-16 20:51 | first<<} c.\n\nEnd\n";
+    const m = await page(doc, { 0: 24, 1: 38 }, 600, 800);
+    await clickToken(m, 0, tokenShowing(m, 0, "marked"));
+    const float = must(m.tree(), "md-card-float");
+    assert.deepEqual([textOf(must(float, "md-card-float-time")).trim(), textOf(must(float, "md-card-float-text")).trim(), Boolean(find(float, "md-card-float-resolve"))], ["8:51 PM", "first", true]);
+    assert.ok(float.style.top > topOf(m, 0), "under the text");
+    cardPress(m, "md-card-float-text");
+    await flush();
+    assert.deepEqual([Boolean(noteBoxOf(m)), m.view.noteField.value(), find(m.tree(), "md-card-float")], [true, "first", null]);
+    writeNote(m, "second");
+    saveNote(m);
+    assert.equal(m.view.text, "A {==marked==}{>>2026-11-16 20:51 | second<<} c.\n\nEnd\n");
+  });
 });
 
 // The edited block keeps its rendered look: its formatted words are inline tokens of the field, drawn by the page.
@@ -7938,14 +8284,16 @@ test("a format key leaves the formatted word's tokens with its letters split at 
 });
 
 test("a comment saved on a selection becomes tokens with its marks and note hidden", async () => {
-  const m = await page("Note this word\n\nOther\n", { 0: 24, 1: 24 });
-  await openBlock(m, 0);
-  await selectByMouse(m, 5, 9);
-  act(m, "mdb-comment");
-  writeNote(m, "why");
-  saveNote(m);
-  assert.equal(m.view.text, "Note {==this==}{>>why<<} word\n\nOther\n");
-  assert.deepEqual(tokenTexts(m), ["{==t", "h", "i", "s==}{>>why<<}"]);
+  await atTime(NOW, async () => {
+    const m = await page("Note this word\n\nOther\n", { 0: 24, 1: 24 });
+    await openBlock(m, 0);
+    await selectByMouse(m, 5, 9);
+    act(m, "mdb-comment");
+    writeNote(m, "why");
+    saveNote(m);
+    assert.equal(m.view.text, "Note {==this==}{>>2026-11-16 22:00 | why<<} word\n\nOther\n");
+    assert.deepEqual(tokenTexts(m), ["{==t", "h", "i", "s==}{>>2026-11-16 22:00 | why<<}"]);
+  });
 });
 
 test("a change from disk keeps the edited block's tokens, or sets new ones when it changed the block", async () => {
@@ -8487,7 +8835,7 @@ test("spaces inside a formatted run belong to its tokens, so a comment's highlig
 });
 
 test("a change under blocks not being edited sets exactly the fields whose value or tokens changed", async () => {
-  const m = await page("One *a*\n\nTwo **bb**\n\nThree {==c==}{>>n<<}\n\nFour d\n", { 0: 24, 1: 38, 2: 38, 3: 38 });
+  const m = await narrowPage("One *a*\n\nTwo **bb**\n\nThree {==c==}{>>n<<}\n\nFour d\n", { 0: 24, 1: 38, 2: 38, 3: 38 });
   const sets = async run => {
     const list = [0, 1, 2, 3].map(i => ownField(m, i)), before = list.map(valueSetsOf);
     await run();
@@ -8592,7 +8940,7 @@ for (const blocks of [300, 600]) {
       for (let round = 0; round < 3; round++) await scrollThrough(m);
     } finally { delete TextareaState.new; }
     assert.deepEqual([m.view.field, m.view.blockField(m.view.activeKey), edited.releases ?? 0], [edited, edited, 0], "the edited block kept its field however far the page went");
-    const own = new Set([m.view.loose, m.view.source, ...Object.values(m.view.calStates).flatMap(s => [s.f1, s.f3])]);
+    const own = new Set([m.view.loose, m.view.source, m.view.noteField, ...Object.values(m.view.calStates).flatMap(s => [s.f1, s.f3])]);
     const fields = made.filter(s => !own.has(s)), live = fields.filter(s => m.view.fieldKeys.has(s));
     assert.ok(live.length <= fieldBound(m), `${live.length} live fields, the viewport allows ${fieldBound(m)}`);
     assert.ok(fields.length > 2 * blocks, `${fields.length} fields made over the scrolling`);

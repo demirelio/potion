@@ -6,7 +6,7 @@ import {
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
   barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, PICTURE, pictureLayout,
-  NOTE_BOX, NOTES, CARD, notesPlace, cardPlace,
+  NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
@@ -509,6 +509,49 @@ test("the comments card goes under its count icon, its right edge under the icon
   assert.equal(cardPlace({ ...at, iconTop: 100, viewH: 160 }).side, "below", "no room either way: under it");
   assert.equal(cardPlace({ ...at, iconLeft: 10 }).left, CARD.margin, "kept inside the pane's left edge");
   assert.equal(cardPlace({ ...at, iconLeft: 880 }).left, 900 - CARD.margin - CARD.w, "and its right edge");
+});
+
+test("the margin layout: a page column of at least 520 px and a card column beside it, centered together; none in a narrower pane", () => {
+  assert.deepEqual([MARGIN.minPage, MARGIN.gap, MARGIN.card, MARGIN.edge], [520, 24, 260, 16]);
+  assert.deepEqual(marginLayout(1400), { pageW: 780, pageLeft: 168, cardLeft: 168 + 780 + 24, cardW: 260 }, "a wide pane: the usual column, both centered");
+  assert.deepEqual(marginLayout(1000), { pageW: 684, pageLeft: 16, cardLeft: 16 + 684 + 24, cardW: 260 }, "the column narrows first");
+  assert.deepEqual(marginLayout(900), { pageW: 584, pageLeft: 16, cardLeft: 624, cardW: 260 });
+  assert.deepEqual(marginLayout(836), { pageW: 520, pageLeft: 16, cardLeft: 560, cardW: 260 }, "just room");
+  assert.equal(marginLayout(835), null, "narrower: the count icons instead");
+  const m = marginLayout(1401);
+  assert.equal(m.pageLeft, 168, "whole pixels");
+  assert.ok(m.cardLeft + m.cardW <= 1401 - MARGIN.edge);
+});
+
+test("the column's left edge follows the margin layout, and so do the floats placed by the column", () => {
+  const margin = marginLayout(1400);
+  assert.equal(columnLeft(1400), (1400 - 780) / 2 + COLUMN.padX);
+  assert.equal(columnLeft(1400, margin), 168 + COLUMN.padX);
+  assert.equal(columnX(300, 1400, margin), 300 - 200);
+  const at = { col: 0, advance: 7, fieldW: 500, fieldX: 0, viewW: 1400, margin };
+  assert.equal(slashX(at), 200);
+  assert.equal(barPlace({ ...at, firstTop: 200, lastTop: 200, rowH: 24, size: { w: 300, h: 38 }, viewH: 600 }).left, 200);
+  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, rowH: 24, size: { w: 300, h: 38 }, viewH: 600 }).left, 200);
+});
+
+test("a card: its time on a row of its own, its text wrapped and clipped to a few lines with an ellipsis unless it shows in full", () => {
+  const perLine = Math.floor((CARDS.w - 2 - 2 * CARDS.pad) / CARDS.charW), edge = 2 + 2 * CARDS.pad, head = CARDS.headH + CARDS.rowGap;
+  assert.deepEqual(cardLook({ text: "short", header: true }), { text: "short", h: edge + head + CARDS.lineH });
+  assert.deepEqual(cardLook({ text: "short", header: false }), { text: "short", h: edge + CARDS.lineH }, "no time: no row for it");
+  assert.equal(cardLook({ text: "x".repeat(perLine + 1), header: true }).h, edge + head + 2 * CARDS.lineH, "two lines");
+  const long = "word ".repeat(80).trim(), clipped = cardLook({ text: long, header: true });
+  assert.equal(clipped.h, edge + head + CARDS.lines * CARDS.lineH, `${CARDS.lines} lines at most`);
+  assert.ok(clipped.text.endsWith("…") && [...clipped.text].length <= CARDS.lines * perLine);
+  const full = cardLook({ text: long, header: true, full: true });
+  assert.deepEqual([full.text, full.h], [long, edge + head + Math.ceil(long.length / perLine) * CARDS.lineH], "in full");
+  assert.equal(cardLook({ text: "", header: false }).h, edge + CARDS.lineH, "an empty card holds a row for its placeholder");
+  assert.equal(cardLook({ text: "a", header: true, extra: 30 }).h, edge + head + CARDS.lineH + 30, "room for what else it holds");
+});
+
+test("cards stay level with their text unless the one before reaches down there: then they go just under it", () => {
+  assert.deepEqual(stackCards([{ want: 10, h: 50 }, { want: 200, h: 50 }]), [10, 200]);
+  assert.deepEqual(stackCards([{ want: 10, h: 50 }, { want: 20, h: 50 }, { want: 30, h: 40 }, { want: 400, h: 10 }]), [10, 10 + 50 + CARDS.gap, 10 + 2 * (50 + CARDS.gap), 400]);
+  assert.deepEqual(stackCards([]), []);
 });
 
 const ok = (natW, natH) => ({ state: "ok", natW, natH });

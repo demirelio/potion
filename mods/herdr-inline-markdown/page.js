@@ -179,6 +179,7 @@ function piece(owner, d, t, p) {
     .when(Boolean(p.code), el => el.bg(t.surface).rounded(3))
     .when(Boolean(p.highlight || p.point), el => el.bg(owner.highlight))
     .when(Boolean(p.mark), el => el.bg(p.mark))
+    .when(Boolean(p.deep), el => el.bg(owner.deep))
     .child(p.text);
 }
 

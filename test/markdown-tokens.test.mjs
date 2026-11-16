@@ -207,6 +207,27 @@ test("the drawing pieces come back from a token's id and label", () => {
   assert.deepEqual(piecesOf("u@red:1,m#336699@#ff0000:1", "ab"), [{ text: "a", underline: true, color: "red" }, { text: "b", mark: "#336699", color: "#ff0000" }]);
 });
 
+const tinted = (value, tint, sel = FAR) => tokensFor(richOf(value, parseInline(value), { tint }), sel).tokens.map(t => [t.token.text, t.token.label, t.token.id]);
+
+test("a tint over the active comment's text draws it deeper: its letters, the spaces between them and a point comment's marker", () => {
+  const value = "a {==hi there==}{>>n<<} b", from = value.indexOf("hi"), to = value.indexOf("==}");
+  assert.deepEqual(tinted(value, { start: from, end: to, letter: "d" }), [["{==hi ", "hi ", "hd:3"], ["there==}{>>n<<}", "there", "hd:5"]]);
+  assert.deepEqual(tinted(value, null), tokens(value), "no tint: as before");
+  const point = "a {>>note<<} b", at = point.indexOf("{>>");
+  assert.deepEqual(tinted(point, { start: at, end: point.indexOf(" b"), letter: "d" }), [["{>>note<<}", POINT, `Nd:${POINT.length}`]]);
+  assert.deepEqual(piecesOf(`Nd:${POINT.length}`, POINT), [{ text: POINT, point: true, deep: true }]);
+  assert.deepEqual(piecesOf("bhd:1", "x"), [{ text: "x", bold: true, highlight: true, deep: true }]);
+});
+
+test("a tint over plain text makes its words tokens drawn highlighted, a word it cuts split where it begins and ends", () => {
+  const value = "say hello world now", start = value.indexOf("llo"), end = value.indexOf(" now");
+  assert.deepEqual(tinted(value, { start, end, letter: "h" }), [["hello ", "hello ", ":2,h:4"], ["world", "world", "h:5"]]);
+  const r = richOf(value, parseInline(value), { tint: { start, end, letter: "h" } });
+  assert.equal(r.drawn, value, "it draws the same characters");
+  assert.deepEqual(extentOf(r, { start, end }), { start, end });
+  assert.deepEqual(tinted(value, { start, end, letter: "h" }, { start, end }).map(t => t[0]), ["h", "e", "l", "l", "o", " ", "w", "o", "r", "l", "d"], "the words at the selection's ends split into letters");
+});
+
 test("tokens compare by range, text, id and label", () => {
   const a = tokensFor(rich("a **b** c"), FAR).tokens;
   assert.ok(sameTokens(a, tokensFor(rich("a **b** c"), FAR).tokens));

@@ -266,28 +266,50 @@ its `@`) so it is not linked again: `https\://example.com`.
 
 ### Comments
 
-Select text in a paragraph, heading, list item or quote you are editing and press Cmd+Alt+M, or Comment on the format
-bar: a small box opens over the selection. Type the comment, then Enter saves it and Escape cancels; an empty comment
-saves nothing. With nothing selected the comment goes at the caret. Spaces at the ends of the selection stay outside
-it. Saving is one undo step, and the caret lands after the comment.
-
 Comments are written into the file as [CriticMarkup](https://criticmarkup.com), so an agent reading the file sees each
-one next to the text it is about:
+one next to the text it is about, with the time it was written:
 
 ```
-The release {==ships on Friday==}{>>too early? QA needs a day<<} and the docs follow on Monday.
+The release {==ships on Friday==}{>>2026-11-16 20:51 | too early? QA needs a day<<} and the docs follow on Monday.
 A comment at a point{>>check the date<<} marks no text.
 ```
 
+The time is the local date and time, 24-hour (`YYYY-MM-DD HH:MM`), then ` | ` and the comment. The editor writes it on
+every new comment and keeps it when the comment is edited. A person or an agent writing a comment by hand can use the
+same form, or leave the time out: such a comment shows no time. Only the comment's text is ever shown, never the time
+as written.
+
+- **In the margin.** When the file has comments and the pane is wide enough (836 px: a page column of at least 520 px
+  and a column of cards 260 px wide), the page and the cards are centered together, the page narrower than its usual
+  780 px when it must be. Each comment shows as a card beside its text, level with the row where its marked text
+  starts (a comment at a point, level with the point): when it was written (the hour today, the day this year, the day
+  and year before that) and the comment, cut to three lines. Cards that would overlap go down in order, a little
+  apart, and they scroll with the page. The page makes room when the file gets its first comment and gives it back
+  when it loses its last.
+- **The active comment.** A click on a card, or on commented text, makes its comment active: all of its text is
+  selected (the keyboard stays in the text), its highlight turns a deeper ochre, and its card stands out, showing the
+  whole comment and a ✓ button, Resolve. Escape, a click elsewhere or moving the caret out of the comment ends it. A
+  link inside commented text takes a click on it; the comment's card or the rest of its text picks the comment.
+- **Editing in place.** A click on a card's text turns it into a field holding the comment, the caret at its end,
+  growing with it. Enter saves it, keeping its time, as one undo step; Escape leaves it as it was; Enter on an emptied
+  comment resolves it.
+- **A new comment.** Select text in a paragraph, heading, list item or quote you are editing and press Cmd+Alt+M, or
+  Comment on the format bar: the selection keeps a highlight and a new card opens beside it, "Add a comment…". Enter
+  writes the comment with the time; Escape, or Enter with nothing typed, drops it and the selection is back. With
+  nothing selected the comment goes at the caret. Spaces at the ends of the selection stay outside it. Saving is one
+  undo step, and the caret lands after the comment.
+- **Resolve** takes the comment and its marks off; the marked text stays, selected. It is one undo step, whose undo
+  brings the comment back with its time.
+- **Narrower panes**, and a file with no comment yet, have no margin. A new comment is written in a small box over the
+  selection, with the time too. A count at the right of a block's first row says how many comments it holds, also
+  while the block is being edited; a click on it opens a card listing them: the marked text, the time, the comment, and
+  **Edit** (the block opens with the marked text selected and the box holds the comment) and **Resolve**. A click on
+  commented text shows that comment's card under it, with Resolve; a click on the card's text opens the box to edit
+  it. A file that can't be edited shows its cards without Resolve or Edit. The footer counts the file's comments.
 - **Reading** highlights the marked text in a muted ochre as light as the page (dark brown on a dark theme, whatever
   its tint, soft beige on a light one), the colour `<mark>` highlights get too, its formatting still drawn, and leaves out the marks
   and the comment; a comment at a point shows as a highlighted 💬. A highlight with no comment (`{==text==}`) is
   highlighted too. The block being edited looks the same: the marks and the comment stay hidden.
-- **The count** at the right of a block's first row says how many comments it holds, also while the block is being
-  edited. A click on it opens a card listing
-  them: the marked text, the comment, and **Edit** (the block opens with the marked text selected and the box holds
-  the comment) and **Resolve** (the comment and its marks go, the marked text stays). Each is one undo step. A file
-  that can't be edited shows the card without them. The footer counts the file's comments.
 - **Rules:** a comment is one line (line breaks typed into it become spaces, and `<<}` in it is written `<< }` so it
   can't end the comment early). It stays within one paragraph and never goes inside inline code, a code block, a
   diagram or a table, where CriticMarkup is plain text. A selection that would cut through or hold another comment, or

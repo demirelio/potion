@@ -1,6 +1,7 @@
 // CriticMarkup comments in the text of one block: `{==marked text==}{>>comment<<}`, a comment at a point
-// `{>>comment<<}`, and a highlight with no comment `{==text==}`. Code spans and code blocks hold none. Offsets are
-// UTF-16 indices. No imports.
+// `{>>comment<<}`, and a highlight with no comment `{==text==}`. Code spans and code blocks hold none. A comment's
+// note may start with the local time it was written: `{>>2026-11-16 20:51 | the comment<<}`. Offsets are UTF-16
+// indices. No imports.
 
 const OPEN = "{==", CLOSE = "==}", NOTE_OPEN = "{>>", NOTE_CLOSE = "<<}";
 const BACKSLASH = 92, BACKTICK = 96, BRACE = 123, EQUALS = 61, LESS = 60;
@@ -11,6 +12,10 @@ const BLANK = /^[ \t]*$/;
 const INDENTED = /^(?: {0,3}\t| {4})/;
 const LINE_BREAK = /\s*(?:\r\n|\r|\n)\s*/g;
 const SPACE = /\s/;
+const STAMP = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d) \|(?: |$)/;
+const STAMP_SEP = " | ";
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const pad2 = n => String(n).padStart(2, "0");
 
 // What a point comment shows in Reading, highlighted.
 export const POINT = "💬";
@@ -151,6 +156,33 @@ export const showComments = (text, color) => replaced(text, c => highlight(c.kin
 // A comment is one line, and `<<}` in it would end it early.
 export const oneLine = note => String(note ?? "").replace(LINE_BREAK, " ").replaceAll(NOTE_CLOSE, "<< }").trim();
 
+export const stampOf = when =>
+  `${when.getFullYear()}-${pad2(when.getMonth() + 1)}-${pad2(when.getDate())} ${pad2(when.getHours())}:${pad2(when.getMinutes())}`;
+
+// -> { when, text }: the time a note's stamp names (a Date, local time) and the text after it; a note without a valid
+// stamp has `when` null and is all text.
+export function readNote(note) {
+  const s = String(note ?? ""), m = STAMP.exec(s);
+  if (!m) return { when: null, text: s };
+  const [y, mo, d, h, mi] = m.slice(1).map(Number), when = new Date(y, mo - 1, d, h, mi);
+  const real = when.getFullYear() === y && when.getMonth() === mo - 1 && when.getDate() === d && when.getHours() === h && when.getMinutes() === mi;
+  return real ? { when, text: s.slice(m[0].length) } : { when: null, text: s };
+}
+
+export const noteText = note => readNote(note).text;
+
+// A comment's time as a card shows it: the hour on the day of `now`, the day in its year, else the day and the year.
+export function timeLabel(when, now) {
+  if (!when) return "";
+  const day = `${MONTHS[when.getMonth()]} ${when.getDate()}`;
+  if (when.getFullYear() !== now.getFullYear()) return `${day}, ${when.getFullYear()}`;
+  if (when.getMonth() !== now.getMonth() || when.getDate() !== now.getDate()) return day;
+  const h = when.getHours();
+  return `${h % 12 || 12}:${pad2(when.getMinutes())} ${h < 12 ? "AM" : "PM"}`;
+}
+
+const stamped = (text, when) => (when ? `${stampOf(when)}${STAMP_SEP}${text}` : text);
+
 // Spaces at the ends of a selection stay outside the marks; a selection of spaces only is a caret at its start.
 function trimmed(value, range) {
   const clampTo = x => Math.max(0, Math.min(value.length, Number(x) || 0));
@@ -176,24 +208,27 @@ function refusal(value, { start: s, end: e }) {
 // "code" or "paragraphs" (it would cross a blank line); null when it can.
 export const commentable = (value, range) => refusal(value, trimmed(value, range));
 
-// -> { value, start, end }: the selection marked with `note` (a point comment at a caret), the caret after it; null for
-// an empty note; { refused } with commentable's reason.
-export function addComment(value, range, note) {
+// -> { value, start, end }: the selection marked with `note` (a point comment at a caret), stamped with `when` when
+// given, the caret after it; null for an empty note; { refused } with commentable's reason.
+export function addComment(value, range, note, when = null) {
   const text = oneLine(note), sel = trimmed(value, range);
   if (!text) return null;
   const why = refusal(value, sel);
   if (why) return { refused: why };
-  const marks = sel.start === sel.end ? "" : `${OPEN}${value.slice(sel.start, sel.end)}${CLOSE}`, written = `${marks}${NOTE_OPEN}${text}${NOTE_CLOSE}`;
-  const caret = sel.start + written.length;
+  const marks = sel.start === sel.end ? "" : `${OPEN}${value.slice(sel.start, sel.end)}${CLOSE}`;
+  const written = `${marks}${NOTE_OPEN}${stamped(text, when)}${NOTE_CLOSE}`, caret = sel.start + written.length;
   return { value: value.slice(0, sel.start) + written + value.slice(sel.end), start: caret, end: caret };
 }
 
-// Comment `c` of `value` (commentsIn) with its text swapped for `note`, the caret after it; null when nothing changes.
+// Comment `c` of `value` (commentsIn) with its text swapped for `note`, its time kept, the caret after it; null when
+// nothing changes.
 export function editComment(value, c, note) {
   const text = oneLine(note);
-  if (!text || c.note === null || text === c.note) return null;
-  const caret = c.end + text.length - c.note.length;
-  return { value: value.slice(0, c.noteAt) + text + value.slice(c.noteAt + c.note.length), start: caret, end: caret };
+  if (!text || c.note === null) return null;
+  const next = stamped(text, readNote(c.note).when);
+  if (next === c.note) return null;
+  const caret = c.end + next.length - c.note.length;
+  return { value: value.slice(0, c.noteAt) + next + value.slice(c.noteAt + c.note.length), start: caret, end: caret };
 }
 
 // Comment `c` taken off `value`, its marked text kept and selected.

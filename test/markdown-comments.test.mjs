@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  POINT, addComment, commentable, commentsIn, editComment, highlight, oneLine, resolveComment, showComments,
+  POINT, addComment, commentable, commentsIn, editComment, highlight, noteText, oneLine, readNote, resolveComment, showComments,
+  stampOf, timeLabel,
 } from "../mods/herdr-inline-markdown/comments.js";
 
 const COLOR = "#4a3b20";
@@ -116,4 +117,51 @@ test("edit swaps the comment's text and leaves the caret after it; resolve keeps
   assert.equal(editComment(text, c, "old"), null, "the same text: nothing changes");
   assert.deepEqual(resolveComment(text, c), { value: "A b c {>>p<<}.", start: 2, end: 3 });
   assert.deepEqual(resolveComment(text, p), { value: "A {==b==}{>>old<<} c .", start: 21, end: 21 });
+});
+
+const AT = new Date(2026, 10, 16, 20, 51, 37);
+
+test("a new comment is written with the local time it was written, 24-hour, before its text", () => {
+  assert.equal(stampOf(AT), "2026-11-16 20:51");
+  assert.equal(stampOf(new Date(2026, 0, 2, 3, 4)), "2026-01-02 03:04", "zero-padded");
+  const { value, range } = marked("Hello [world].");
+  assert.equal(addComment(value, range, "nice", AT).value, "Hello {==world==}{>>2026-11-16 20:51 | nice<<}.");
+  const point = marked("Hello |world");
+  assert.equal(addComment(point.value, point.range, " here ", AT).value, "Hello {>>2026-11-16 20:51 | here<<}world", "a point comment too");
+  assert.equal(addComment(value, range, "  ", AT), null, "an empty comment is still nothing");
+});
+
+test("a note that starts with a stamp has that time and the text after it; any other note has no time and is all text", () => {
+  assert.deepEqual(readNote("2026-11-16 20:51 | the comment"), { when: new Date(2026, 10, 16, 20, 51), text: "the comment" });
+  assert.deepEqual(readNote("the comment"), { when: null, text: "the comment" });
+  assert.deepEqual(readNote("2026-11-16 20:51 |"), { when: new Date(2026, 10, 16, 20, 51), text: "" });
+  for (const note of ["2026-11-16 20:51 the comment", "2026-13-16 20:51 | month 13", "2026-02-30 10:00 | no such day", "2026-11-16 24:00 | x", "26-11-16 20:51 | x", " 2026-11-16 20:51 | x"]) {
+    assert.deepEqual(readNote(note), { when: null, text: note }, note);
+  }
+  assert.equal(noteText("2026-11-16 20:51 | shown"), "shown", "the stamp is never shown");
+  assert.equal(noteText("no stamp | here"), "no stamp | here");
+  const [c] = commentsIn("A {==b==}{>>2026-11-16 20:51 | why<<} c");
+  assert.equal(c.note, "2026-11-16 20:51 | why", "commentsIn gives the note as written");
+});
+
+test("editing a comment keeps its time; a note without one gets none", () => {
+  const text = "A {==b==}{>>2026-11-15 08:05 | old<<} c {>>plain<<}.", [c, p] = commentsIn(text);
+  const edited = editComment(text, c, "new\ntext");
+  assert.equal(edited.value, "A {==b==}{>>2026-11-15 08:05 | new text<<} c {>>plain<<}.");
+  assert.equal(edited.start, "A {==b==}{>>2026-11-15 08:05 | new text<<}".length, "the caret after it");
+  assert.equal(editComment(text, c, "old"), null, "the same text: nothing changes");
+  assert.equal(editComment(text, c, "  "), null, "empty: nothing changes");
+  assert.equal(editComment(text, p, "still plain").value, "A {==b==}{>>2026-11-15 08:05 | old<<} c {>>still plain<<}.");
+});
+
+test("a comment's time: today the hour, this year the day, another year the day and year; none without a stamp", () => {
+  const now = new Date(2026, 10, 16, 22, 0);
+  assert.equal(timeLabel(new Date(2026, 10, 16, 20, 51), now), "8:51 PM");
+  assert.equal(timeLabel(new Date(2026, 10, 16, 0, 5), now), "12:05 AM");
+  assert.equal(timeLabel(new Date(2026, 10, 16, 12, 30), now), "12:30 PM");
+  assert.equal(timeLabel(new Date(2026, 10, 15, 23, 59), now), "Nov 15");
+  assert.equal(timeLabel(new Date(2026, 0, 3, 9, 0), now), "Jan 3");
+  assert.equal(timeLabel(new Date(2025, 10, 15, 20, 51), now), "Nov 15, 2025");
+  assert.equal(timeLabel(new Date(2027, 1, 1, 9, 0), now), "Feb 1, 2027", "a clock set back: another year");
+  assert.equal(timeLabel(null, now), "");
 });

@@ -160,9 +160,22 @@ export function caretRow(value, caret, rows) {
 export const isOneRow = ({ value, height, rowPx, width, advance }) =>
   !value.includes("\n") && height < 1.5 * rowPx && value.length * advance < 0.9 * width;
 
-export const columnLeft = viewportW => Math.max(0, (viewportW - COLUMN.maxWidth) / 2) + COLUMN.padX;
+// Comments as cards in a column right of the page: the page column (its padding included, as COLUMN.maxWidth) at least
+// `minPage` wide, `edge` kept from the pane's sides.
+export const MARGIN = { minPage: 520, gap: 24, card: 260, edge: 16 };
+
+// -> { pageW, pageLeft, cardLeft, cardW } in pane x, the page column and the card column centered together; null when
+// the pane is too narrow for both.
+export function marginLayout(viewW) {
+  const room = viewW - 2 * MARGIN.edge - MARGIN.gap - MARGIN.card;
+  if (room < MARGIN.minPage) return null;
+  const pageW = Math.min(COLUMN.maxWidth, room), pageLeft = Math.floor((viewW - pageW - MARGIN.gap - MARGIN.card) / 2);
+  return { pageW, pageLeft, cardLeft: pageLeft + pageW + MARGIN.gap, cardW: MARGIN.card };
+}
+
+export const columnLeft =(viewportW, margin = null) => (margin ? margin.pageLeft : Math.max(0, (viewportW - COLUMN.maxWidth) / 2)) + COLUMN.padX;
 // `localX` is a pointer x in md-viewport coordinates.
-export const columnX = (localX, viewportW) => localX - columnLeft(viewportW);
+export const columnX = (localX, viewportW, margin = null) => localX - columnLeft(viewportW, margin);
 export const maxOffset = (contentH, viewportH) => Math.max(0, contentH - viewportH);
 export const clampOffset = (offset, contentH, viewportH) => clamp(offset, 0, maxOffset(contentH, viewportH));
 
@@ -329,11 +342,11 @@ export function menuPlace({ rowTop, rowH, viewH, n, side = null }) {
 }
 
 // The pane x of field column `col`, estimated from the average advance, inside the row a wrapped line put it on.
-const columnAt = ({ col, advance, fieldW, fieldX, viewW }) => columnLeft(viewW) + fieldX + (col * advance) % Math.max(1, fieldW);
+const columnAt = ({ col, advance, fieldW, fieldX, viewW, margin = null }) => columnLeft(viewW, margin) + fieldX + (col * advance) % Math.max(1, fieldW);
 
 // The pane wins over the column when it is too narrow for both.
 export function slashX(at) {
-  return Math.max(0, Math.min(at.viewW - MENU.w - MENU.margin, Math.max(columnLeft(at.viewW), columnAt(at))));
+  return Math.max(0, Math.min(at.viewW - MENU.w - MENU.margin, Math.max(columnLeft(at.viewW, at.margin), columnAt(at))));
 }
 
 // The format bar: square buttons, a menu's button wider by its chevron, groups parted by a rule `sep` wide, rows
@@ -428,6 +441,32 @@ export function cardPlace({ iconTop, iconLeft, n, viewW, viewH }) {
   const roomAbove = iconTop - CARD.gap - h >= CARD.margin;
   if (below + h <= viewH - CARD.margin || !roomAbove) return { side: "below", top: below, left, w: CARD.w };
   return { side: "above", bottom: viewH - iconTop + CARD.gap, left, w: CARD.w };
+}
+
+// A comment card: its time (and the active card's Resolve) on a row `headH` tall over its text, whose lines hold about
+// `w / charW` characters; `lines` of them unless it shows in full.
+export const CARDS ={ w: MARGIN.card, pad: 10, rowGap: 4, headH: 20, textSize: 13, lineH: 19, charW: 6.8, lines: 3, gap: 8 };
+const CARD_EDGE = 2 + 2 * CARDS.pad;
+const perCardLine = () => Math.max(1, Math.floor((CARDS.w - CARD_EDGE) / CARDS.charW));
+
+// What a card with comment `text` shows and how tall it is: clipped to CARDS.lines with an ellipsis unless `full`,
+// `header` when it has a row for its time, `extra` px for what else it holds. -> { text, h }
+export function cardLook({ text, header, full = false, extra = 0 }) {
+  const perLine = perCardLine(), chars = [...String(text ?? "")], fits = CARDS.lines * perLine;
+  const clipped = !full && chars.length > fits, shown = clipped ? `${chars.slice(0, fits - 1).join("").trimEnd()}…` : chars.join("");
+  const lines = clipped ? CARDS.lines : Math.max(1, Math.ceil(chars.length / perLine));
+  return { text: shown, h: CARD_EDGE + (header ? CARDS.headH + CARDS.rowGap : 0) + lines * CARDS.lineH + extra };
+}
+
+// -> the tops of cards { want, h } in document order, a card that would overlap the one before just under it.
+export function stackCards(items) {
+  const tops = new Array(items.length);
+  let free = -Infinity;
+  for (let i = 0; i < items.length; i++) {
+    tops[i] = Math.max(items[i].want, free);
+    free = tops[i] + items[i].h + CARDS.gap;
+  }
+  return tops;
 }
 
 export const startsGesture = (last, phase, now) => !last || phase === "started" || now - last.at > WHEEL.gapMs;
