@@ -171,7 +171,6 @@ class Block {
     this.render = "";
     this.content = "";
     this.source = "";
-    this.armable = false;
     this.index = -1;
     this.fresh = false;
     this.image = false;
@@ -196,7 +195,7 @@ class Block {
     c.subtreeEnd = this.subtreeEnd; c.list = this.list; c.number = this.number; c.task = this.task; c.info = this.info;
     c.fence = this.fence; c.fenceIndent = this.fenceIndent; c.closed = this.closed; c.contPrefix = this.contPrefix;
     c.containerPrefix = this.containerPrefix; c.render = this.render; c.content = this.content; c.source = this.source;
-    c.armable = this.armable; c.index = this.index; c.fresh = this.fresh; c.image = this.image; c.markAt = this.markAt;
+    c.index = this.index; c.fresh = this.fresh; c.image = this.image; c.markAt = this.markAt;
     c.marker = this.marker; c.markerCol = this.markerCol; c.contentCol = this.contentCol; c.ordered = this.ordered;
     c.bullet = this.bullet; c.delim = this.delim; c.startNumber = this.startNumber; c.markerOnly = this.markerOnly;
     c.emptyLine = this.emptyLine; c.htmlType = this.htmlType; c.label = this.label; c.footnote = this.footnote;
@@ -793,23 +792,11 @@ function baseRender(text, b) {
   return L.map((l, k) => text.slice(s0 + l.body, s0 + (k === L.length - 1 ? l.end : l.eol))).join("\n");
 }
 
-const NOT_ARMABLE = /[`*_~[\]<>\\&@]|:\/\/|www\.|\{==/;
-
-function finishRecord(text, r, opts) {
+function finishRecord(text, r) {
   relLines(text, r);
   r.content = baseRender(text, r);
   if (r.kind === "mermaid") r.source = r.content;
   if (r.kind === "paragraph" && IMAGE_ONLY.test(r.content)) r.image = true;
-  r.armable = armable(text, r, opts);
-}
-
-function armable(text, b, opts) {
-  if (!isText(b) || b.image || NOT_ARMABLE.test(b.content)) return false;
-  if (b.kind === "heading" && !opts.armHeadings) return false;
-  if (b.task && b.task.checked && !opts.armChecked) return false;
-  if (b.kind === "quote") return !fieldOf(text, b, "\n").value.includes("\n");
-  for (let k = 0; k < b.lines.length - 1; k++) if (hardBreak(text, b, b.lines[k])) return false;
-  return true;
 }
 
 function hardBreak(text, b, L) {
@@ -865,7 +852,7 @@ function defsOf(text, blocks) {
   }
   return defs;
 }
-const sameDefs = (a, b) => a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
+export const sameDefs = (a, b) => a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
 
 const firstEol = text => {
   const nl = text.indexOf("\n");
@@ -880,12 +867,11 @@ function resolveParents(head, fresh) {
   }
 }
 
-// -> Doc { text, eol, lead: [0, a], blocks, defs }. Set `opts.armHeadings` / `opts.armChecked` once a field is known
-// to draw a heading's weight / a checked task's line-through the way TextView does; until then those are not armable.
+// -> Doc { text, eol, lead: [0, a], blocks, defs }.
 export function parse(text, opts = {}) {
   const t = String(text ?? "");
   const blocks = scan(t, 0, { ...opts, stop: null });
-  for (const r of blocks) finishRecord(t, r, opts);
+  for (const r of blocks) finishRecord(t, r);
   return docOf(t, blocks, opts);
 }
 
@@ -901,7 +887,7 @@ export function* parseInSteps(text, opts = {}, pause = () => false) {
       return true;
     };
     for (const r of scan(t, from, { ...opts, stop, frontMatter: from === 0 ? opts.frontMatter : false })) {
-      finishRecord(t, r, opts);
+      finishRecord(t, r);
       blocks.push(r);
     }
     if (at < 0) return docOf(t, blocks, opts);
@@ -974,7 +960,7 @@ export function reparse(doc, splice) {
     return true;
   };
   const fresh = scan(text, from, { ...opts, stop, frontMatter: from === 0 ? opts.frontMatter : false });
-  for (const r of fresh) finishRecord(text, r, opts);
+  for (const r of fresh) finishRecord(text, r);
   // The blocks before the window are the old objects: every value linkTree writes into them stays the same, but for
   // the gap of the last one when nothing follows it any more.
   const head = j < 0 ? [] : old.slice(0, j);

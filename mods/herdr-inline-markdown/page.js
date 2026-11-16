@@ -165,18 +165,19 @@ function piece(owner, d, t, p) {
     .child(p.text);
 }
 
-// One inline token of the edited field: its pieces in a row as tall as the field's.
+// One inline token of a field: its pieces in a row as tall as the field's.
 function tokenView(owner, d, t, ctx) {
   return h_flex().flex_none().h(ctx.line_height).items_center()
     .when(ctx.selected, el => el.bg(t.selection))
     .children(owner.tokenPieces(ctx.token).map(p => piece(owner, d, t, p)));
 }
 
-// The wrapper hands the field's key-ups and presses to the editor itself, whether or not they would reach the editor's
-// own elements, and declares the key context: the field's row count, and whether the slash menu takes Up and Down.
-function field(owner, d, t) {
+// A text block is drawn by the same field whether it is edited or not; only the edited one has the block keys. The
+// wrapper hands the field's key-ups and presses to the editor itself, whether or not they would reach the editor's own
+// elements, and declares the key context: the field's row count, and whether the slash menu takes Up and Down.
+function field(owner, d, t, state) {
   const st = STYLES[d.style], { sans, mono } = owner.fonts, raw = isRaw(d.kind);
-  const input = Textarea.new(d.mode === "active" ? owner.field : owner.spare).id(`md-input-${d.key}`).w_full()
+  const input = Textarea.new(state).id(`md-input-${d.key}`).w_full()
     .font_family(st.mono || raw ? mono : sans).text_size(st.size).font_weight(st.weight)
     .line_height(d.ratio).text_color(t[d.color])
     .when(Boolean(d.tokens), el => el.token(ctx => tokenView(owner, d, t, ctx)).on_token_click((ev, cx) => owner.tokenClick(d.key, ev, cx)));
@@ -208,8 +209,8 @@ function marker(owner, d, t) {
 }
 
 export function renderBlock(owner, d) {
-  const t = theme();
-  let body = d.mode === "rendered" ? rendered(owner, d, t) : field(owner, d, t);
+  const t = theme(), state = d.mode === "active" ? owner.field : d.mode === "field" ? owner.blockField(d.key) : null;
+  let body = state ? field(owner, d, t, state) : rendered(owner, d, t);
   if (d.kind === "item") {
     body = h_flex().w_full().items_start().child(marker(owner, d, t)).child(div().flex_1().min_w(0).child(body));
   } else if (d.kind === "quote") {

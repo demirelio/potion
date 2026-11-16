@@ -15,7 +15,7 @@ const { piecesOf } = await import("../mods/herdr-inline-markdown/tokens.js");
 
 beforeEach(() => reset());
 
-const blocksOf = text => parse(text, { armHeadings: true }).blocks;
+const blocksOf = text => parse(text).blocks;
 
 // What the editor hands renderBlock for block i of `text`: its data and an owner with the fields and fonts, plus `also`.
 function drawn(text, i, more = {}, also = {}) {
@@ -27,7 +27,8 @@ function drawn(text, i, more = {}, also = {}) {
     gen: 0, selected: false, row: st.size * st.lh, ratio: st.lh, padRendered: 0, padActive: 0, ...more,
   };
   const owner = {
-    fonts: { sans: ".SystemUIFont", mono: "Mono" }, field: TextareaState.new({ value: "" }), spare: TextareaState.new({ value: "" }),
+    fonts: { sans: ".SystemUIFont", mono: "Mono" }, field: TextareaState.new({ value: "" }), own: TextareaState.new({ value: "" }),
+    blockField() { return this.own; },
     remote: false, shown: new Map(), good: new Map(), links: [], sizes: [], layouts: new Map(),
     link(url) { this.links.push(url); }, blockSized(key, size) { this.sizes.push([key, size]); },
     pictureOf(key, width) { this.asked = [key, width]; return this.layouts.get(key) ?? { items: [], boxes: [], height: 0 }; },
@@ -170,11 +171,18 @@ test("the active field: the shared field state in the block's own type and calib
   assert.deepEqual(heard.map(([what, key, e]) => [what, key, e.key ?? e.click_count]), [["up", d.key, "down"], ["down", d.key, 1], ["press-up", d.key, 1]], "the wrapper hands the field's key-ups and presses to the editor, with the block's key");
 });
 
-test("the armed field: the spare state, drawn the same, without the block keys", () => {
-  const { el, owner, d } = drawn("plain words\n", 0, { mode: "armed" });
-  const wrap = find(el, `md-field-${d.key}`);
-  assert.equal(all(wrap, n => n.kind === "textarea")[0].state, owner.spare);
-  assert.equal(wrap.style.key_context, undefined);
+test("a text block not being edited is drawn by its own field exactly as the edited one is, without the block keys; one whose field went is drawn as text", () => {
+  const { el, owner, d } = drawn("plain **words**\n", 0, { mode: "field", tokens: true }, tokenOwner());
+  const wrap = find(el, `md-field-${d.key}`), input = all(wrap, n => n.kind === "textarea")[0];
+  assert.deepEqual([input.state, wrap.style.key_context, typeof input.token, typeof input.handlers.on_token_click], [owner.own, undefined, "function", "function"]);
+  const edited = drawn("plain **words**\n", 0, { mode: "active", tokens: true }, tokenOwner());
+  const look = tree => {
+    const field = all(tree, n => n.kind === "textarea")[0];
+    return [field.id, field.style.font_family, field.style.text_size, field.style.font_weight, field.style.line_height, field.style.text_color, find(tree, `md-field-${d.key}`).style.pb];
+  };
+  assert.deepEqual(look(el), look(edited.el), "drawn the same");
+  const gone = drawn("plain words\n", 0, { mode: "field" }, { blockField: () => null });
+  assert.deepEqual([all(gone.el, n => n.kind === "textarea").length, all(gone.el, n => n.kind === "textview").length], [0, 1]);
 });
 
 test("raw blocks edit in a monospace field on the code background; front matter keeps its own box", () => {

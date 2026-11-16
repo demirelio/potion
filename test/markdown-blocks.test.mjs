@@ -213,20 +213,6 @@ test("render: bodies joined with \\n, trailing spaces kept; definitions whose la
   assert.equal(parse("---\nx: 1\n---\n").blocks[0].render, "x: 1");
 });
 
-test("armable: one-line plain text blocks; inline syntax, hard breaks, headings and checked tasks are not", () => {
-  const a = (t, opts) => parse(t, opts).blocks.map(b => b.armable);
-  assert.deepEqual(a("plain words\nwrapped on\n"), [true]);
-  assert.deepEqual(a("has **bold**\n"), [false]);
-  assert.deepEqual(a("a link https://e.com\n"), [false]);
-  assert.deepEqual(a("hard  \nbreak\n"), [false]);
-  assert.deepEqual(a("# Title\n"), [false]);
-  assert.deepEqual(a("# Title\n", { armHeadings: true }), [true]);
-  assert.deepEqual(a("- [x] done\n- [ ] open\n"), [false, true]);
-  assert.deepEqual(a("> quoted\n> text\n"), [true]);
-  assert.deepEqual(a("```\ncode\n```\n"), [false]);
-  assert.deepEqual(a("a {==highlight==} here\n"), [false], "Reading draws the highlight, its field the marks");
-});
-
 test("a hard-wrapped README paragraph has a field with spaces at its soft breaks; editing one word changes only that word", () => {
   const readme = docs.find(x => x.name === "README.md").text, d = parse(readme);
   const b = d.blocks.find(x => x.kind === "paragraph" && x.lines.length >= 3 && !separators(field(d, x)).some(s => s.shown === "\n"));
@@ -1184,8 +1170,8 @@ test("a parse in steps, pausing at every block where it can, gives what one pars
   };
   let pauses = 0;
   for (const c of corpus()) {
-    const s = stepped(c.text, { armHeadings: true });
-    assert.deepEqual(s.doc, parse(c.text, { armHeadings: true }), c.name);
+    const s = stepped(c.text, {});
+    assert.deepEqual(s.doc, parse(c.text), c.name);
     pauses += s.pauses;
   }
   assert.ok(pauses > 2500, `${pauses} pauses`);

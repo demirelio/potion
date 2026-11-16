@@ -146,7 +146,7 @@ class TextState {
     return this.handlers.blur?.({}, cx);
   }
   on(event, handler) { this.handlers[event] = handler; return true; }
-  release() { return true; }
+  release() { this.releases = (this.releases ?? 0) + 1; this.released = true; return true; }
   edit(text, cx) {
     if (text !== this.text) this.undos.push(this.text);
     this.retext(text);

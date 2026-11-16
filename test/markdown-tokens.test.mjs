@@ -31,15 +31,33 @@ test("a word that mixes formatting is one token drawn in pieces", () => {
   assert.deepEqual(tokens("x*y*z"), [["x*y*z", "xyz", ":1,i:1,:1"]]);
 });
 
-test("a run's opening marks go with its first letter and its closing marks with its last; spaces inside it stay plain", () => {
-  const value = "x *one two* y";
-  assert.deepEqual(tokens(value), [["*one", "one", "i:3"], ["two*", "two", "i:3"]]);
-  assert.equal(value.slice(6, 7), " ", "the space between them is no token");
+test("a run's opening marks go with its first letter and its closing marks with its last; the spaces inside it go with the word before them", () => {
+  assert.deepEqual(tokens("x *one two* y"), [["*one ", "one ", "i:4"], ["two*", "two", "i:3"]]);
+});
+
+test("spaces inside a formatted run draw in its formatting, so a highlight or an underline runs on across them; lines still break between words", () => {
+  const value = "say {==the agent  appear==}{>>n<<} now";
+  assert.deepEqual(tokens(value), [["{==the ", "the ", "h:4"], ["agent  ", "agent  ", "h:7"], ["appear==}{>>n<<}", "appear", "h:6"]], "one token per word");
+  assert.deepEqual(tokens("**a** **b** `c d`"), [["**a**", "a", "b:1"], ["**b**", "b", "b:1"], ["`c ", "c ", "c:2"], ["d`", "d", "c:1"]], "a space between two runs stays plain");
+  assert.deepEqual(tokens("*a\\\nb*"), [["*a\\", "a", "i:1"], ["b*", "b", "i:1"]], "a line break is never in a token");
+  const r = rich(value);
+  assert.equal(r.drawn, "say the agent  appear now");
+  assert.equal(drawnOffset(r, value.indexOf("agent") + 6), "say the agent ".length, "between the two spaces");
+  assert.deepEqual(tokens(value, caret(value.indexOf("agent") + 2)).slice(1, 9).map(t => [t[1], t[2]]),
+    [["a", "h:1"], ["g", "h:1"], ["e", "h:1"], ["n", "h:1"], ["t", "h:1"], [" ", "h:1"], [" ", "h:1"], ["appear", "h:6"]], "split at the caret, its spaces too");
+  assert.deepEqual(tokensFor(r, caret(value.indexOf("agent") + 6)).sel, caret(value.indexOf("agent") + 6), "a caret between the spaces stays");
+});
+
+test("every word of a checked task is a token with the spaces after it, so the line through it is drawn", () => {
+  const checked = value => tokensFor(richOf(value, parseInline(value), { everyWord: true }), FAR).tokens.map(t => [t.token.text, t.token.label, t.token.id]);
+  assert.deepEqual(checked("buy  milk"), [["buy  ", "buy  ", ":5"], ["milk", "milk", ":4"]]);
+  assert.deepEqual(checked("a **b** c"), [["a ", "a ", ":2"], ["**b** ", "b ", "b:1,:1"], ["c", "c", ":1"]]);
+  assert.equal(richOf("buy milk", parseInline("buy milk"), { everyWord: true }).drawn, "buy milk");
 });
 
 test("a link's address and a comment's note go with the last token of their run", () => {
-  assert.deepEqual(tokens("[the docs](https://e.com/x) z"), [["[the", "the", "l:3"], ["docs](https://e.com/x)", "docs", "l:4"]]);
-  assert.deepEqual(tokens("{==hi there==}{>>a note<<}."), [["{==hi", "hi", "h:2"], ["there==}{>>a note<<}.", "there.", "h:5,:1"]]);
+  assert.deepEqual(tokens("[the docs](https://e.com/x) z"), [["[the ", "the ", "l:4"], ["docs](https://e.com/x)", "docs", "l:4"]]);
+  assert.deepEqual(tokens("{==hi there==}{>>a note<<}."), [["{==hi ", "hi ", "h:3"], ["there==}{>>a note<<}.", "there.", "h:5,:1"]]);
   assert.deepEqual(tokens("{==marked==} only"), [["{==marked==}", "marked", "h:6"]]);
 });
 
@@ -63,7 +81,7 @@ test("a hard break's marks are hidden with the word before it; the line break it
 });
 
 test("an image shows a picture icon before its alt text; one with no alt text is the icon alone", () => {
-  assert.deepEqual(tokens("![a cat](c.png) x"), [["![a", "a", "P:0,p:1"], ["cat](c.png)", "cat", "p:3"]]);
+  assert.deepEqual(tokens("![a cat](c.png) x"), [["![a ", "a ", "P:0,p:2"], ["cat](c.png)", "cat", "p:3"]]);
   assert.deepEqual(tokens("x ![](c.png)"), [["![](c.png)", "\u{200b}", "P:0"]]);
 });
 

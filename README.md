@@ -3,7 +3,7 @@
 A Markdown reader and editor for the Herdr app, with mermaid diagrams and pictures.
 
 A **Markdown pane** shows one markdown file, as a rendered page you edit in place or as its source, and saves what
-you type. It opens beside your terminals in the current tab, or in a tab of its own. It is meant for reading the
+{==you type. It opens beside==}{>>this is test comment<<} your terminals in the current tab, or in a tab of its own. It is meant for reading the
 plans an agent writes into a file as they appear, and for writing notes next to your terminals.
 
 The package holds:
@@ -116,9 +116,10 @@ the source caret is being edited. Each file opens in the state it was last in, R
 note opens in Reading with an empty line to type in. `cmd-s` saves now. With a pane-header integration the toolbar
 gives way to the pane's header, which shows the same file name and toggle.
 
-- **Links in Reading:** a click on a link opens it (in the block being edited a link is text you can edit).
-  `http(s)` opens in the browser and `mailto` in the mail app; a link to another markdown file opens in a pane beside
-  this one, on the same machine; `#anchor` does nothing; any other file gives a notice "Can't open <name> here".
+- **Links in Reading:** Cmd+click on a link opens it; a plain click puts the caret in it, as in any text. In a file
+  you can't edit, a click opens it. `http(s)` opens in the browser and `mailto` in the mail app; a link to another
+  markdown file opens in a pane beside this one, on the same machine; `#anchor` does nothing; any other file gives a
+  notice "Can't open <name> here".
   A paragraph made only of images is drawn as pictures (see [Pictures](#pictures)); an image inside a line of text is
   not.
 - **Saving:** 700 ms after you stop typing, on a tick, on a switch between Reading and Markdown, on `cmd-s` and when
@@ -149,9 +150,10 @@ gives way to the pane's header, which shows the same file name and toggle.
 
 ### Block editing
 
-The block you click keeps its size, font, place and look: a paragraph, heading, list item or quote is edited as
-Reading draws it. Bold stays bold, a link shows its text in the link colour with no address, code keeps its font and
-background, a comment's text stays highlighted, and escapes and entities show as their characters. No markdown mark
+Reading draws every paragraph, heading, list item and quote as editable text, the same whether you are editing it or
+not, so nothing moves when you click one: the caret lands where you click, and a drag selects what it crosses. Bold
+stays bold, a link shows its text in the link colour with no address, code keeps its font and background, a
+comment's text stays highlighted, and escapes and entities show as their characters. No markdown mark
 ever shows in Reading, its `#`, `-`, `1.`, `[ ]` or `>` included; the marks stay in the file, and the Markdown view
 shows them. A word with formatting moves as one piece until the caret is in it: click into it or arrow up to it, and
 the caret stops between its letters. A code block, table, HTML block, front matter or diagram shows its source, fences
@@ -161,10 +163,11 @@ so it wraps as it did on the page, and keeps them in the file.
 
 | Key or click | What it does |
 |---|---|
-| Click | Edits the block under the pointer. In plain text the caret lands where you click; in text with formatting it lands at the nearest word boundary, in code on the clicked line and column, in a table at the start of the clicked cell. The second click is exact |
+| Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, in a table at the start of the clicked cell (there the second click is exact) |
+| Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views); a plain click puts the caret in it |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
 | Double-click a diagram or a picture | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
-| Click a linked picture | Opens its link, as a click on a link in text does; the picture itself is never opened for editing by a click |
+| Click a linked picture | Opens its link, as Cmd+click on a link in text does; the picture itself is never opened for editing by a click |
 | Click a checkbox | Ticks or unticks it |
 | Enter | At the end of a block: a new one below (a list continues). At the start: a new one above. In the middle: splits the block. On an empty item: out a level, then out of the list. In code: a new line |
 | Shift+Enter | A line break inside the block, written as `\` at the end of the line; in a heading it is Enter |
@@ -182,7 +185,7 @@ so it wraps as it did on the page, and keeps them in the file.
 | Cmd+Shift+C | The same for inline code: `` `text` ``, with a longer run of backticks when the text holds some |
 | Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, the link shown as written until the caret leaves it, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
-| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag over one that is not being edited opens it with the words it crossed selected, whole words, and a double-click selects a word, either way with the bar. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
+| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
@@ -190,11 +193,11 @@ item, `[] ` or `[ ] ` a task, and `> ` a quote; Cmd+Z right after gives back wha
 starts a code block with the caret inside it, and `---`, `***` or `___` then Enter makes a rule. A block you open and
 leave empty disappears and writes nothing to the file.
 
-**Known limits:** in blocks with formatting, code or tables the first click puts the caret near the click, and
-the second is exact; selecting across blocks selects whole blocks (the middle of one block to the middle of another
-needs the Markdown view); a drag inside a formatted word that the caret is not in selects the whole word; typing never
-re-wraps the source; input methods that compose characters (Japanese, Chinese) may misbehave with Enter, and inside
-or next to formatted words, while direct typing in any script is fine. **Left out on purpose:** drag handles,
+**Known limits:** in code blocks and tables the first click puts the caret near the click, and the second is exact;
+selecting across blocks selects whole blocks (the middle of one block to the middle of another needs the Markdown
+view); a drag inside a formatted word that the caret is not in selects the whole word; typing never re-wraps the
+source; input methods that compose characters (Japanese, Chinese) may misbehave with Enter, and inside or next to
+formatted words, while direct typing in any script is fine. **Left out on purpose:** drag handles,
 images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
 (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
 the one toggle, a diagram's zoom, the format bar and the comments' cards.
@@ -297,7 +300,7 @@ drawn. An image inside a line of text, an HTML `<img>` and a reference-style ima
 - **Size:** a picture keeps its own size, shrunk to the width of the text when it is wider, never enlarged. Pictures
   that fit sit side by side and the rest wrap to the next row, so badges make a row and screenshots stack.
 - **Clicks:** a single click does nothing; a double-click shows the paragraph's source to edit, and leaving it draws
-  the pictures again. A click on a linked picture opens its link instead, as a click on a link in text does, also on
+  the pictures again. A click on a linked picture opens its link instead, as Cmd+click on a link in text does, also on
   a file you can't edit, and never edits: arrow into the paragraph, or use the Markdown view.
 - **Updates:** when the folder watcher reports a picture's file, the page reads it again and swaps the new picture in
   when it is loaded, so a picture an agent writes after the markdown appears without reopening. Where the folder

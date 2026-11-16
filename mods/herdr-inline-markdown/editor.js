@@ -4,7 +4,7 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
-import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
+import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, sameDefs, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
 import { BAR, CARD, COLUMN, FRAME, MENU, NOTES, NOTE_BOX, anchorBlock, barPlace, blockAt, canZoom, cardPlace, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
@@ -34,7 +34,6 @@ const ARROW_STEP = 48;
 const MOVES = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 const CLICK_SLOP = 4;
 const REVEAL_AT = 1 / 3;
-const PARSE_OPTS = { armHeadings: true, armChecked: false };
 const UNUSUAL = "Read-only: unusual characters";
 const RULE_H = 24, DIAGRAM_H = 120;
 const CAL_SAMPLE = "abcdefghij klmnopqrst uvwxyzABCD EFGHIJK";
@@ -47,11 +46,12 @@ const PIECES_KEPT = 2000;
 // Herdr reports no change for a token set; one that did would come within a frame or two. Until this has passed, a
 // change that leaves the text as it was is taken as that report, not as a forward Delete.
 const ECHO_MS = 100;
-// px an armed field may measure off from the block it replaced before that block is never armed again.
-const ARM_SLACK = 1;
 const NO_CARET = { start: 0, end: 0, valid: false };
 const MOUNT_ALL = 400;
 const WINDOW_MARGIN = 1500, INLINE_MARGIN = 800;
+// Screens above and below the viewport: a text block gets a field of its own within the first, and keeps it within the
+// second, so scrolling to and fro across one edge does not make and let go the same fields.
+const FIELDS_MADE_WITHIN = 1, FIELDS_KEPT_WITHIN = 3;
 // The page is laid out before the viewport reports its size: the first window is made for a page this tall.
 const UNSIZED_VIEW_H = 1200;
 // A recalibration whose samples, once drawn, never report sizes keeps the measurements it had.
@@ -155,6 +155,8 @@ function docSplice(f, edits) {
 }
 
 const byKey = (doc, key) => doc.blocks.find(b => b.key === key) ?? null;
+// The link whose markup holds offset x of a field value, among parseInline's spans.
+const linkAt = (spans, x) => spans.find(sp => sp.kind === "link" && sp.start <= x && x < sp.end) ?? null;
 // The block whose span or gap holds document offset `at` (the first block for the lead).
 function holdingIn(doc, at) {
   const bl = doc?.blocks ?? [];
@@ -212,7 +214,7 @@ function chain(doc, s, steps) {
 function pendingRecord(key, b) {
   return Object.assign(b.copy(), {
     key, start: -1, end: -1, gapEnd: -1, subtreeEnd: -1, index: -1, lines: [], content: "", render: "", source: "",
-    armable: false, image: false, task: b.task ? { checked: false, offset: -1 } : null,
+    image: false, task: b.task ? { checked: false, offset: -1 } : null,
   });
 }
 const FENCE_TYPED = /^(```|~~~)[^`\n]*$/;
@@ -228,14 +230,14 @@ const withInnerLine = (b, value) => {
   return `${value.slice(0, end)}\n${value.slice(end)}`;
 };
 
-// What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, with block 2 in the
-// field and its slash menu open, the spare field over block 4, a diagram frame wider than the column, a picture, and
-// the quote's comment listed on its card while the comment box is open.
+// What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, its text blocks drawn
+// by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a picture,
+// and the quote's comment listed on its card while the comment box is open.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
   "A paragraph with **bold**, _emphasis_, `code` and a [link](https://example.com). /", "",
-  "Plain words only, so this paragraph can be armed.", "",
+  "Plain words only.", "",
   "- A bullet item", "  - A nested item", "    - A third level", "- [ ] An open task", "- [x] A done task", "",
   "1. First", "2. Second", "",
   "> A quote with a [reference link][ref] and {==a remark==}{>>a comment on it<<}.", "",
@@ -309,25 +311,22 @@ export class Editor {
     this.frames = new Map(); this.pan = null; this.hoverFrame = null; this.hoverTop = null; this.gesture = null;
     this.zoomed = new Set(); this.settleTimer = null;
 
-    // The edited block: `field` is its text state, `spare` the one armed over the block under the pointer (they trade
-    // places when a press lands in the spare). `f` is its field map, `seen` the field's value as last seen or set,
-    // `opened` its value when the block was opened, `known` the caret as last read or set (what a key-up's caret is
-    // compared with, and where typing went in when its change alone cannot tell), `act` the activation number,
-    // `stale` that text was typed since `doc`. `armedValue` is what the spare holds; `armedNewText` that the armed
-    // block's text was replaced while armed, so it has no rendered height for it.
-    this.field = TextareaState.new({ value: "" });
-    this.spare = TextareaState.new({ value: "" });
-    for (const s of [this.field, this.spare]) {
-      s.set_auto_grow(1, 10000);
-      s.set_soft_wrap(true);
-      s.on("change", (_e, cx) => this.fieldChanged(s, cx));
-      s.on("focus", (_e, cx) => this.fieldFocus(s, true, cx));
-      s.on("blur", (_e, cx) => this.fieldFocus(s, false, cx));
-    }
-    this.activeKey = null; this.armedKey = null; this.armedValue = null; this.armedNewText = false; this.pending = null; this.pendings = 0;
+    // Every text block near the viewport is drawn by a field of its own (`blockFields`: key -> { state, and what its
+    // value and tokens were made from }; `fieldKeys` the other way), edited or not, so a press lands in it natively and
+    // nothing moves. A block with no field of its own (code, a table, one not written yet) is edited in `loose`.
+    // The edited block: `field` is its text state (`loose` while none is edited), `f` its field map, `seen` the
+    // field's value as last seen or set, `opened` its value when the block was opened, `known` the caret as last read
+    // or set (what a key-up's caret is compared with, and where typing went in when its change alone cannot tell),
+    // `act` the activation number, `stale` that text was typed since `doc`. `shiftField` is the block whose field a
+    // Shift+press went into, which selects blocks instead; `cmdPress` ({ key, opened }) a Cmd+press in a block's field,
+    // which may open a link instead.
+    this.blockFields = new Map(); this.fieldKeys = new Map(); this.defs = null;
+    this.loose = this.newField();
+    this.field = this.loose;
+    this.activeKey = null; this.pending = null; this.pendings = 0;
     this.f = null; this.seen = ""; this.opened = ""; this.known = NO_CARET; this.act = 0; this.rows = "many";
-    this.stale = false; this.stored = null; this.disarmed = new Set(); this.focusedState = null;
-    this.ownKeyUp = null; this.menuKeyUp = null; this.revealNext = false; this.inbox = []; this.watching = false; this.swapping = false; this.shiftField = null;
+    this.stale = false; this.stored = null; this.focusedState = null;
+    this.ownKeyUp = null; this.menuKeyUp = null; this.revealNext = false; this.inbox = []; this.watching = false; this.shiftField = null; this.cmdPress = null;
     // `owed`: per field state, the change events still to come for changes already taken in (our own replace() calls,
     // and typing an action took in before its event). An unowed change that leaves the value as it was is forward
     // Delete at the end of the field.
@@ -376,14 +375,12 @@ export class Editor {
   openFixture() {
     this.disk = this.text = this.settled = FIXTURE;
     this.loaded = true;
-    this.doc = parse(FIXTURE, PARSE_OPTS);
-    const active = this.doc.blocks[2], armed = this.doc.blocks[4];
-    this.activeKey = active.key; this.armedKey = armed.key; this.armedValue = fieldOf(this.doc, armed).value;
+    this.doc = parse(FIXTURE);
+    const active = this.doc.blocks[2];
+    this.activeKey = active.key;
     this.f = fieldOf(this.doc, active); this.seen = this.opened = this.f.value;
-    this.guard(() => {
-      this.field.set_value(this.seen);
-      this.spare.set_value(this.armedValue);
-    });
+    this.field = this.fieldFor(active);
+    this.guard(() => this.field.set_value(this.seen));
     const slashAt = this.seen.length - 1;
     this.known = { start: slashAt + 1, end: slashAt + 1, valid: true };
     this.retoken();
@@ -465,7 +462,7 @@ export class Editor {
   // -> the blocks of `text`, parsed a slice at a time, or null when the tab closed meanwhile.
   async parseInSlices(text, cx) {
     let until = 0;
-    const steps = parseInSteps(text, PARSE_OPTS, () => Date.now() >= until);
+    const steps = parseInSteps(text, {}, () => Date.now() >= until);
     for (;;) {
       until = Date.now() + SLICE_MS;
       const r = steps.next();
@@ -858,9 +855,8 @@ export class Editor {
   }
 
   // The source caret goes where the edited block's caret was, else to the start of the top block. The page is not
-  // drawn in Markdown, so nothing stays armed and the pointer is unknown.
+  // drawn in Markdown, so the pointer is unknown.
   toMarkdown(cx) {
-    this.disarm(cx);
     this.setSel(null, cx);
     this.pointer = null;
     let at = null;
@@ -1013,8 +1009,9 @@ export class Editor {
     this.images?.close();
     this.dialog?.stop();
     owners.delete(this.id);
-    for (const e of [...this.entities.values(), this.column]) { try { e?.release(); } catch { /* the host let it go already */ } }
-    this.entities.clear();
+    const fields = [...this.blockFields.values()].map(kept => kept.state);
+    for (const e of [...this.entities.values(), this.column, ...fields]) { try { e?.release(); } catch { /* the host let it go already */ } }
+    this.entities.clear(); this.blockFields.clear(); this.fieldKeys.clear();
     this.woken?.();
     if (!this.writable() || this.text === this.disk) return;
     const { text, disk } = this, first = this.saving ?? disk;
@@ -1032,7 +1029,7 @@ export class Editor {
     const anchor = this.anchor(), editing = this.activeKey && !this.pending;
     const held = place === undefined && editing && this.f ? this.held() : null;
     let d = null;
-    if (!this.doc) this.doc = parse(this.text, PARSE_OPTS);
+    if (!this.doc) this.doc = parse(this.text);
     else if (this.doc.text !== this.text) {
       d = diff(this.doc.text, this.text);
       this.doc = reparse(this.doc, { start: d.at, end: d.at + d.removed, insert: d.inserted });
@@ -1087,6 +1084,7 @@ export class Editor {
     if (!b || b.start > at || (kind && b.kind !== kind) || b.start < from || !this.editable()) return this.drop();
     const f = fieldOf(this.doc, b), value = withInnerLine(b, f.value);
     this.activeKey = b.key; this.f = f;
+    this.adoptField(b);
     if (value === this.seen) return;
     const c = caretDoc !== null && caretDoc !== undefined ? docToField(f, caretDoc) : mapCaret(diff(this.seen, value), caretOf(this.field)?.end ?? 0);
     const n = clamp(c, 0, value.length);
@@ -1096,6 +1094,18 @@ export class Editor {
     this.rows = this.rowsFlag();
     this.revealNext = true;
     this.wake();
+  }
+
+  // The edited block may be another one after a re-parse (its key went, or the block not written yet was written):
+  // the field being edited stays, as the drawer of the block it now is when that is a text block.
+  adoptField(b) {
+    const owner = this.fieldKeys.get(this.field);
+    if (owner === b.key) return;
+    if (owner !== undefined) this.disown(owner);
+    if (!this.ownsField(b)) return;
+    if (this.field === this.loose) this.loose = this.newField();
+    this.releaseField(this.disown(b.key));
+    this.own(b.key, this.field);
   }
 
   holding(at) {
@@ -1110,8 +1120,8 @@ export class Editor {
     const e = this.entities.get(key);
     if (e) { try { e.release(); } catch { /* already gone */ } }
     for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames]) m.delete(key);
-    this.disarmed.delete(key); this.zoomed.delete(key);
-    if (this.armedKey === key) this.armedKey = null;
+    this.zoomed.delete(key);
+    this.releaseField(this.disown(key));
     if (this.hoverFrame === key) this.hoverFrame = null;
     if (this.pan?.key === key) this.pan = null;
   }
@@ -1122,7 +1132,6 @@ export class Editor {
     const blocks = this.placePending(this.doc.blocks), width = this.textWidth();
     this.blocks = blocks;
     this.at = new Map(blocks.map((b, i) => [b.key, i]));
-    this.updateArmed();
     this.updateSel();
     if (cx && this.file) {
       for (const b of this.doc.blocks) {
@@ -1148,10 +1157,10 @@ export class Editor {
     }
     const offset = this.offset;
     this.layout(anchor);
-    if (cx) this.syncWindow(cx);
-    // A shorter page can pull the offset back, moving other text under a resting pointer. While an armed press is
-    // being taken, the pressed block is still under it and must not be armed again.
-    if (this.offset !== offset && !this.swapping) this.rearm(cx);
+    if (cx) this.syncWindow(cx, true);
+    else this.syncFields(null, true);
+    // A shorter page can pull the offset back, moving another frame under a resting pointer.
+    if (this.offset !== offset) this.updateHover(cx);
   }
 
   // What the Column mounts: null while it mounts every block, else { order, from, to, extra, gaps, held, split, above }:
@@ -1187,14 +1196,18 @@ export class Editor {
     return from;
   }
 
-  // A view can be made in a handler or a task, never in a draw: blocks that enter the window get theirs here.
-  syncWindow(cx) {
-    const next = this.windowFor(this.win), moved = !sameWindow(next, this.win);
+  // A view or a field can be made in a handler or a task, never in a draw: blocks that enter the window get theirs
+  // here. `refresh`: the document may have changed under the fields.
+  syncWindow(cx, refresh = false) {
+    const next = this.windowFor(this.win), moved = !sameWindow(next, this.win), fresh = new Set();
     this.win = next;
     for (const key of this.mountedKeys()) {
       if (this.inline) break;
-      if (!this.entities.has(key)) this.made(key, cx);
+      if (this.entities.has(key)) continue;
+      this.made(key, cx);
+      fresh.add(key);
     }
+    this.syncFields(cx, refresh, fresh);
     if (!moved) return;
     if (this.inline) cx.notify();
     else if (this.column) cx.notify(this.column);
@@ -1256,27 +1269,132 @@ export class Editor {
     return true;
   }
 
-  // The armed block's text was replaced under it (a reload from disk): the spare takes the replacement, or the block
-  // draws its text again when it cannot be armed any more.
-  updateArmed() {
-    const key = this.armedKey;
-    if (!key) return;
-    const b = this.blockByKey(key);
-    if (!b?.armable || this.disarmed.has(key)) { this.armedKey = null; return; }
-    const value = fieldOf(this.doc, b).value;
-    if (value === this.armedValue) return;
-    if (!this.guard(() => this.spare.set_value(value))) { this.armedKey = null; return; }
-    this.armedValue = value; this.armedNewText = true;
+  // No set_soft_wrap(true): the field wraps by default, and the call makes every set_value before the field's first
+  // layout wrap the text at a width of 0, which costs milliseconds a block in Herdr.
+  newField() {
+    const s = TextareaState.new({ value: "" });
+    s.set_auto_grow(1, 10000);
+    s.on("change", (_e, cx) => this.fieldChanged(s, cx));
+    s.on("focus", (_e, cx) => this.fieldFocus(s, true, cx));
+    s.on("blur", (_e, cx) => this.fieldFocus(s, false, cx));
+    return s;
   }
 
-  redraw(keys, cx) {
+  ownsField(b) {
+    return Boolean(b) && isText(b) && !b.image && !this.remote && !this.locked;
+  }
+
+  blockField(key) {
+    return this.blockFields.get(key)?.state ?? null;
+  }
+
+  own(key, state) {
+    this.blockFields.set(key, { state, src: null, value: null, defs: null, checked: false, rich: null });
+    this.fieldKeys.set(state, key);
+  }
+
+  // -> the field block `key` owned, now nobody's, or null.
+  disown(key) {
+    const kept = this.blockFields.get(key);
+    if (!kept) return null;
+    this.blockFields.delete(key);
+    this.fieldKeys.delete(kept.state);
+    return kept.state;
+  }
+
+  releaseField(state) {
+    if (!state || state === this.field || state === this.loose || this.fieldKeys.has(state)) return;
+    this.owed.delete(state); this.echoes.delete(state);
+    try { state.release(); } catch { /* the host let it go already */ }
+  }
+
+  // The field block b is edited in: its own, made now when it has none yet, or `loose`.
+  fieldFor(b) {
+    if (!this.ownsField(b)) return this.loose;
+    if (!this.blockFields.has(b.key)) this.own(b.key, this.newField());
+    return this.blockFields.get(b.key).state;
+  }
+
+  // A text block mounted near the viewport (FIELDS_MADE_WITHIN) gets a field of its own; one far from it
+  // (FIELDS_KEPT_WITHIN), out of the window or out of the document lets it go and is drawn as text again, at the same
+  // height. Making a field costs a few milliseconds in Herdr, and each one kept holds its text and layout. The edited
+  // block (with its format bar or comment box) keeps its field, and so does one a press is under way in. `refresh`: the
+  // fields not being edited take their block's value and tokens where those changed. `fresh`: views made just now.
+  syncFields(cx, refresh = false, fresh = null) {
+    if (!this.doc || this.mode !== "reading") return;
+    const mounted = new Set(this.mountedKeys()), changed = [], blockOf = key => this.blocks[this.at.get(key)] ?? null, locked = this.locked;
+    const kept = new Set(this.nearKeys(mounted, FIELDS_KEPT_WITHIN));
+    for (const key of [...this.blockFields.keys()]) {
+      if (key === this.activeKey) continue;
+      const b = mounted.has(key) ? blockOf(key) : null;
+      if (!this.ownsField(b) || (!kept.has(key) && !this.fieldInUse(key))) {
+        this.releaseField(this.disown(key));
+        changed.push(key);
+      } else if (refresh) this.fillField(b, this.blockFields.get(key));
+    }
+    for (const key of this.nearKeys(mounted, FIELDS_MADE_WITHIN)) {
+      const b = blockOf(key);
+      if (key === this.activeKey || this.blockFields.has(key) || !this.ownsField(b)) continue;
+      this.own(key, this.newField());
+      changed.push(key);
+      this.fillField(b, this.blockFields.get(key));
+    }
+    // A value a field refused (fillField) left the file read-only: its text is drawn as text again.
+    if (this.locked && !locked) return this.syncFields(cx, false, fresh);
+    if (changed.length) this.redraw(changed, cx, fresh);
+  }
+
+  // The keys of the mounted blocks within `screens` screens above or below the viewport.
+  nearKeys(mounted, screens) {
+    const n = this.blocks.length, s = this.sums;
+    if (s.length !== n + 1) return [...mounted];
+    const screen = this.viewport ? this.viewH() : UNSIZED_VIEW_H, top = this.offset - COLUMN.padTop;
+    const keys = [];
+    for (let i = Math.max(0, blockAt(s, top - screens * screen)); i < n && s[i] < top + (1 + screens) * screen; i++) {
+      if (mounted.has(this.blocks[i].key)) keys.push(this.blocks[i].key);
+    }
+    return keys;
+  }
+
+  // A press is under way in its field: the only time a block not being edited shows a selection there, since leaving a
+  // block and a drag on to other blocks clear it.
+  fieldInUse(key) {
+    return key === this.fieldHeld || key === this.shiftField || key === this.cmdPress?.key;
+  }
+
+  // The document's link definitions as one object for as long as they read the same: a re-parse makes new ones.
+  defsNow() {
+    const defs = this.doc.defs;
+    if (!this.defs || (this.defs.map !== defs && !sameDefs(this.defs.map, defs))) this.defs = { map: defs };
+    this.defs.map = defs;
+    return this.defs;
+  }
+
+  // A field not being edited shows its block's value with its words as tokens, none split into letters; it is set
+  // only when those changed. A checked task's words are all tokens: the field draws no line through plain text. A
+  // block left has `src` null: its field may still hold what editing left there.
+  fillField(b, kept) {
+    const src = this.doc.text.slice(b.start, b.end), defs = this.defsNow(), checked = Boolean(b.task?.checked);
+    if (kept.src === src && kept.defs === defs && kept.checked === checked) return;
+    const value = fieldOf(this.doc, b).value;
+    if (!kept.rich || value !== kept.value || checked !== kept.checked || (defs !== kept.defs && value.includes("["))) {
+      kept.rich = richOf(value, parseInline(value, { defs: defs.map }), { everyWord: checked });
+    }
+    Object.assign(kept, { src, value, defs, checked });
+    const tokens = tokensFor(kept.rich, null).tokens, state = kept.state;
+    if (state.value() === value && sameTokens(state.tokens(), tokens)) return;
+    try { state.set_value({ text: value, tokens }); } catch { this.guard(() => state.set_value(value)); }
+  }
+
+  // `fresh`: the keys whose views were made just now, which draw for the first time anyway.
+  redraw(keys, cx, fresh = null) {
     const width = this.textWidth();
     for (const key of keys) {
       const i = key ? this.at.get(key) : undefined;
       if (i === undefined) continue;
       const next = this.dataFor(this.blocks, i, width), old = this.data.get(key), e = this.entities.get(key), same = old && sameData(old, next);
       this.data.set(key, same ? old : next);
-      if (cx && e && !this.inline && old && !same) cx.notify(e);
+      if (cx && e && !this.inline && old && !same && !fresh?.has(key)) cx.notify(e);
     }
     if (this.inline) cx?.notify();
   }
@@ -1295,7 +1413,8 @@ export class Editor {
       info: b.kind === "code" ? b.info.trim().split(/\s+/)[0] : "",
       marker, label: marker === "number" ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked),
       diagram: look.look === "diagram" ? diagramSig(this.shown.get(b.key), this.good.get(b.key)) : "",
-      mode: b.key === this.activeKey ? "active" : b.key === this.armedKey ? "armed" : "rendered", tokens: b.key === this.activeKey && look.look === "text",
+      mode: b.key === this.activeKey ? "active" : this.blockFields.has(b.key) ? "field" : "rendered",
+      tokens: look.look === "text" && (b.key === this.activeKey || this.blockFields.has(b.key)),
       rows: b.key === this.activeKey ? this.rows : "many", menu: b.key === this.activeKey && this.slashOpen(),
       gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key),
       row: cal.row, ratio: cal.ratio, padRendered: cal.padRendered, padActive: cal.padActive,
@@ -1482,7 +1601,7 @@ export class Editor {
           this.updateRows(cx);
           if (this.revealNext) { this.revealNext = false; this.revealCaret(cx); }
         }
-        this.rearm(cx);
+        this.updateHover(cx);
         if (this.mode === "reading") this.syncWindow(cx);
         cx.notify();
       }
@@ -1500,18 +1619,8 @@ export class Editor {
     this.wake();
   }
 
-  // An armed block keeps the height it had rendered; an armed field that measures otherwise is not armed again. A
-  // block whose text was replaced while armed was never measured rendered with that text: the field's height is its height.
   blockSized(key, size) {
     const h = size.height / zoom();
-    if (key === this.armedKey && !this.armedNewText) {
-      if (Math.abs(h - (this.heights.get(key) ?? h)) > ARM_SLACK) {
-        this.disarmed.add(key);
-        this.post(cx => { if (this.armedKey === key) this.disarm(cx); });
-      }
-      return;
-    }
-    if (key === this.armedKey) this.armedNewText = false;
     if (this.heights.get(key) === h) return;
     // The tops still on screen are the old ones until the size task runs: the anchor is taken from them.
     this.heights.set(key, h);
@@ -1558,7 +1667,7 @@ export class Editor {
     const next = clampOffset(offset, this.contentH(), this.viewH());
     if (next === this.offset) return;
     this.offset = next;
-    this.rearm(cx);
+    this.updateHover(cx);
     this.syncWindow(cx);
     cx.notify();
   }
@@ -1570,7 +1679,7 @@ export class Editor {
     // A diagram's frame is sized from the viewport, so its block's data changes with it.
     if (this.diagramKeys.length && this.doc && this.mode === "reading") this.rebuild(cx, this.anchor());
     else this.layout(this.anchor());
-    this.rearm(cx);
+    this.updateHover(cx);
     this.syncWindow(cx);
     cx.notify();
   }
@@ -1694,62 +1803,27 @@ export class Editor {
     }
   }
 
-  // A drag that stayed in a text block not being edited opens it with what it crossed selected (openDragged). One that
-  // stayed in another block, code say, selected its rendered text, for a Cmd+C where the press left the keyboard:
-  // editing goes on, and neither this nor the root's mouse-up gives the field the keyboard back. A press that began in
-  // a field and ended beside it is that field's mouse-up. Any other press, a frame pan included, leaves the field the
-  // keyboard (keepKeyboard).
+  // A drag that stayed in a block not being edited, code say, selected its rendered text, for a Cmd+C where the press
+  // left the keyboard: editing goes on, and neither this nor the root's mouse-up gives the field the keyboard back. A
+  // press that began in a field and ended beside it is that field's mouse-up. Any other press, a frame pan included,
+  // leaves the field the keyboard (keepKeyboard).
   viewportUp(e, cx) {
     if (this.endThumb(cx)) return this.keepKeyboard();
     const down = this.press, held = this.fieldHeld, p = this.point(e), linked = this.linked, panned = this.endPan(cx);
     this.press = null; this.linked = false; this.fieldHeld = null;
     if (panned) return this.keepKeyboard();
     if (this.tookPress(e, "up")) return;
-    if (held && held === this.armedKey) this.takeArmed(cx);
-    if (held && held === this.activeKey) this.readLater(cx);
+    if (held) this.fieldReleased(held, cx);
     const pressed = down && !linked ? down : null;
     if (pressed && p && e.click_count >= 1 && Math.hypot(p.x - pressed.x, p.y - pressed.y) <= CLICK_SLOP) this.clickAt(p, cx, e.click_count);
-    else if (pressed && p && this.openDragged(pressed, p, cx)) return;
     else if (pressed?.key && this.activeKey && pressed.key !== this.activeKey && !this.sel) return cx.stop_propagation();
     this.keepKeyboard();
   }
 
-  // The format bar shows over the selection the drag made.
-  openDragged(from, to, cx) {
-    const b = from.on === "block" && !this.sel && this.editable() ? this.blockByKey(from.key) : null;
-    if (!b || b.key === this.activeKey || !isText(b) || b.image) return false;
-    const r = this.dragRange(b, from, to);
-    if (!r || !this.activate(b.key, r, cx, { reveal: false })) return false;
-    this.openBar(cx);
-    return true;
-  }
-
-  // The field range between view points p and q over text block b, out to the edges of the words they fall in and
-  // without the spaces at its ends; null when it holds no text.
-  dragRange(b, p, q) {
-    const i = this.at.get(b.key);
-    if (i === undefined) return null;
-    const a = this.blockPoint(i, p), z = this.blockPoint(i, q), value = b.key === this.activeKey ? this.seen : this.openedValue(b);
-    let start = Math.min(this.pressCaret(b, a.x, a.y, "start"), this.pressCaret(b, z.x, z.y, "start"));
-    let end = Math.max(this.pressCaret(b, a.x, a.y, "end"), this.pressCaret(b, z.x, z.y, "end"));
-    while (start < end && /\s/.test(value[start])) start++;
-    while (end > start && /\s/.test(value[end - 1])) end--;
-    return start < end ? { start, end } : null;
-  }
-
-  // A double-click's second press that reached the page before the block its first press opened was drawn as a field.
-  selectWord(b, p, cx) {
-    const r = isText(b) ? this.dragRange(b, p, p) : null;
-    if (!r || !this.selectField(r)) return;
-    this.retoken();
-    this.openBar(cx);
-  }
-
   // A press beside the field (a task box, link, toolbar, banner, scrollbar) can take the keyboard from it, and the
-  // root's keys ignore the page while a block is edited, so the field gets it back. A press on the armed block went
-  // into the spare field instead, which takes over once its focus event comes.
+  // root's keys ignore the page while a block is edited, so the field gets it back.
   keepKeyboard() {
-    if (this.activeKey && !this.armedKey && this.editable() && this.focusedState !== this.field && !this.noteOpen()) this.field.focus();
+    if (this.activeKey && this.editable() && this.focusedState !== this.field && !this.noteOpen()) this.field.focus();
   }
 
   // A frame fills much of the pane, so a single click on it (a tap, a click to focus the window) opens nothing: a
@@ -1768,17 +1842,7 @@ export class Editor {
     }
     if (hit.on === "outside") return this.deactivate(cx);
     if (hit.on === "end") return this.openPending(cx);
-    const key = hit.block.key;
-    if (key === this.activeKey) {
-      if (count >= 2) this.selectWord(hit.block, p, cx);
-      return;
-    }
-    if (key === this.armedKey) {
-      this.takeArmed(cx);
-      this.readLater(cx);
-      return;
-    }
-    this.clickBlock(key, p, cx);
+    if (hit.block.key !== this.activeKey) this.clickBlock(hit.block.key, p, cx);
   }
 
   // A picture is big and a stray click must not turn it into a source line, so as on a diagram only a double-click edits
@@ -1790,9 +1854,8 @@ export class Editor {
     } else if (count >= 2 && this.editable()) this.clickBlock(hit.block.key, p, cx);
   }
 
-  // A move event says nothing of the buttons: while a press is under way, on the page or in a field, nothing is armed
-  // and a drag that reaches another block selects whole blocks. With Shift held nothing stays armed, so a Shift+click
-  // lands on the page and not in a field.
+  // A move event says nothing of the buttons: while a press is under way, on the page or in a field, a drag that
+  // reaches another block selects whole blocks.
   viewportMove(e, cx) {
     if (this.thumb) {
       const g = this.thumbGeometry();
@@ -1803,12 +1866,7 @@ export class Editor {
     if (this.pan) return this.panTo(e, cx);
     this.updateHover(cx);
     const held = this.press ? this.press.key : this.fieldHeld;
-    if (held && this.pointer) {
-      if (this.dragged(e)) this.dragTo(held, this.pointer, cx);
-      return;
-    }
-    if (e?.modifiers?.shift) return this.disarm(cx);
-    if (!this.press && !this.fieldHeld) this.arm(this.pointer, cx);
+    if (held && this.pointer && this.dragged(e)) this.dragTo(held, this.pointer, cx);
   }
 
   // A click's jitter is no drag: across a block's edge it would select blocks and end the editing the press began.
@@ -1819,17 +1877,12 @@ export class Editor {
     return true;
   }
 
-  modifiersChanged(e, cx) {
-    if (e?.modifiers?.shift) this.disarm(cx);
-  }
-
   viewportHover(hovered, cx) {
     if (hovered) return;
     this.endThumb(cx);
     this.endPan(cx);
     this.press = null; this.fieldHeld = null; this.pointer = null;
     this.updateHover(cx);
-    this.arm(null, cx);
   }
 
   // The frame of the diagram block at viewport point p: { block, i, d, fx, fy }, the point in frame coordinates.
@@ -1962,18 +2015,25 @@ export class Editor {
     this.select(from, b.key, cx);
   }
 
+  // The field the drag began in goes on selecting while the button is down: with blocks selected, it shows none.
   dragTo(from, p, cx) {
     const b = this.hit(p)?.block;
     if (!b || !this.blockByKey(from) || !this.blockByKey(b.key) || (!this.sel && b.key === from)) return;
     this.select(from, b.key, cx);
+    this.unselect(this.blockField(from));
   }
 
   select(from, to, cx) {
     if (this.sel?.from === from && this.sel.to === to) return;
     this.leave(cx);
-    this.disarm(cx);
     this.handle.focus();
     this.setSel({ from, to }, cx);
+  }
+
+  // A field that is not being edited shows no selection.
+  unselect(state) {
+    const c = state && state !== this.field ? caretOf(state) : null;
+    if (c && c.start !== c.end) this.guard(() => state.set_selected_range({ start: c.end, end: c.end }));
   }
 
   // The blocks a selection covers, as indices into doc.blocks: [first, last], the sub-blocks of the last ones
@@ -2106,10 +2166,10 @@ export class Editor {
     const anchor = this.anchor(), f = fieldOf(this.doc, b), value = withInnerLine(b, f.value), n = value.length;
     const r = typeof caret === "number" ? { start: caret, end: caret } : caret ?? { start: 0, end: 0 };
     this.f = f; this.opened = value;
+    this.field = this.fieldFor(b); this.tokensOff = false;
     if (!this.setField(value, { start: clamp(r.start, 0, n), end: clamp(r.end, 0, n) })) { this.drop(); this.rebuild(cx, anchor); return false; }
     const was = this.activeKey;
     this.activeKey = key; this.act++;
-    if (this.armedKey === key) this.armedKey = null;
     this.retoken();
     this.rows = this.rowsFlag();
     if (was === key) this.redraw([key], cx);
@@ -2122,24 +2182,28 @@ export class Editor {
     return true;
   }
 
-  // The value is taken as seen before set_value, which may report it as a change.
+  // The value is taken as seen before set_value, which may report it as a change. A field that holds it already (a
+  // block's own) keeps it, with its tokens.
   setField(value, range) {
     this.seen = value;
     this.known = { start: range.start, end: range.end, valid: true };
     return this.guard(() => {
-      this.field.set_value(value);
+      if (this.field.value() !== value) this.field.set_value(value);
       this.field.set_selected_range(range);
     });
   }
 
-  // The edited text block's layout (tokens.js), made once per value; null for a block that shows its source.
+  // The edited text block's layout (tokens.js), made once per value, or taken from its own field's when that was made
+  // from the same; null for a block that shows its source.
   richNow() {
     if (!this.activeKey || this.pending || this.mode !== "reading" || !this.doc) return null;
-    const key = this.activeKey, value = this.seen, defs = this.doc.defs, kept = this.rich;
-    if (kept && kept.key === key && kept.value === value && kept.defs === defs) return kept.layout;
-    const b = this.blockByKey(key);
-    const layout = b && isText(b) && !b.image ? richOf(value, parseInline(value, { defs })) : null;
-    this.rich = { key, value, defs, layout };
+    const key = this.activeKey, value = this.seen, defs = this.defsNow(), kept = this.rich, b = this.blockByKey(key);
+    const checked = Boolean(b?.task?.checked);
+    if (kept && kept.key === key && kept.value === value && kept.defs === defs && kept.checked === checked) return kept.layout;
+    const own = this.blockFields.get(key), same = own?.rich && own.value === value && own.defs === defs && own.checked === checked;
+    const layout = !b || !isText(b) || b.image ? null
+      : same ? own.rich : richOf(value, parseInline(value, { defs: defs.map }), { everyWord: checked });
+    this.rich = { key, value, defs, checked, layout };
     return layout;
   }
 
@@ -2218,23 +2282,43 @@ export class Editor {
   }
 
   // A click on a token gives its bounds, not where it was: the x of the press across them picks the letter edge, and
-  // the word holding it splits into letters there.
+  // the word holding it splits into letters there. With Cmd a click on a link opens it.
   tokenClick(key, ev) {
     const x = this.pressX;
     this.post(cx => this.pressToken(key, ev, x, cx));
   }
 
   pressToken(key, ev, x, cx) {
-    if (key !== this.activeKey || !this.editable()) return;
+    if (!this.editable()) return;
+    if (ev?.modifiers?.platform && this.openLinkIn(key, ev.range, cx)) return;
+    if (key !== this.activeKey) this.takeField(key, cx);
+    if (key !== this.activeKey) return;
     this.syncField(cx);
     const r = this.richNow(), box = ev?.bounds, range = ev?.range;
     if (!r || !range) return;
     const at = pressedAt(r, range, typeof x === "number" && box?.width > 0 ? (x - box.x) / box.width : 1);
+    this.placeCaret(at, cx);
+  }
+
+  placeCaret(at, cx) {
     this.known = { start: at, end: at, valid: true };
     this.retoken();
     this.selectField(this.known);
     this.slashCaret(this.known, cx);
     this.openBar(cx);
+  }
+
+  // A Cmd+press on a link token of block `key` opens the link, as a click on it in Reading does: the block it went
+  // into is not opened for it (fieldReleased), and an edited block keeps its caret after the link's word. -> false
+  // when the token is no link's.
+  openLinkIn(key, range, cx) {
+    const value = key === this.activeKey ? this.seen : this.blockField(key)?.value();
+    const link = range && typeof value === "string" ? linkAt(parseInline(value, { defs: this.doc.defs }).spans, range.start) : null;
+    if (!link) return false;
+    if (this.cmdPress?.key === key) this.cmdPress.opened = true;
+    this.link(link.url, cx);
+    if (key === this.activeKey) this.placeCaret(range.end, cx);
+    return true;
   }
 
   focusField(cx) {
@@ -2261,10 +2345,22 @@ export class Editor {
     if (gone) this.f = null;
     this.commit(cx);
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
+    this.letField();
     if (pending) this.forget(pending.key);
     if (gone) this.setText(applySplice(base, gone), cx);
     this.rebuild(cx, anchor);
     cx.notify();
+  }
+
+  // The field of the block no longer edited stays its drawer, with no selection showing; one no block owns any more
+  // (its block became code, say) goes.
+  letField() {
+    const was = this.field, key = this.fieldKeys.get(was);
+    this.field = this.loose;
+    if (was === this.loose) return;
+    if (key === undefined) return this.releaseField(was);
+    this.unselect(was);
+    this.blockFields.get(key).src = null;
   }
 
   deactivate(cx) {
@@ -2284,6 +2380,7 @@ export class Editor {
   release() {
     const pending = this.pending;
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
+    this.letField();
     if (pending) this.forget(pending.key);
   }
 
@@ -2442,7 +2539,8 @@ export class Editor {
     if (on) this.focusedState = state;
     else if (this.focusedState === state) this.focusedState = null;
     if (!on && state === this.field) this.closeBar(cx);
-    if (on && state === this.spare && this.armedKey && this.shiftField !== this.armedKey) this.takeArmed(cx);
+    const key = on && state !== this.field ? this.fieldKeys.get(state) : undefined;
+    if (key !== undefined && key !== this.shiftField && key !== this.cmdPress?.key) this.takeField(key, cx);
   }
 
   // "one" while the active field has no line break, measures under 1.5 rows and its text is estimated to fit, so the
@@ -2478,7 +2576,7 @@ export class Editor {
     const next = keepInView({ offset: this.offset, viewportH: this.viewH(), y, rowPx: d.row, contentH: this.contentH() });
     if (next === this.offset) return;
     this.offset = next; this.reveal = null;
-    this.rearm(cx);
+    this.updateHover(cx);
     if (cx) this.syncWindow(cx);
     cx?.notify();
   }
@@ -2497,16 +2595,16 @@ export class Editor {
   }
 
   // The field caret for a press at (x, y) on block b, x from the column's left edge and y from the block's top,
-  // estimated from the field as currently drawn: rendered, or the field itself for the edited block. `side` as
-  // pressToField takes it.
-  pressCaret(b, x, y, side = null) {
-    const d = this.data.get(b.key), active = b.key === this.activeKey, c = this.chromeOf(d, active), cal = this.calOf(d.style);
-    const value = active ? this.seen : this.openedValue(b);
+  // estimated from the block as currently drawn: rendered, or a field (the edited block's, or a text block's own). A
+  // press only the page heard (beside a text block's field: its marker, the space above it) and Page Up / Down use it.
+  pressCaret(b, x, y) {
+    const d = this.data.get(b.key), active = b.key === this.activeKey, asField = active || d.mode === "field";
+    const c = this.chromeOf(d, asField), cal = this.calOf(d.style), value = active ? this.seen : this.openedValue(b);
     if (b.kind === "mermaid" && !active) return this.entry(b, value, 1, null);
     if (d.look === "picture" && !active) return value.length;
-    const height = (this.heights.get(b.key) ?? this.estimate(b)) - c.y - c.below - (active ? d.padActive : d.padRendered);
+    const height = (this.heights.get(b.key) ?? this.estimate(b)) - c.y - c.below - (asField ? d.padActive : d.padRendered);
     const fenced = !active && (Boolean(b.fence) || b.kind === "frontmatter");
-    return pressToField({ kind: b.kind, value, fenced, closed: b.closed, rows: this.rowsOf(d, active), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance }, side);
+    return pressToField({ kind: b.kind, value, fenced, closed: b.closed, rows: this.rowsOf(d, asField), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance });
   }
 
   openedValue(b) {
@@ -2620,16 +2718,16 @@ export class Editor {
   }
 
   // The field's wrapper lives in the block's view, whose cx cannot redraw this one: what needs a cx goes to the size
-  // task. The press is marked so the viewport, if it hears it too, leaves it to the field. An armed block opens on
-  // mouse-up only when the press began in its field; with Shift the press selects blocks and the field's focus is not
-  // taken. A press in the edited field leaves its caret unknown until it is read after the mouse-up, so that a key-up
-  // meanwhile crosses no edge.
+  // task. The press is marked so the viewport, if it hears it too, leaves it to the field. With Shift the press selects
+  // blocks and the field's focus is not taken; with Cmd it may open a link (openLinkIn). A press in the edited field
+  // leaves its caret unknown until it is read after the mouse-up, so that a key-up meanwhile crosses no edge.
   fieldDown(key, e) {
     this.fieldPress = { kind: "down", x: e?.position?.x, y: e?.position?.y };
-    this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e);
+    this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e); this.pressX = e?.position?.x ?? null;
+    this.cmdPress = e?.modifiers?.platform ? { key, opened: false } : null;
     if (this.sel && !e?.modifiers?.shift) this.post(cx => this.setSel(null, cx));
     if (key === this.activeKey) {
-      this.known = { ...this.known, valid: false }; this.ownKeyUp = null; this.pressX = e?.position?.x ?? null;
+      this.known = { ...this.known, valid: false }; this.ownKeyUp = null;
       if (this.slash) this.post(cx => this.closeSlash(cx));
       if (this.bar) this.post(cx => this.closeBar(cx));
     }
@@ -2647,8 +2745,8 @@ export class Editor {
     const began = this.fieldHeld === key;
     this.fieldHeld = null;
     this.post(cx => {
-      if (began && key === this.armedKey) this.takeArmed(cx);
-      if (key === this.activeKey) this.readLater(cx);
+      if (began) this.fieldReleased(key, cx);
+      else if (key === this.activeKey) this.readLater(cx);
     });
   }
 
@@ -2656,20 +2754,34 @@ export class Editor {
     this.post(cx => this.keyUp(e, cx));
   }
 
-  // The press on the armed block landed in the spare field, which becomes the active one with the caret the press
-  // gave it (read out after the mouse-up). Its focus event or the mouse-up, whichever comes first, does this.
-  takeArmed(cx) {
-    const key = this.armedKey;
-    if (!key || !this.editable()) return;
-    this.armedKey = null;
-    this.swapping = true;
-    try { this.leave(cx, key); } finally { this.swapping = false; }
-    const b = this.blockByKey(key);
-    if (!b) return;
+  // The press that began in block `key`'s field is over. Its field has the keyboard: a block not being edited becomes
+  // the edited one, unless the drag went on to select blocks or a Cmd+press opened a link; then the field gives the
+  // keyboard back. The caret the press placed is read.
+  fieldReleased(key, cx) {
+    const cmd = this.cmdPress;
+    this.cmdPress = null;
+    if (cmd?.key === key && cmd.opened) return this.giveBackKeyboard();
+    if (key !== this.activeKey && !this.sel) this.takeField(key, cx);
+    if (key === this.activeKey) this.readLater(cx);
+  }
+
+  giveBackKeyboard() {
+    if (this.activeKey) this.keepKeyboard();
+    else this.handle.focus();
+  }
+
+  // A press in the field of block `key` gave it the keyboard: that field becomes the edited one with no set_value, its
+  // value already there and its caret where the press put it (read out after the mouse-up). Its focus event or the
+  // mouse-up, whichever comes first, does this.
+  takeField(key, cx) {
+    if (key === this.activeKey || !this.blockFields.has(key) || !this.editable()) return;
+    this.leave(cx, key);
+    const b = this.blockByKey(key), state = this.blockField(key);
+    if (!b || !state) return;
     const anchor = this.anchor(), f = fieldOf(this.doc, b);
-    [this.field, this.spare] = [this.spare, this.field];
+    this.field = state; this.tokensOff = false;
     this.f = f; this.opened = f.value; this.known = NO_CARET;
-    if (this.field.value() === f.value) this.seen = f.value;
+    if (state.value() === f.value) this.seen = f.value;
     else if (!this.setField(f.value, { start: 0, end: 0 })) { this.drop(); this.rebuild(cx, anchor); return; }
     this.activeKey = key; this.act++;
     this.retoken();
@@ -2677,31 +2789,6 @@ export class Editor {
     this.rebuild(cx, anchor);
     if (this.focusedState !== this.field) this.field.focus();
     cx.notify();
-  }
-
-  // The block under the pointer gets the spare field, drawn in its own type in place of its text, so that a press
-  // lands natively. Only plain one-line text blocks that are measured, and never again one that measured off.
-  arm(p, cx) {
-    const hit = p && this.editable() && !this.calibrating ? this.hit(p) : null, b = hit?.on === "block" ? hit.block : null;
-    const want = b && b.armable && b.key !== this.activeKey && !this.disarmed.has(b.key) && this.heights.has(b.key) ? b.key : null;
-    if (want === this.armedKey) return;
-    const value = want ? fieldOf(this.doc, b).value : null;
-    if (want && !this.guard(() => this.spare.set_value(value))) return;
-    const old = this.armedKey;
-    this.armedKey = want; this.armedValue = value; this.armedNewText = false;
-    this.redraw([old, want], cx);
-  }
-
-  rearm(cx) {
-    this.updateHover(cx);
-    if (this.pointer && !this.press && !this.fieldHeld) this.arm(this.pointer, cx);
-  }
-
-  disarm(cx) {
-    const old = this.armedKey;
-    if (!old) return;
-    this.armedKey = null;
-    this.redraw([old], cx);
   }
 
   // The caret is kept (`stored`) for Enter to come back to.
@@ -2953,7 +3040,7 @@ export class Editor {
     this.offset = clampOffset(this.offset + dir * page, this.contentH(), this.viewH()); this.reveal = null;
     const value = b.key === this.activeKey ? this.seen : this.openedValue(b);
     this.activate(b.key, edge ? this.entry(b, value, -dir, null) : this.pressCaret(b, 0, y - this.sums[j]), cx);
-    this.rearm(cx);
+    this.updateHover(cx);
     cx.notify();
   }
 
@@ -3124,7 +3211,6 @@ export class Editor {
     if (own || change.r || change.ins !== "/" || !this.slashable() || !opensAt(value, change.a)) return;
     this.history.close();
     this.slash = { act: this.act, at: change.a, end: change.a + 1, query: "", items: COMMANDS, index: 0, first: 0, side: null };
-    this.disarm(cx);
     this.redraw([this.activeKey], cx);
     cx.notify();
   }
@@ -3821,7 +3907,6 @@ export class Editor {
     let root = v_flex().id("md-root").track_focus(this.handle).size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .font_family(this.fonts.sans).text_size(13)
       .on_key_down((e, cx) => this.keys(e, cx))
-      .on_modifiers_changed((e, cx) => this.modifiersChanged(e, cx))
       .on_mouse_up("left", () => this.keepKeyboard())
       .on_size_change((size, cx) => this.rootSized(size, cx));
     for (const name of ACTIONS) root = root.on_action(name, (_e, cx) => this.action(name, cx));

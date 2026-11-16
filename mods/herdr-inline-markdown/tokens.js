@@ -20,7 +20,7 @@ const LOOKS = { strong: "b", em: "i", strike: "s", code: "c", link: "l", comment
 const TAG_LOOKS = { strong: "b", b: "b", em: "i", i: "i", u: "u", s: "s", del: "s", strike: "s" };
 const LOOK_ORDER = "bisuclhp";
 const LOOK_NAMES = { b: "bold", i: "italic", s: "strike", u: "underline", c: "code", l: "link", h: "highlight", p: "picture" };
-const NARROW = new Set("fijlrtI.,:;'!|`");
+const NARROW = new Set("fijlrtI.,:;'!|` ");
 const WIDE = new Set("mwMW");
 const CODE_WIDTH = 1.25;
 
@@ -167,9 +167,10 @@ function loneFlags(spans, o) {
 }
 
 class Builder {
-  constructor(value, inline) {
+  constructor(value, inline, everyWord) {
     this.s = value;
     this.inline = inline;
+    this.everyWord = everyWord;
     this.spans = inline.spans;
     this.owner = markOwners(value.length, this.spans);
     this.atoms = new Atoms(value);
@@ -246,8 +247,9 @@ class Builder {
     return this.finish();
   }
 
-  // Words: runs of letters next to each other. One holding a formatted character, one shown from other source text, or
-  // one carrying marks is a token, unless its edges would cut a character. `tokenized` marks the atoms in tokens.
+  // Words: runs of letters next to each other, with the spaces after them that joins() takes. One holding a formatted
+  // character, one shown from other source text, or one carrying marks is a token, unless its edges would cut a
+  // character. `tokenized` marks the atoms in tokens.
   finish() {
     const { s, atoms } = this, n = atoms.count, tokenized = new Uint8Array(n), wordStart = new Int32Array(n), wordEnd = new Int32Array(n);
     for (let k = 0; k < n;) {
@@ -258,15 +260,23 @@ class Builder {
         k++;
         continue;
       }
-      let j = k, rich = false;
+      let j = k, rich = this.everyWord;
       for (; j < n && atoms.kind[j] === LETTER; j++) {
         rich ||= atoms.look[j] !== 0 || atoms.texts[j] !== undefined || atoms.start[j] < atoms.from[j] || atoms.end[j] > atoms.to[j];
       }
       const token = rich && !cuts(s, atoms.start[k]) && !cuts(s, atoms.end[j - 1]) ? 1 : 0;
-      for (let m = k; m < j; m++) { tokenized[m] = token; wordStart[m] = k; wordEnd[m] = j - 1; }
-      k = j;
+      const last = token && j < n && this.joins(j) ? j : j - 1;
+      for (let m = k; m <= last; m++) { tokenized[m] = token; wordStart[m] = k; wordEnd[m] = last; }
+      k = last + 1;
     }
     return { value: s, atoms, looks: this.looks.names, tokenized, wordStart, wordEnd, addresses: this.addresses(), ...drawnOf(atoms, tokenized) };
+  }
+
+  // Spaces inside a formatted run (any spaces between a checked task's words) go with the word before them, so its
+  // highlight, underline or line runs on across them.
+  joins(k) {
+    const { s, atoms } = this;
+    return atoms.kind[k] === GAP && (atoms.look[k] !== 0 || this.everyWord) && !hasControl(s, atoms.start[k], atoms.end[k]) && !cuts(s, atoms.end[k]);
   }
 
   // Where an inline link's address can be typed: from just after its "(" to just before its ")".
@@ -280,6 +290,7 @@ class Builder {
 }
 
 function drawnAtom(atoms, k) {
+  if (atoms.kind[k] === GAP) return atoms.shown(k);
   if (atoms.kind[k] !== LETTER) return atoms.flags[k] & (ICON | POINTED) ? MARKER : "";
   return (atoms.flags[k] & ICON ? MARKER : "") + atoms.shown(k);
 }
@@ -301,17 +312,18 @@ function drawnOf(atoms, tokenized) {
 }
 
 // -> the layout tokensFor and the estimates read: { value, drawn (the text the field draws), ... }. `inline` is
-// parseInline's answer for `value`.
-export function richOf(value, inline) {
-  return new Builder(String(value ?? ""), inline).build();
+// parseInline's answer for `value`. `everyWord` makes every word a token, as a checked task needs: the field draws no
+// line through plain text.
+export function richOf(value, inline, { everyWord = false } = {}) {
+  return new Builder(String(value ?? ""), inline, everyWord).build();
 }
 
 // Where a selection end at x may stand: never inside a token. Inside a letter's marks it goes to the side the marks
 // face (a caret before a word's opening marks stays outside its run); inside an escape or entity, before it (after it
-// for a selection's end); inside a character, to its edge.
+// for a selection's end); inside a character, to its edge. Between two spaces of a word it stays: that word is split.
 function snapped(r, x, side) {
   const { atoms, tokenized } = r, k = atoms.at(x);
-  if (k < 0 || atoms.start[k] === x || x >= atoms.end[k] || !tokenized[k]) return x;
+  if (k < 0 || atoms.start[k] === x || x >= atoms.end[k] || !tokenized[k] || atoms.kind[k] === GAP) return x;
   if (atoms.kind[k] !== LETTER) return side === START ? atoms.start[k] : atoms.end[k];
   const from = atoms.from[k], to = atoms.to[k];
   if (x <= from) return atoms.start[k];
@@ -376,11 +388,19 @@ function tokenOf(r, a, b) {
   return made(s, atoms.start[a], atoms.end[b], d.id(), d.label);
 }
 
-// The characters of the letter atoms among a..b, the first and last of each atom with its marks:
+// The characters of the letter and space atoms among a..b, the first and last of each letter atom with its marks:
 // [{ start, end, text, look, icon }].
 function lettersOf(r, a, b) {
   const { atoms } = r, s = r.value, out = [];
   for (let k = a; k <= b; k++) {
+    if (atoms.kind[k] === GAP && r.tokenized[k]) {
+      for (let i = atoms.start[k]; i < atoms.end[k];) {
+        const j = graphemeEnd(s, i, atoms.end[k]);
+        out.push({ start: i, end: j, text: s.slice(i, j), look: atoms.look[k], icon: false });
+        i = j;
+      }
+      continue;
+    }
     if (atoms.kind[k] !== LETTER) continue;
     const look = atoms.look[k], icon = (atoms.flags[k] & ICON) !== 0, from = atoms.from[k], to = atoms.to[k];
     if (atoms.texts[k] !== undefined) {
@@ -447,7 +467,7 @@ export function drawnOffset(r, x) {
   if (x >= r.value.length) return drawnStarts[atoms.count];
   const k = atoms.at(x);
   if (k < 0) return 0;
-  if (!tokenized[k]) return drawnStarts[k] + x - atoms.start[k];
+  if (!tokenized[k] || atoms.kind[k] === GAP) return drawnStarts[k] + x - atoms.start[k];
   if (atoms.kind[k] !== LETTER || x <= atoms.from[k]) return drawnStarts[k];
   if (x >= atoms.to[k]) return drawnStarts[k + 1];
   if (atoms.texts[k] !== undefined) return drawnStarts[k];
