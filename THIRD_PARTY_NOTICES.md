@@ -5,15 +5,17 @@
 ### Lucide icons (ISC; some derived from Feather, MIT)
 
 The line icons in `mods/herdr-inline-markdown/` are Lucide icons (https://lucide.dev) reduced to a bare `<svg>` element:
-`bold`, `check`, `code`, `file-plus`, `heading-1`, `heading-2`, `heading-3`, `image`, `italic`, `link`, `list`,
-`list-ordered`, `list-todo`, `markdown` (Lucide's `file-text`), `message-square`, `message-square-plus`, `minus`, `plus`,
-`search`, `strikethrough`, `table`, `text-quote`, `type` and `workflow`. `bold`, `code`, `heading-1` to `heading-3`,
+`bold`, `check`, `chevron-down`, `code`, `file-plus`, `heading`, `heading-1`, `heading-2`, `heading-3`, `image`,
+`italic`, `link`, `list`, `list-ordered`, `list-todo`, `markdown` (Lucide's `file-text`), `message-square`,
+`message-square-plus`, `minus`, `palette`, `plus`, `search`, `strikethrough`, `table`, `text-quote`, `type`,
+`underline` and `workflow`. `bold`, `code`, `heading-1` to `heading-3`,
 `image`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `message-square`, `message-square-plus`, `minus`,
-`search`, `strikethrough`, `table`, `text-quote`, `type` and `workflow` were taken from lucide-static 1.69.0. `check`, `file-plus`, `markdown` and `plus` have the path data of the current Lucide icons;
-the release they were copied from was not recorded.
+`search`, `strikethrough`, `table`, `text-quote`, `type` and `workflow` were taken from lucide-static 1.69.0;
+`chevron-down`, `heading`, `palette` and `underline` from lucide-static 1.73.0. `check`, `file-plus`, `markdown` and
+`plus` have the path data of the current Lucide icons; the release they were copied from was not recorded.
 
-`check`, `code`, `italic`, `link`, `minus`, `plus`, `search` and `type` are among the Lucide icons derived from Feather,
-which is under the MIT license below.
+`check`, `chevron-down`, `code`, `italic`, `link`, `minus`, `plus`, `search`, `type` and `underline` are among the
+Lucide icons derived from Feather, which is under the MIT license below.
 
 `spinner.svg` and `dots.svg` are not Lucide icons: both were drawn for this package.
 

@@ -180,7 +180,7 @@ so it wraps as it did on the page, and keeps them in the file.
 | Option+Up / Down | Moves the block (an item with its sub-items) above or below its neighbour |
 | Arrow keys | Move inside the block, and on to the block above or below at its edge |
 | Page Up / Page Down | Scrolls a page and takes the caret along |
-| Escape | Closes the format bar when it shows, else stops editing; Enter picks up where you were |
+| Escape | Closes the format bar's open menu, else the format bar when it shows, else stops editing; Enter picks up where you were |
 | Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them |
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code |
 | Cmd+B / Cmd+I / Cmd+U / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic, underline or strikethrough on the selection, all or nothing. If every letter of the selection has it already, the key takes it off all of them; otherwise it puts it on all of them, so a selection that is partly bold becomes all bold first. Text outside the selection keeps its formatting: a bold run the selection cuts is split, and runs that end up touching join into one. Every other formatting stays (bold-italic text that loses bold stays italic; a link keeps its address, a comment its note). The same letters stay selected, so the key again undoes it. Spaces at the ends of the selection stay outside. On a caret in a word they act on the word; elsewhere they write the two marks with the caret between them |
@@ -188,7 +188,7 @@ so it wraps as it did on the page, and keeps them in the file.
 | Cmd+Shift+H | The same for a highlight |
 | Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, the link shown as written until the caret leaves it, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
-| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when every letter of the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
+| Select text in a paragraph, heading, item or quote | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 The file stays plain markdown. Bold, italic, strikethrough and code are written `**…**`, `*…*`, `~~…~~` and
@@ -196,8 +196,9 @@ The file stays plain markdown. Bold, italic, strikethrough and code are written 
 key writes the tag Reading draws instead: `<strong>`, `<em>` or `<s>`. Underline is written `<u>…</u>`, a highlight
 `<mark>…</mark>`, and a text colour `<span style="color: red">…</span>` (red, yellow, green, teal or purple, from the
 theme's terminal colours, so they suit light and dark themes). A `<mark color="…">` written by hand keeps its own
-colour. Text colours have no keys. Read-only files, and blocks far from the part of the page you are looking at, are
-drawn by Herdr's markdown view, which hides a span's tags but draws its text uncoloured.
+colour. Text colours have no keys: the format bar's Colour menu sets them. Read-only files, and blocks far from the
+part of the page you are looking at, are drawn by Herdr's markdown view, which hides a span's tags but draws its text
+uncoloured.
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
 item, `[] ` or `[ ] ` a task, and `> ` a quote; Cmd+Z right after gives back what you typed. ```` ```js ```` then Enter
@@ -212,6 +213,23 @@ formatted words, while direct typing in any script is fine. **Left out on purpos
 images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
 (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
 the one toggle, a diagram's zoom, the format bar and the comments' cards.
+
+### The format bar
+
+Selecting text in a paragraph, heading, item or quote shows a bar over it, its groups parted by thin lines:
+
+| Button | What it does |
+|---|---|
+| Comment | A [comment](#comments) on the selection, as Cmd+Alt+M |
+| Text style ▾ | A menu: Text, Heading 1, Heading 2, Heading 3 and Quote, the block's style checked. A pick turns the block into it. The button shows the block's style |
+| Bold, Italic, Underline, Strikethrough, Code | What their keys do. A button shows pressed, in the accent colour, when every letter of the selection has its mark |
+| Colour ▾ | A menu: Text (Default, Red, Yellow, Green, Teal, Purple) and Highlight (No highlight, Yellow), each with a swatch in the colour it draws in. The selection's colour and highlight are checked when all of it has the same one. A pick gives the whole selection that colour, takes it off (Default), or puts the highlight on or off. The button's icon takes the selection's colour, and its background the highlight |
+| List ▾ | A menu: Bulleted list, Numbered list and To-do list. A pick turns the block into an item of that list; the checked one, the list the block is in, turns it back into text. The button shows the block's list, pressed in one |
+| Link | What Cmd+K does |
+
+A menu opens under its button and closes on a second press of it, a pick, Escape or a press elsewhere; one menu
+shows at a time. Each pick is one Cmd+Z, the same text stays selected and the bar stays over it. The field keeps the
+keyboard throughout. In a pane too narrow for the bar it wraps onto more rows.
 
 ### Comments
 
@@ -367,8 +385,8 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
   rewritten the way a clone does it (simulated, not cloned by Herdr), and by loading the mod against test mocks;
   nothing here has been run inside the app or in another version. The keys rely on `mod.open` showing each mod as
   its `mod.json` overlay says (the companion's 2 px frameless popup included). Say so in the compatibility notes.
-- **Icon provenance.** Fourteen icons are from lucide-static 1.69.0; four more match the path data of current
-  Lucide icons, but the release they were copied from was not recorded. `spinner.svg` and `dots.svg` were drawn for
+- **Icon provenance.** Fourteen icons are from lucide-static 1.69.0 and four from 1.73.0; four more match the path
+  data of current Lucide icons, but the release they were copied from was not recorded. `spinner.svg` and `dots.svg` were drawn for
   this package, and `file-markdown.svg` is the Material Icon Theme's markdown icon.
 - **Opening a file can fetch https pictures.** A markdown file can name pictures on the web, and the mod downloads
   them with `curl` when the file opens (https only, 10 MB at most, 20 s), so the server of each one sees your address.

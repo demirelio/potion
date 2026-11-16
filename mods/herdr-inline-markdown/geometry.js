@@ -336,22 +336,56 @@ export function slashX(at) {
   return Math.max(0, Math.min(at.viewW - MENU.w - MENU.margin, Math.max(columnLeft(at.viewW), columnAt(at))));
 }
 
-// The format bar: square buttons in `pad` and a 1 px border, `gap` from the selected rows, `margin` from the pane's edges.
-export const BAR = { button: 28, pad: 3, gap: 6, margin: 8 };
-export const barSize = n => ({ w: n * BAR.button + 2 * BAR.pad + 2, h: BAR.button + 2 * BAR.pad + 2 });
+// The format bar: square buttons, a menu's button wider by its chevron, groups parted by a rule `sep` wide, rows
+// `rowGap` apart, in `pad` and a 1 px border; `gap` from the selected rows, `margin` from the pane's edges.
+export const BAR = { button: 28, chevron: 12, sep: 9, rowGap: 2, pad: 4, gap: 6, margin: 8 };
+
+// Rows no wider than `maxW`, breaking between groups unless a group is wider than a row. -> `rows` of items ({ name })
+// and rules ({ sep: true }), `at[name]` an item's box in the bar, its border included.
+export function barLayout(groups, maxW = Infinity) {
+  const edge = BAR.pad + 1, room = maxW - 2 * edge, rows = [[]], at = {};
+  let x = 0, widest = 0;
+  const nextRow = () => { rows.push([]); x = 0; };
+  for (const group of groups) {
+    const width = group.reduce((sum, item) => sum + item.w, 0);
+    if (x > 0 && x + BAR.sep + width <= room) { rows.at(-1).push({ sep: true }); x += BAR.sep; }
+    else if (x > 0) nextRow();
+    for (const item of group) {
+      if (x > 0 && x + item.w > room) nextRow();
+      rows.at(-1).push({ name: item.name });
+      at[item.name] = { x: edge + x, y: edge + (rows.length - 1) * (BAR.button + BAR.rowGap), w: item.w, h: BAR.button };
+      x += item.w;
+      widest = Math.max(widest, x);
+    }
+  }
+  return { w: widest + 2 * edge, h: rows.length * BAR.button + (rows.length - 1) * BAR.rowGap + 2 * edge, rows, at };
+}
 
 export const NOTE_BOX = { w: 320, h: 44, pad: 6 };
 
 // Over the first selected row at the selection's start column, else under the last when there is no room above (row
-// tops in pane y). `size` is the float's when it is not a bar of `n` buttons. -> { side, top, left, w, h }, or null
-// while that row is out of the pane.
-export function barPlace({ firstTop, lastTop, rowH, n, size = barSize(n), viewW, viewH, ...at }) {
+// tops in pane y), for a float of `size` { w, h }. -> { side, top, left, w, h }, or null while that row is out of the
+// pane.
+export function barPlace({ firstTop, lastTop, rowH, size, viewW, viewH, ...at }) {
   const { w, h } = size, above = firstTop - BAR.gap - h;
   let side, top;
   if (above >= BAR.margin && firstTop < viewH) [side, top] = ["above", above];
   else if (lastTop + rowH > 0 && lastTop < viewH) [side, top] = ["below", Math.min(lastTop + rowH + BAR.gap, viewH - BAR.margin - h)];
   else return null;
   return { side, top, left: clamp(columnAt({ ...at, viewW }), BAR.margin, viewW - BAR.margin - w), w, h };
+}
+
+// The bar's menus: rows `rowH` tall and section titles `titleH`, in `pad` and a 1 px border, `gap` under their button.
+export const BAR_MENU = { w: 220, rowH: 28, titleH: 26, pad: 4, gap: 4 };
+export const barMenuH = (rows, titles = 0) => rows * BAR_MENU.rowH + titles * BAR_MENU.titleH + 2 * BAR_MENU.pad + 2;
+
+// Under `button` (barLayout's `at`), else over the bar, else as low as the pane keeps it; at the button's left edge.
+export function barMenuPlace({ bar, button, h, viewW, viewH }) {
+  const w = Math.min(BAR_MENU.w, viewW - 2 * BAR.margin);
+  const below = bar.top + button.y + button.h + BAR_MENU.gap, above = bar.top - BAR_MENU.gap - h;
+  const fits = top => top >= BAR.margin && top + h <= viewH - BAR.margin;
+  const top = fits(below) ? below : fits(above) ? above : clamp(below, BAR.margin, viewH - BAR.margin - h);
+  return { left: clamp(bar.left + button.x, BAR.margin, viewW - BAR.margin - w), top, w, h };
 }
 
 export const NOTES = { w: 40, h: 22, gap: 10, margin: 12 };

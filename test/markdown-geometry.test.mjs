@@ -4,7 +4,8 @@ import {
   pressToField, snapToWord, tableCells, nextCell, caretRow, isOneRow, columnX, maxOffset, clampOffset, prefixSums, blockAt,
   estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
-  sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barSize, barPlace, PICTURE, pictureLayout,
+  sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
+  barMenuPlace, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
@@ -372,15 +373,39 @@ test("the slash menu's left edge is the field's left at offset 0, follows the sl
   assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 290 }), 290 - MENU.w - 8, "a pane narrower than column and menu: the menu stays in the pane");
 });
 
-const BAR_AT = { rowH: 24, col: 0, advance: 7, fieldW: 500, fieldX: 24, viewW: 900, viewH: 600, n: 5 };
+const B = BAR.button, WITH_CHEVRON = BAR.button + BAR.chevron, EDGE = BAR.pad + 1;
+// The format bar's groups: Comment | Text style | Bold Italic Underline Strikethrough Code | Colour | List | Link.
+const GROUPS = [
+  [{ name: "comment", w: B }], [{ name: "style", w: WITH_CHEVRON }],
+  ["bold", "italic", "underline", "strike", "code"].map(name => ({ name, w: B })),
+  [{ name: "color", w: WITH_CHEVRON }], [{ name: "list", w: WITH_CHEVRON }], [{ name: "link", w: B }],
+];
+const rowsOf = layout => layout.rows.map(row => row.map(e => (e.sep ? "|" : e.name)).join(" "));
+const BAR_SIZE = barLayout(GROUPS);
+const BAR_AT = { rowH: 24, col: 0, advance: 7, fieldW: 500, fieldX: 24, viewW: 900, viewH: 600, size: BAR_SIZE };
 
-test("the format bar is five square buttons in a bordered strip", () => {
-  assert.deepEqual(barSize(5), { w: 5 * BAR.button + 2 * BAR.pad + 2, h: BAR.button + 2 * BAR.pad + 2 });
-  assert.deepEqual(barSize(6).w - barSize(5).w, BAR.button, "a sixth button widens it by one");
+test("the format bar is as wide as its buttons, a menu's button wider by its chevron, with a thin rule between groups", () => {
+  assert.deepEqual(rowsOf(BAR_SIZE), ["comment | style | bold italic underline strike code | color | list | link"]);
+  assert.deepEqual([BAR_SIZE.w, BAR_SIZE.h], [7 * B + 3 * WITH_CHEVRON + 5 * BAR.sep + 2 * EDGE, B + 2 * EDGE]);
+  assert.deepEqual(BAR_SIZE.at.comment, { x: EDGE, y: EDGE, w: B, h: B });
+  assert.deepEqual(BAR_SIZE.at.style, { x: EDGE + B + BAR.sep, y: EDGE, w: WITH_CHEVRON, h: B });
+  assert.equal(BAR_SIZE.at.bold.x, EDGE + B + WITH_CHEVRON + 2 * BAR.sep);
+  assert.equal(BAR_SIZE.at.link.x, BAR_SIZE.w - EDGE - B, "the last button at the right edge");
+});
+
+test("in a pane too narrow for it the format bar wraps between groups, splitting a group only when a row can't hold it, and is never wider than the room it has", () => {
+  const two = barLayout(GROUPS, BAR_SIZE.w - 1);
+  assert.deepEqual(rowsOf(two), ["comment | style | bold italic underline strike code | color | list", "link"]);
+  assert.equal(two.h, 2 * B + BAR.rowGap + 2 * EDGE);
+  assert.deepEqual(two.at.link, { x: EDGE, y: EDGE + B + BAR.rowGap, w: B, h: B });
+  const narrow = barLayout(GROUPS, 3 * B + 2 * EDGE);
+  assert.deepEqual(rowsOf(narrow), ["comment | style", "bold italic underline", "strike code", "color", "list | link"]);
+  assert.equal(narrow.w, 3 * B + 2 * EDGE);
+  for (let maxW = 3 * B + 2 * EDGE; maxW <= BAR_SIZE.w + 40; maxW += 7) assert.ok(barLayout(GROUPS, maxW).w <= maxW, `${maxW}`);
 });
 
 test("the format bar goes over the selection's first row, its left edge at the selection's start column", () => {
-  const { w, h } = barSize(5);
+  const { w, h } = BAR_SIZE;
   assert.deepEqual(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 248 }), { side: "above", top: 200 - BAR.gap - h, left: 92 + 24, w, h });
   assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 10 }).left, 92 + 24 + 70, "ten characters in");
   assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 100 }).left, 92 + 24 + 200, "past a wrap: the column inside the row");
@@ -389,7 +414,7 @@ test("the format bar goes over the selection's first row, its left edge at the s
 });
 
 test("the format bar goes under the selection's last row when there is no room above its first, kept inside the pane", () => {
-  const { h } = barSize(5), tight = BAR.margin + BAR.gap + h;
+  const { h } = BAR_SIZE, tight = BAR.margin + BAR.gap + h;
   assert.deepEqual(barPlace({ ...BAR_AT, firstTop: tight - 1, lastTop: tight - 1 }), { ...barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200 }), side: "below", top: tight - 1 + 24 + BAR.gap });
   assert.equal(barPlace({ ...BAR_AT, firstTop: 28, lastTop: 76 }).top, 76 + 24 + BAR.gap, "under the last of three rows");
   assert.equal(barPlace({ ...BAR_AT, firstTop: -100, lastTop: 20 }).top, 20 + 24 + BAR.gap, "the first row scrolled off the top");
@@ -397,7 +422,7 @@ test("the format bar goes under the selection's last row when there is no room a
 });
 
 test("the format bar stays inside the pane at both sides", () => {
-  const { w } = barSize(5);
+  const { w } = BAR_SIZE;
   assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 95, fieldW: 700 }).left, 900 - BAR.margin - w, "on the right");
   assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, fieldX: 0, viewW: 1600 }).left, columnLeft(1600), "the column's left in a wide pane");
   assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, viewW: w + 10 }).left, BAR.margin, "a pane narrower than the bar and its margins: on the left");
@@ -414,6 +439,27 @@ test("the comment box goes where the bar goes, at its own size", () => {
   const size = { w: NOTE_BOX.w, h: NOTE_BOX.h };
   assert.deepEqual(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, size }), { side: "above", top: 200 - BAR.gap - size.h, left: 92 + 24, w: size.w, h: size.h });
   assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 95, fieldW: 700, size }).left, 900 - BAR.margin - size.w, "kept inside the pane");
+});
+
+test("a bar menu's height counts its rows, its section titles, its padding and its border", () => {
+  assert.equal(barMenuH(5), 5 * BAR_MENU.rowH + 2 * BAR_MENU.pad + 2);
+  assert.equal(barMenuH(8, 2), 8 * BAR_MENU.rowH + 2 * BAR_MENU.titleH + 2 * BAR_MENU.pad + 2);
+});
+
+test("a bar menu opens under its button, its left edge at the button's, kept inside the pane", () => {
+  const bar = { left: 100, top: 200, w: BAR_SIZE.w, h: BAR_SIZE.h }, button = BAR_SIZE.at.style, h = barMenuH(5);
+  assert.deepEqual(barMenuPlace({ bar, button, h, viewW: 900, viewH: 600 }), { left: 100 + button.x, top: 200 + button.y + B + BAR_MENU.gap, w: BAR_MENU.w, h });
+  assert.equal(barMenuPlace({ bar: { ...bar, left: 800 }, button, h, viewW: 900, viewH: 600 }).left, 900 - BAR.margin - BAR_MENU.w, "on the right");
+  assert.deepEqual(barMenuPlace({ bar: { ...bar, left: 8 }, button, h, viewW: 200, viewH: 600 }), { left: BAR.margin, top: 200 + button.y + B + BAR_MENU.gap, w: 200 - 2 * BAR.margin, h }, "a pane narrower than the menu: as wide as the pane leaves");
+  const two = barLayout(GROUPS, BAR_SIZE.w - 1);
+  assert.equal(barMenuPlace({ bar: { ...bar, h: two.h }, button: two.at.link, h, viewW: 900, viewH: 600 }).top, 200 + EDGE + 2 * B + BAR.rowGap + BAR_MENU.gap, "under a button of the bar's second row");
+});
+
+test("a bar menu with no room under its button opens over the bar; with room on neither side it is kept inside the pane", () => {
+  const button = BAR_SIZE.at.color, h = barMenuH(8, 2), bar = { left: 100, top: 500, w: BAR_SIZE.w, h: BAR_SIZE.h };
+  assert.equal(barMenuPlace({ bar, button, h, viewW: 900, viewH: 600 }).top, 500 - BAR_MENU.gap - h, "over the bar");
+  assert.equal(barMenuPlace({ bar: { ...bar, top: 150 }, button, h, viewW: 900, viewH: 400 }).top, 400 - BAR.margin - h, "its bottom 8 px over the pane's");
+  assert.equal(barMenuPlace({ bar: { ...bar, top: 150 }, button, h, viewW: 900, viewH: h }).top, BAR.margin, "a pane shorter than the menu: at its top");
 });
 
 test("prose through comments: a press lands by the text Reading shows, the marks and the comment hidden and a point comment its marker", () => {

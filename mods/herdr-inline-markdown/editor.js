@@ -5,7 +5,7 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, sameDefs, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, CARD, COLUMN, FRAME, MENU, NOTES, NOTE_BOX, anchorBlock, barPlace, blockAt, canZoom, cardPlace, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, BAR_MENU, CARD, COLUMN, FRAME, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardPlace, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -13,9 +13,9 @@ import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, KEYS_SETTLE_MS, NOTE, SOURCE, claimRebind, installKeys } from "./keys.js";
-import { hasMark, setColor, setMark, toggleMark, wordAround } from "./format.js";
+import { colorOf, hasMark, highlightOf, setColor, setMark, toggleMark, wordAround } from "./format.js";
 import { addComment, commentable, commentsIn, editComment, resolveComment } from "./comments.js";
-import { highlightColor } from "./colors.js";
+import { TEXT_COLORS, highlightColor, textColor } from "./colors.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, parsedInline, visibleMap } from "./inline.js";
 import { drawnOffset, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
@@ -62,14 +62,44 @@ const MARK_ACTIONS = {
   "mdb-bold": "bold", "mdb-italic": "italic", "mdb-underline": "underline", "mdb-strike": "strike", "mdb-code": "code",
   "mdb-highlight": "highlight", "mdb-link": "link",
 };
-const FORMAT_BUTTONS = [
-  { name: "bold", action: "mdb-bold", icon: "bold", tip: "Bold (Cmd+B)" },
-  { name: "italic", action: "mdb-italic", icon: "italic", tip: "Italic (Cmd+I)" },
-  { name: "strike", action: "mdb-strike", icon: "strikethrough", tip: "Strikethrough (Cmd+Shift+X)" },
-  { name: "code", action: "mdb-code", icon: "code", tip: "Code (Cmd+Shift+C)" },
-  { name: "link", action: "mdb-link", icon: "link", tip: "Link (Cmd+K)" },
-  { name: "comment", action: "mdb-comment", icon: "message-square-plus", tip: "Comment (Cmd+Alt+M)" },
+// The format bar's groups of buttons, parted by thin rules. A button does what its key's `action` does, or opens its
+// `menu`; the Text style and List buttons draw the edited block's style instead of an icon of their own.
+const FORMAT_BAR = [
+  [{ name: "comment", action: "mdb-comment", icon: "message-square-plus", tip: "Comment (Cmd+Alt+M)" }],
+  [{ name: "style", menu: "style", tip: "Text style" }],
+  [
+    { name: "bold", action: "mdb-bold", icon: "bold", tip: "Bold (Cmd+B)" },
+    { name: "italic", action: "mdb-italic", icon: "italic", tip: "Italic (Cmd+I)" },
+    { name: "underline", action: "mdb-underline", icon: "underline", tip: "Underline (Cmd+U)" },
+    { name: "strike", action: "mdb-strike", icon: "strikethrough", tip: "Strikethrough (Cmd+Shift+X)" },
+    { name: "code", action: "mdb-code", icon: "code", tip: "Code (Cmd+Shift+C)" },
+  ],
+  [{ name: "color", menu: "color", icon: "palette", tip: "Colour" }],
+  [{ name: "list", menu: "list", tip: "List" }],
+  [{ name: "link", action: "mdb-link", icon: "link", tip: "Link (Cmd+K)" }],
 ];
+const BAR_BUTTONS = new Map(FORMAT_BAR.flat().map(b => [b.name, b]));
+const buttonW = b => (b.menu ? BAR.button + BAR.chevron : BAR.button);
+const FORMAT_GROUPS = FORMAT_BAR.map(group => group.map(b => ({ name: b.name, w: buttonW(b) })));
+const BAR_RULE_H = 16;
+const commandOf = id => COMMANDS.find(c => c.id === id);
+const STYLE_ROWS = ["text", "h1", "h2", "h3", "quote"], LIST_ROWS = ["ul", "ol", "todo"];
+const LIST_COMMANDS = { bullet: "ul", ordered: "ol", task: "todo" };
+// What the Text style button draws for a block its menu has no row for: an item, a heading deeper than the menu's.
+const UNLISTED_STYLE = { heading: { icon: "heading" }, other: { icon: "type" } };
+const capitalized = s => s[0].toUpperCase() + s.slice(1);
+// The bar's menus by the button that opens them: sections of rows, under a title or not. A style row is a slash.js
+// command, whose `to` the block becomes; a colour row sets a text `color` or puts a `highlight` on or off.
+const BAR_MENUS = {
+  style: [{ rows: STYLE_ROWS.map(commandOf) }],
+  list: [{ rows: LIST_ROWS.map(commandOf) }],
+  color: [
+    { id: "text", title: "Text", rows: ["default", ...TEXT_COLORS].map(color => ({ id: `text-${color}`, name: capitalized(color), color })) },
+    { id: "highlight", title: "Highlight", rows: [{ id: "highlight-none", name: "No highlight", highlight: false }, { id: "highlight-yellow", name: "Yellow", highlight: true }] },
+  ],
+};
+const menuRowsOf = name => BAR_MENUS[name].flatMap(s => s.rows);
+const HIGHLIGHT_ROWS = { none: "highlight-none", default: "highlight-yellow" };
 const COMMENT_REFUSED = {
   overlap: "A comment can't cut through another one",
   code: "Comments can't go in code",
@@ -177,6 +207,14 @@ const topIn = (doc, b) => {
   return x;
 };
 const listOf = b => (b.task ? "task" : b.ordered ? "ordered" : "bullet");
+// The slash.js command a text block's style is, or null: a heading deeper than the menu's, or no block.
+function styleId(b) {
+  if (b?.kind === "item") return LIST_COMMANDS[listOf(b)];
+  if (b?.kind === "heading") return b.level <= 3 ? `h${b.level}` : null;
+  return b?.kind === "quote" ? "quote" : b?.kind === "paragraph" ? "text" : null;
+}
+const styleIcon = b => (STYLE_ROWS.includes(styleId(b)) ? commandOf(styleId(b)).icon : (UNLISTED_STYLE[b?.kind] ?? UNLISTED_STYLE.other).icon);
+const listIcon = b => commandOf(b?.kind === "item" ? styleId(b) : "ul").icon;
 
 // A block not written yet (pending) is written with its first text by its `base`, (doc, text) -> splice: after the
 // last block, after or before the block with a key. Its `steps` then run on the block that wrote.
@@ -344,7 +382,7 @@ export class Editor {
     // `sel` names the selected blocks' two ends by key, `selKeys` the blocks it covers, `gens` each block's TextView
     // generation, raised to drop the TextView's own text selection when the block is selected.
     this.sel = null; this.selKeys = new Set(); this.gens = new Map();
-    this.slash = null; this.bar = null;
+    this.slash = null; this.bar = null; this.barMenu = null;
     // Comments: `card` names the block whose comments are listed, `note` the comment the box is writing (`noteField`)
     // for one activation, `highlight` the colour Reading marks them in, `notesFor` the count of each block of a doc.
     this.card = null; this.note = null; this.highlight = highlightColor(theme()); this.notesFor = null;
@@ -956,6 +994,7 @@ export class Editor {
     else if (name === "mdb-up" || name === "mdb-down") this.crossRow(name === "mdb-up" ? -1 : 1, cx);
     else if (name === "mdb-left-start") { this.cross(-1, cx); this.ownKeyUp = "left"; }
     else if (name === "mdb-right-end") { this.cross(1, cx); this.ownKeyUp = "right"; }
+    else if (name === "mdb-escape" && this.barMenuOpen()) this.closeBarMenu(cx);
     else if (name === "mdb-escape" && this.barOpen()) this.closeBar(cx);
     else if (name === "mdb-escape") this.escape(cx);
     else if (MARK_ACTIONS[name]) this.format(MARK_ACTIONS[name], cx);
@@ -3522,51 +3561,202 @@ export class Editor {
     const was = this.bar;
     this.bar = { act: this.act };
     if (!this.barOpen()) this.bar = null;
+    if (this.barMenu && !this.barMenuOpen()) this.barMenu = null;
     if (was || this.bar) cx.notify();
   }
 
   closeBar(cx) {
     if (!this.bar) return;
     this.bar = null;
+    this.barMenu = null;
     cx?.notify();
+  }
+
+  // One of the bar's menus at a time, belonging to the bar over one value of the field: typing closes it.
+  barMenuOpen() {
+    const menu = this.barMenu;
+    return Boolean(menu) && menu.act === this.act && menu.value === this.seen && this.barOpen();
+  }
+
+  toggleBarMenu(name, cx) {
+    const shut = this.barMenuOpen() && this.barMenu.name === name;
+    this.barMenu = shut ? null : { act: this.act, value: this.seen, name, index: -1 };
+    cx.notify();
+  }
+
+  closeBarMenu(cx) {
+    if (!this.barMenu) return;
+    this.barMenu = null;
+    cx?.notify();
+  }
+
+  barMenuHover(i, cx) {
+    if (!this.barMenuOpen() || this.barMenu.index === i) return;
+    this.barMenu = { ...this.barMenu, index: i };
+    cx.notify();
+  }
+
+  // A row of menu `name` picked: the menu closes and the bar stays over the same text.
+  barPick(name, row, cx) {
+    this.closeBarMenu(cx);
+    this.syncField(cx);
+    if (!this.barOpen()) return;
+    if (row.color) return this.setColor(row.color, cx);
+    if (row.highlight !== undefined) return this.setMark("highlight", row.highlight, cx);
+    const b = this.blockByKey(this.activeKey), back = name === "list" && row.id === styleId(b);
+    this.turnInto(back ? { kind: "paragraph" } : row.to, cx);
+  }
+
+  // The bar's Text style and List menus: the edited block becomes `to` (as slash.js COMMANDS name it) as one entry of the
+  // history, whose undo puts the selection back, with the same text selected after it and the bar over it.
+  turnInto(to, cx) {
+    if (this.pending) return;
+    const r = this.caretNow();
+    this.commit(cx);
+    const b = this.blockByKey(this.activeKey);
+    if (!r || !b || !isText(b) || !this.f) return;
+    const before = docRange(this.f, r), s = retype(this.doc, b, to, before.start), e = retype(this.doc, b, to, before.end);
+    if (!s || !e || (s.start === s.end && !s.insert)) return;
+    const was = this.text, after = { start: s.caret, end: e.caret };
+    this.release();
+    this.change(s, cx, { caretBefore: before.start, caretAfter: s.caret });
+    this.openAt(s.caret, cx, null, after);
+    if (this.text !== was) this.history.select(this.text, before, after);
+    this.openBar(cx);
   }
 
   // Over the first row of field range `k` or under its last, its left edge at the range's start; the bar, or a float of
   // `size`. Null while that row is off the page.
-  placeBar(k = this.known, size = undefined) {
+  placeBar(k = this.known, size = this.barLayout()) {
     const key = this.activeKey, i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
     const c = this.chromeOf(d, true), onPane = at => COLUMN.padTop + this.caretTop(i, at) - this.offset;
     return barPlace({
-      firstTop: onPane(k.start), lastTop: onPane(k.end), rowH: d.row, n: FORMAT_BUTTONS.length, size,
+      firstTop: onPane(k.start), lastTop: onPane(k.end), rowH: d.row, size,
       col: this.columnOf(k.start), advance: this.calOf(d.style).advance, fieldW: c.w, fieldX: c.x,
-      viewW: this.viewport?.width ?? this.size?.width ?? 900, viewH: this.viewport?.height ?? UNSIZED_VIEW_H,
+      viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H,
     });
   }
 
-  // Drawn by the root over the page, as the menu is. Presses on it reach neither the page nor the field under it, so the
-  // field keeps the keyboard and the selection.
-  formatBar(t) {
-    const place = this.barOpen() ? this.placeBar() : null;
+  paneW() {
+    return this.viewport?.width ?? this.size?.width ?? 900;
+  }
+
+  barLayout() {
+    return barLayout(FORMAT_GROUPS, this.paneW() - 2 * BAR.margin);
+  }
+
+  // Where the bar and its open menu go: { place, layout, name, menu } (no `menu` while none is open), or null while the
+  // bar does not show.
+  barPlaces() {
+    if (!this.barOpen()) return null;
+    const layout = this.barLayout(), place = this.placeBar(this.known, layout);
     if (!place) return null;
-    return h_flex().id("md-format").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(BAR.pad)
-      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg()
+    if (!this.barMenuOpen()) return { place, layout, name: null, menu: null };
+    const name = this.barMenu.name, sections = BAR_MENUS[name];
+    const h = barMenuH(menuRowsOf(name).length, sections.filter(s => s.title).length);
+    const menu = barMenuPlace({ bar: place, button: layout.at[name], h, viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H });
+    return { place, layout, name, menu };
+  }
+
+  // A press outside the bar closes it, unless it is on the bar's open menu: that one is the menu's to take.
+  barPressOut(e, cx) {
+    const at = this.barPlaces(), p = this.point(e);
+    if (at?.menu && p) {
+      const x = at.place.left + p.x, y = at.place.top + p.y, m = at.menu;
+      if (x >= m.left && x < m.left + m.w && y >= m.top && y < m.top + m.h) return;
+    }
+    this.closeBar(cx);
+  }
+
+  // Drawn by the root over the page, as the menu is. Presses on it reach neither the page nor the field under it, so the
+  // field keeps the keyboard and the selection; one on its padding is outside its menu.
+  formatBar({ place, layout, name }, t) {
+    const look = this.barLook(t);
+    let rules = 0;
+    const entry = e => (e.sep
+      ? div().id(`md-format-rule-${++rules}`).flex_none().w(1).h(BAR_RULE_H).mx((BAR.sep - 1) / 2).bg(t.border)
+      : this.barButton(BAR_BUTTONS.get(e.name), look, e.name === name, t));
+    return v_flex().id("md-format").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(BAR.pad).gap(BAR.rowGap)
+      .bg(t.popover).rounded(10).border_1().border_color(t.border).shadow_lg()
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.closeBarMenu(cx); })
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_move((_e, cx) => cx.stop_propagation())
+      .on_mouse_down_out((e, cx) => this.barPressOut(e, cx))
+      .children(layout.rows.map(row => h_flex().h(BAR.button).flex_none().items_center().children(row.map(entry))));
+  }
+
+  // What the bar's buttons show for the selection: the marks every character of it has (their keys would take them
+  // off), the block's style and list, and the selection's text colour and highlight when it has one of each.
+  barLook(t) {
+    const value = this.seen, k = this.known, at = { defs: this.doc?.defs }, b = this.pending?.block ?? this.blockByKey(this.activeKey);
+    const pressed = new Set([...BAR_BUTTONS.values()].filter(x => MARK_ACTIONS[x.action] && hasMark(value, k, MARK_ACTIONS[x.action], at)).map(x => x.name));
+    if (b?.kind === "item") pressed.add("list");
+    const highlight = highlightOf(value, k, at);
+    return {
+      pressed,
+      icons: { style: styleIcon(b), list: listIcon(b) },
+      tint: { color: textColor(t, colorOf(value, k, at)) },
+      backdrop: { color: highlight === "default" ? highlightColor(t) : textColor(t, highlight) },
+    };
+  }
+
+  barButton(b, look, open, t) {
+    const pressed = look.pressed.has(b.name), bg = look.backdrop[b.name] ?? (pressed || open ? t.hover : null);
+    return h_flex().id(`md-format-${b.name}`).w(buttonW(b)).h(BAR.button).flex_none().items_center().justify_center().gap(1).rounded(6).cursor_pointer()
+      .tooltip(b.tip)
+      .when(Boolean(bg), el => el.bg(bg))
+      .when(!pressed, el => el.hover(s => s.bg(t.hover)))
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.barButtonPress(b, cx); })
+      .child(svg(ICON(look.icons[b.name] ?? b.icon)).size(16).flex_none().text_color(pressed ? t.accent : look.tint[b.name] ?? t.muted))
+      .when(Boolean(b.menu), el => el.child(svg(ICON("chevron-down")).size(10).flex_none().text_color(t.dim)));
+  }
+
+  barButtonPress(b, cx) {
+    if (b.menu) return this.toggleBarMenu(b.menu, cx);
+    this.closeBarMenu(cx);
+    this.action(b.action, cx);
+  }
+
+  // Drawn by the root beside the bar. Presses and pointer moves on it go no further, as on the bar.
+  barMenuOf({ name, menu }, t) {
+    const checks = this.barChecks(name);
+    let i = 0;
+    const row = r => this.barMenuRow(name, r, i++, checks.has(r.id), t);
+    const title = s => div().id(`md-bar-title-${s.id}`).h(BAR_MENU.titleH).flex_none().px(8).flex().items_center().text_size(11.5).text_color(t.dim).child(s.title);
+    return v_flex().id(`md-bar-menu-${name}`).absolute().left(menu.left).top(menu.top).w(menu.w).h(menu.h).p(BAR_MENU.pad)
+      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().text_size(12.8)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_move((_e, cx) => cx.stop_propagation())
-      .on_mouse_down_out((_e, cx) => this.closeBar(cx))
-      .children(FORMAT_BUTTONS.map(b => this.barButton(b, t)));
+      .children(BAR_MENUS[name].flatMap(s => [...(s.title ? [title(s)] : []), ...s.rows.map(row)]));
   }
 
-  // A mark's button is pressed while its mark is on the selection: its key would take the mark off.
-  barButton({ name, action, icon, tip }, t) {
-    const mark = MARK_ACTIONS[action], pressed = Boolean(mark) && hasMark(this.seen, this.known, mark, { defs: this.doc?.defs });
-    return div().id(`md-format-${name}`).size(BAR.button).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
-      .tooltip(tip)
-      .when(pressed, el => el.bg(t.selected))
-      .when(!pressed, el => el.hover(s => s.bg(t.hover)))
-      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.action(action, cx); })
-      .child(svg(ICON(icon)).size(16).flex_none().text_color(pressed ? t.foreground : t.muted));
+  // The rows that show the block's style, or the selection's colour and highlight when all of it has the same.
+  barChecks(name) {
+    if (name !== "color") return new Set([styleId(this.pending?.block ?? this.blockByKey(this.activeKey))]);
+    const at = { defs: this.doc?.defs };
+    return new Set([`text-${colorOf(this.seen, this.known, at)}`, HIGHLIGHT_ROWS[highlightOf(this.seen, this.known, at)]]);
+  }
+
+  // A row is picked on the press, as the slash menu's are.
+  barMenuRow(name, row, i, checked, t) {
+    const lead = row.icon ? svg(ICON(row.icon)).size(14).flex_none().text_color(t.muted) : this.swatch(row, t);
+    return h_flex().id(`md-bar-row-${row.id}`).h(BAR_MENU.rowH).flex_none().px(8).gap(9).rounded(6).items_center().cursor_pointer()
+      .text_color(t.foreground)
+      .when(i === this.barMenu.index, el => el.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.barPick(name, row, cx); })
+      .on_mouse_move((_e, cx) => { cx.stop_propagation(); this.barMenuHover(i, cx); })
+      .child(lead)
+      .child(div().flex_1().min_w(0).truncate().child(row.name))
+      .when(checked, el => el.child(svg(ICON("check")).size(14).flex_none().text_color(t.foreground)));
+  }
+
+  // In the colour the text or the highlight draws in; no highlight is a dashed outline.
+  swatch(row, t) {
+    const box = div().id(`md-bar-swatch-${row.id}`).size(16).flex_none().rounded(4);
+    if (row.highlight === false) return box.border_1().border_dashed().border_color(t.muted);
+    return box.bg(row.highlight ? highlightColor(t) : row.color === "default" ? t.foreground : textColor(t, row.color));
   }
 
   // The comment box belongs to one activation of a writable block, as the bar does. The check fixture shows it anyway.
@@ -3904,8 +4094,9 @@ export class Editor {
     if (note) vp.child(note);
     const menu = this.slashMenu(t);
     if (menu) vp.child(menu);
-    const bar = this.formatBar(t);
-    if (bar) vp.child(bar);
+    const bar = this.barPlaces();
+    if (bar) vp.child(this.formatBar(bar, t));
+    if (bar?.menu) vp.child(this.barMenuOf(bar, t));
     if (this.calibrating) {
       vp.child(this.calStrip(t));
       this.giveUpLater(cx);

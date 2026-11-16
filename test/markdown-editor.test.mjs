@@ -17,7 +17,8 @@ const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, NOTE, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout, BAR, barSize, NOTE_BOX, NOTES, CARD } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, NOTES, CARD } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { highlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 
 const FILE = "/n/docs/note.md";
@@ -7025,11 +7026,27 @@ test("marks around a selection across the line breaks of a hard-wrapped paragrap
   }
 });
 
-const FORMAT_MARKS = ["bold", "italic", "strike", "code", "link"];
+const FORMAT_MARKS = ["bold", "italic", "underline", "strike", "code", "link"];
+const BAR_ORDER = ["comment", "|", "style", "|", "bold", "italic", "underline", "strike", "code", "|", "color", "|", "list", "|", "link"];
+// Seven square buttons, three with a chevron, five rules, the padding and the border.
+const BAR_W = 7 * BAR.button + 3 * (BAR.button + BAR.chevron) + 5 * BAR.sep + 2 * (BAR.pad + 1);
+const icon = name => `mods/herdr-inline-markdown/${name}.svg`;
 const barOf = m => find(m.tree(), "md-format");
-const barButtons = m => all(must(m.tree(), "md-format"), n => /^md-format-/.test(n.id ?? "")).map(n => n.id.slice("md-format-".length));
-const pressedMarks = m => FORMAT_MARKS.filter(mark => must(m.tree(), `md-format-${mark}`).style.bg === "selected");
-const barPress = (m, mark) => fire(must(m.tree(), `md-format-${mark}`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+const barButtons = m => all(must(m.tree(), "md-format"), n => /^md-format-/.test(n.id ?? "")).map(n => (n.id.startsWith("md-format-rule-") ? "|" : n.id.slice("md-format-".length)));
+const iconOf = node => all(node, n => n.kind === "svg")[0];
+// Pressed: the icon in the accent colour on a quiet background.
+const isPressed = node => node.style.bg === "hover" && iconOf(node).style.text_color === "accent";
+const pressedMarks = m => {
+  const t = m.tree();
+  return FORMAT_MARKS.filter(mark => isPressed(must(t, `md-format-${mark}`)));
+};
+const barPress = (m, name) => fire(must(m.tree(), `md-format-${name}`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+const barMenuOf = (m, t = m.tree()) => all(t, n => /^md-bar-menu-/.test(n.id ?? ""))[0] ?? null;
+const openMenu = m => barMenuOf(m)?.id.slice("md-bar-menu-".length) ?? null;
+const rowNodes = m => all(barMenuOf(m), n => /^md-bar-row-/.test(n.id ?? ""));
+const menuRows = m => rowNodes(m).map(n => n.id.slice("md-bar-row-".length));
+const checkedRows = m => rowNodes(m).filter(n => all(n, k => k.kind === "svg" && k.path === icon("check")).length).map(n => n.id.slice("md-bar-row-".length));
+const rowPress = (m, id) => fire(must(m.tree(), `md-bar-row-${id}`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
 const fieldKeyUp = (m, keystroke, key, modifiers) => fire(must(m.tree(), `md-field-${m.view.activeKey}`), "on_key_up", { key, keystroke, modifiers: { ...NO_MODS, ...modifiers } }, m.cx);
 // A press in the field being edited that leaves [start, end) selected (a drag, or a double-click on a word), read out
 // 30 ms after its mouse-up.
@@ -7042,17 +7059,26 @@ async function selectByMouse(m, start, end, clicks = 1) {
   await fire_timers(m.cx, { ms: 30 });
 }
 
-test("a drag or a double-click that leaves text selected in the paragraph being edited shows the format bar over the page: Bold, Italic, Strikethrough, Code and Link, each naming its key", async () => {
+test("a drag or a double-click that leaves text selected in the paragraph being edited shows the format bar over the page: Comment | Text style | Bold, Italic, Underline, Strikethrough, Code | Colour | List | Link, each naming its key", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
   assert.equal(barOf(m), null, "a caret: no bar");
   await selectByMouse(m, 6, 11);
   assert.ok(barOf(m), "after the drag's readout");
-  const buttons = [...FORMAT_MARKS, "comment"];
-  assert.deepEqual(barButtons(m), buttons);
-  const t = m.tree();
-  assert.deepEqual(buttons.map(k => must(t, `md-format-${k}`).style.tooltip), ["Bold (Cmd+B)", "Italic (Cmd+I)", "Strikethrough (Cmd+Shift+X)", "Code (Cmd+Shift+C)", "Link (Cmd+K)", "Comment (Cmd+Alt+M)"]);
-  assert.deepEqual(buttons.map(k => all(must(t, `md-format-${k}`), n => n.kind === "svg")[0].path), ["bold", "italic", "strikethrough", "code", "link", "message-square-plus"].map(icon => `mods/herdr-inline-markdown/${icon}.svg`));
+  assert.deepEqual(barButtons(m), BAR_ORDER);
+  const t = m.tree(), buttons = BAR_ORDER.filter(k => k !== "|");
+  assert.deepEqual(buttons.map(k => must(t, `md-format-${k}`).style.tooltip), [
+    "Comment (Cmd+Alt+M)", "Text style", "Bold (Cmd+B)", "Italic (Cmd+I)", "Underline (Cmd+U)", "Strikethrough (Cmd+Shift+X)",
+    "Code (Cmd+Shift+C)", "Colour", "List", "Link (Cmd+K)",
+  ]);
+  assert.deepEqual(buttons.map(k => iconOf(must(t, `md-format-${k}`)).path), ["message-square-plus", "type", "bold", "italic", "underline", "strikethrough", "code", "palette", "list", "link"].map(icon));
+  const chevrons = buttons.filter(k => all(must(t, `md-format-${k}`), n => n.kind === "svg" && n.path === icon("chevron-down")).length);
+  assert.deepEqual(chevrons, ["style", "color", "list"], "a menu's button has a chevron");
+  const chevron = all(must(t, "md-format-style"), n => n.kind === "svg")[1];
+  assert.deepEqual([chevron.style.text_color, chevron.style.size < 16], ["dim", true], "small and dim");
+  const bar = must(t, "md-format");
+  assert.deepEqual([bar.style.bg, bar.style.border_1, bar.style.border_color, bar.style.rounded, bar.style.shadow_lg], ["popover", true, "border", 10, true]);
+  assert.deepEqual([bar.style.w, bar.style.h], [BAR_W, BAR.button + 2 * (BAR.pad + 1)], "as wide as what it holds");
   assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-format", "md-cal"], "over the page, before the calibration strip");
   audit(t);
   await selectByMouse(m, 3, 3);
@@ -7247,7 +7273,7 @@ test("Escape closes the format bar and keeps the selection; a second Escape stop
 });
 
 test("the format bar sits over the selection's first row at its start column, under its last row when there is no room above", async () => {
-  const { h } = barSize(5), advance = STYLES.p.size * 0.47;
+  const h = BAR.button + 2 * (BAR.pad + 1), advance = STYLES.p.size * 0.47;
   const m = await page("Intro\n\nHello world.\n\nEnd\n", { 0: 24, 1: 38, 2: 38 });
   await openBlock(m, 1);
   await selectByMouse(m, 6, 11);
@@ -7263,8 +7289,22 @@ test("the format bar sits over the selection's first row at its start column, un
   assert.deepEqual([barOf(n).style.top, barOf(n).style.left], [topOf(n, 0) + 2 * 24 + BAR.gap, X + 5 * advance], "under the last of two rows, at the start's column");
 });
 
+test("in a pane too narrow for it the format bar wraps onto rows that fit and stays inside the pane", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  assert.equal(barOf(m).style.w, BAR_W, "one row in a wide pane");
+  for (const viewW of [BAR_W + 2 * BAR.margin - 1, 300, 200]) {
+    viewportOf(m, viewW, 600);
+    const bar = barOf(m).style;
+    assert.ok(bar.left >= BAR.margin && bar.left + bar.w <= viewW - BAR.margin, `${viewW}: inside the pane`);
+    assert.ok(bar.h > BAR.button + 2 * (BAR.pad + 1), `${viewW}: on more than one row`);
+    assert.deepEqual(barButtons(m).filter(k => k !== "|"), BAR_ORDER.filter(k => k !== "|"), `${viewW}: every button, in order`);
+  }
+});
+
 test("the format bar moves with the page as it scrolls, hidden while its row is off the page and back when it returns", async () => {
-  const { h } = barSize(5);
+  const h = BAR.button + 2 * (BAR.pad + 1);
   const m = await tall(200);
   await openBlock(m, 3);
   await selectByMouse(m, 0, 9);
@@ -7283,11 +7323,11 @@ test("a press on a bar button does what its key does: the selection keeps the wo
   await openBlock(m, 0);
   await selectByMouse(m, 6, 11);
   assert.deepEqual(pressedMarks(m), []);
-  for (const [mark, marked, n] of [["bold", "**world**", 2], ["italic", "*world*", 1], ["strike", "~~world~~", 2], ["code", "`world`", 1]]) {
+  for (const [mark, marked] of [["bold", "**world**"], ["italic", "*world*"], ["underline", "<u>world</u>"], ["strike", "~~world~~"], ["code", "`world`"]]) {
     const stopped = m.cx.stopped;
     barPress(m, mark);
     assert.equal(m.cx.stopped - stopped, 1, `${mark}: the press goes no further`);
-    assert.deepEqual([m.view.text, ...editing(m)], [`Hello ${marked}.\n\nEnd\n`, keyAt(m, 0), `Hello ${marked}.`, { start: 6, end: 11 + 2 * n }], mark);
+    assert.deepEqual([m.view.text, ...editing(m)], [`Hello ${marked}.\n\nEnd\n`, keyAt(m, 0), `Hello ${marked}.`, { start: 6, end: 6 + marked.length }], mark);
     assert.deepEqual(pressedMarks(m), [mark], `${mark}: the bar stays, its button pressed`);
     barPress(m, mark);
     assert.deepEqual([m.view.text, m.view.field.selection, pressedMarks(m)], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }, []], `${mark} again`);
@@ -7307,11 +7347,21 @@ test("a format key with the bar open keeps it open over the marked text, showing
   assert.deepEqual([m.view.text, pressedMarks(m)], ["Hello ~~world~~.\n\nEnd\n", ["strike"]]);
 });
 
+test("a pressed button is drawn in the accent colour on a quiet background; one not pressed is muted, with a background under the pointer", async () => {
+  const m = await page("Hello **world**.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await caretTo(m, 9);
+  await selectByMouse(m, 8, 13);
+  const t = m.tree(), bold = must(t, "md-format-bold"), italic = must(t, "md-format-italic");
+  assert.deepEqual([bold.style.bg, iconOf(bold).style.text_color, bold.hover], ["hover", "accent", false]);
+  assert.deepEqual([italic.style.bg, iconOf(italic).style.text_color, italic.hover], [undefined, "muted", true]);
+});
+
 test("a button shows pressed while its mark is on the selection, by the test its key takes the mark off with", async () => {
-  const m = await page("Say **bold** and *it* and ~~gone~~ and `code` and [link](https://a.org).\n\nEnd\n", { 0: 24, 1: 38 });
+  const m = await page("Say **bold** and *it* and <u>low</u> and ~~gone~~ and `code` and [link](https://a.org).\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
   const value = m.view.field.value(), span = word => [value.indexOf(word), value.indexOf(word) + word.length];
-  for (const [word, marks] of [["bold", ["bold"]], ["it", ["italic"]], ["gone", ["strike"]], ["code", ["code"]], ["link", ["link"]], ["and", []], ["**bold**", ["bold"]]]) {
+  for (const [word, marks] of [["bold", ["bold"]], ["it", ["italic"]], ["low", ["underline"]], ["gone", ["strike"]], ["code", ["code"]], ["link", ["link"]], ["and", []], ["**bold**", ["bold"]]]) {
     // A drag inside a word drawn whole takes the whole word; with the caret in it first, its letters can be selected.
     await caretTo(m, span(word)[0] + 1);
     await selectByMouse(m, ...span(word));
@@ -7373,6 +7423,226 @@ test("presses and pointer moves on the format bar go no further than it, so the 
   assert.deepEqual([Boolean(barOf(m)), m.view.press, m.view.sel, ...editing(m)], [true, null, null, keyAt(m, 1), "Hello world.", { start: 6, end: 11 }], "a press on its padding changes nothing");
 });
 
+test("the Text style and List buttons show the edited block's style: Text for a paragraph, Heading 2 for a heading, the numbered list, pressed, for a numbered item; a heading the menu has no row for, a plain heading", async () => {
+  const m = await page("## Title words\n\nHello world.\n\n1. item words\n\n#### Deep words\n", { 0: 35, 1: 38, 2: 30, 3: 38 });
+  for (const [i, style, list, listed] of [[0, "heading-2", "list", false], [1, "type", "list", false], [2, "type", "list-ordered", true], [3, "heading", "list", false]]) {
+    await openBlock(m, i);
+    await selectByMouse(m, 0, 5);
+    const t = m.tree(), styleButton = must(t, "md-format-style"), listButton = must(t, "md-format-list"), kind = m.view.doc.blocks[i].kind;
+    assert.deepEqual([iconOf(styleButton).path, iconOf(listButton).path], [icon(style), icon(list)], kind);
+    assert.deepEqual([isPressed(styleButton), isPressed(listButton)], [false, listed], kind);
+  }
+});
+
+test("a menu button opens its menu under it, one menu at a time; a second press or Escape closes it and leaves the bar, and Escape again closes the bar", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  assert.equal(openMenu(m), null);
+  barPress(m, "style");
+  const t = m.tree(), bar = must(t, "md-format").style, menu = barMenuOf(m, t), button = { x: BAR.pad + 1 + BAR.button + BAR.sep, y: BAR.pad + 1 };
+  assert.equal(menu.id, "md-bar-menu-style");
+  assert.deepEqual([menu.style.left, menu.style.top, menu.style.w, menu.style.h], [bar.left + button.x, bar.top + button.y + BAR.button + BAR_MENU.gap, BAR_MENU.w, barMenuH(5)], "under its button");
+  assert.deepEqual([menu.style.bg, menu.style.border_1, menu.style.border_color, menu.style.rounded, menu.style.shadow_lg], ["popover", true, "border", 8, true]);
+  assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-format", "md-bar-menu-style", "md-cal"], "over the page, with the bar");
+  assert.equal(must(t, "md-format-style").style.bg, "hover", "its button shows it open");
+  audit(t);
+  barPress(m, "list");
+  assert.equal(openMenu(m), "list", "one at a time");
+  barPress(m, "list");
+  assert.deepEqual([openMenu(m), Boolean(barOf(m))], [null, true], "a second press closes it, the bar stays");
+  barPress(m, "color");
+  escape(m);
+  assert.deepEqual([openMenu(m), Boolean(barOf(m)), ...editing(m)], [null, true, keyAt(m, 0), "Hello world.", { start: 6, end: 11 }], "Escape closes the menu");
+  escape(m);
+  assert.deepEqual([barOf(m), m.view.activeKey], [null, keyAt(m, 0)], "Escape again closes the bar");
+});
+
+test("a press outside an open menu closes it and the bar; a press on the menu keeps both; one on the bar closes the menu and does what the bar does there", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  barPress(m, "color");
+  const bar = barOf(m).style, menu = barMenuOf(m).style, onMenu = { x: menu.left - bar.left + 10, y: menu.top - bar.top + 10 };
+  fire(must(m.tree(), "md-format"), "on_mouse_down_out", press(onMenu), m.cx);
+  assert.deepEqual([openMenu(m), Boolean(barOf(m))], ["color", true], "a press on the menu is outside the bar, but not outside the menu");
+  fire(must(m.tree(), "md-format"), "on_mouse_down:left", press({ x: 2, y: 2 }), m.cx);
+  assert.deepEqual([openMenu(m), Boolean(barOf(m))], [null, true], "a press on the bar's padding");
+  barPress(m, "color");
+  barPress(m, "bold");
+  assert.deepEqual([openMenu(m), m.view.text, Boolean(barOf(m))], [null, "Hello **world**.\n\nEnd\n", true], "a press on a mark's button");
+  barPress(m, "color");
+  fire(must(m.tree(), "md-format"), "on_mouse_down_out", press({ x: -40, y: 300 }), m.cx);
+  assert.deepEqual([openMenu(m), barOf(m)], [null, null], "a press elsewhere");
+});
+
+test("an open menu goes with the bar and does not come back with it: typing, or a click in the field, closes both", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  barPress(m, "style");
+  await selectByMouse(m, 3, 3);
+  await selectByMouse(m, 6, 11);
+  assert.deepEqual([Boolean(barOf(m)), openMenu(m)], [true, null], "after a click");
+  barPress(m, "list");
+  m.view.field.type("x", m.cx);
+  m.view.field.select(0, 5);
+  keyUp(m, "left", { shift: true });
+  await flush();
+  assert.deepEqual([Boolean(barOf(m)), openMenu(m)], [true, null], "after typing");
+});
+
+test("the Text style menu holds Text, Heading 1 to 3 and Quote, the block's style checked; a pick turns the block into it as one Cmd+Z, the same text selected and the bar over it", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  barPress(m, "style");
+  assert.deepEqual(menuRows(m), ["text", "h1", "h2", "h3", "quote"]);
+  assert.deepEqual(rowNodes(m).map(n => [iconOf(n).path, textOf(n).trim()]), [["type", "Text"], ["heading-1", "Heading 1"], ["heading-2", "Heading 2"], ["heading-3", "Heading 3"], ["text-quote", "Quote"]].map(([i, name]) => [icon(i), name]));
+  assert.deepEqual(checkedRows(m), ["text"]);
+  const entries = m.view.history.entries.length, stopped = m.cx.stopped;
+  rowPress(m, "h2");
+  assert.equal(m.cx.stopped - stopped, 1, "the press goes no further");
+  assert.equal(m.view.text, "## Hello world.\n\nEnd\n");
+  assert.equal(m.view.history.entries.length, entries + 1, "one entry");
+  assert.deepEqual([m.view.blockByKey(m.view.activeKey).kind, selectedText(m), Boolean(barOf(m)), openMenu(m)], ["heading", "world", true, null]);
+  assert.equal(iconOf(must(m.tree(), "md-format-style")).path, icon("heading-2"));
+  barPress(m, "style");
+  assert.deepEqual(checkedRows(m), ["h2"]);
+  rowPress(m, "quote");
+  assert.deepEqual([m.view.text, selectedText(m), Boolean(barOf(m))], ["> Hello world.\n\nEnd\n", "world", true]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, selectedText(m)], ["## Hello world.\n\nEnd\n", "world"], "one Cmd+Z, the selection back");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, selectedText(m)], ["Hello world.\n\nEnd\n", "world"]);
+});
+
+test("a Text style pick keeps the selection on the same text when the block's text moves, and the checked style changes nothing", async () => {
+  const m = await page("Para one\nline two\n\nEnd\n", { 0: 48, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 9, 13);
+  barPress(m, "style");
+  rowPress(m, "h1");
+  assert.deepEqual([m.view.text, selectedText(m), Boolean(barOf(m))], ["# Para one line two\n\nEnd\n", "line", true], "a heading has one line");
+  const entries = m.view.history.entries.length, log = m.view.field.log.length;
+  barPress(m, "style");
+  rowPress(m, "h1");
+  assert.deepEqual([m.view.text, m.view.history.entries.length, replaces(m.view.field, log), selectedText(m), Boolean(barOf(m)), openMenu(m)], ["# Para one line two\n\nEnd\n", entries, [], "line", true, null]);
+});
+
+test("the List menu holds Bulleted, Numbered and To-do list; a pick makes the block an item of that list and the checked one a paragraph again, each one Cmd+Z, the selection kept", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  barPress(m, "list");
+  assert.deepEqual(menuRows(m), ["ul", "ol", "todo"]);
+  assert.deepEqual(rowNodes(m).map(n => [iconOf(n).path, textOf(n).trim()]), [[icon("list"), "Bulleted list"], [icon("list-ordered"), "Numbered list"], [icon("list-todo"), "To-do list"]]);
+  assert.deepEqual(checkedRows(m), []);
+  rowPress(m, "ol");
+  const listButton = () => must(m.tree(), "md-format-list");
+  assert.deepEqual([m.view.text, selectedText(m), Boolean(barOf(m)), openMenu(m)], ["1. Hello world.\n\nEnd\n", "world", true, null]);
+  assert.deepEqual([isPressed(listButton()), iconOf(listButton()).path], [true, icon("list-ordered")]);
+  barPress(m, "list");
+  assert.deepEqual(checkedRows(m), ["ol"]);
+  rowPress(m, "todo");
+  const task = "-  [ ] Hello world.\n\nEnd\n";
+  assert.deepEqual([m.view.text, selectedText(m), iconOf(listButton()).path], [task, "world", icon("list-todo")], "its text stays in its column, as /todo does");
+  barPress(m, "list");
+  const entries = m.view.history.entries.length;
+  rowPress(m, "todo");
+  assert.deepEqual([m.view.text, m.view.history.entries.length, selectedText(m), Boolean(barOf(m)), isPressed(listButton())], ["Hello world.\n\nEnd\n", entries + 1, "world", true, false], "the checked list: a paragraph again");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, selectedText(m)], [task, "world"]);
+});
+
+test("the Colour menu holds Text (Default, Red, Yellow, Green, Teal, Purple) and Highlight (No highlight, Yellow) under small dim titles, each row with a swatch in the colour the text draws in", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  barPress(m, "color");
+  const t = m.tree(), menu = barMenuOf(m, t), th = theme(), swatch = id => must(t, `md-bar-swatch-${id}`).style;
+  assert.equal(menu.id, "md-bar-menu-color");
+  assert.equal(menu.style.h, barMenuH(8, 2));
+  assert.deepEqual(menuRows(m), ["text-default", ...TEXT_COLORS.map(c => `text-${c}`), "highlight-none", "highlight-yellow"]);
+  assert.deepEqual(rowNodes(m).map(n => textOf(n).trim()), ["Default", "Red", "Yellow", "Green", "Teal", "Purple", "No highlight", "Yellow"]);
+  for (const [id, title] of [["text", "Text"], ["highlight", "Highlight"]]) {
+    const node = must(menu, `md-bar-title-${id}`);
+    assert.deepEqual([textOf(node).trim(), node.style.text_color, node.style.text_size < 12.8], [title, "dim", true], title);
+  }
+  assert.equal(swatch("text-default").bg, "foreground");
+  for (const c of TEXT_COLORS) assert.equal(swatch(`text-${c}`).bg, textColor(th, c), c);
+  assert.deepEqual([swatch("highlight-none").bg, swatch("highlight-none").border_dashed], [undefined, true], "No highlight: a dashed outline");
+  assert.equal(swatch("highlight-yellow").bg, highlightColor(th), "the editor's muted ochre");
+  assert.deepEqual(checkedRows(m), ["text-default", "highlight-none"]);
+  audit(t);
+});
+
+test("a Colour menu pick colours or highlights the selection as one Cmd+Z, closes the menu and keeps the bar and the selection; the Colour button shows the selection's colour and highlight", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  for (const c of TEXT_COLORS) {
+    barPress(m, "color");
+    const entries = m.view.history.entries.length;
+    rowPress(m, `text-${c}`);
+    assert.equal(m.view.text, `Hello <span style="color: ${c}">world</span>.\n\nEnd\n`, c);
+    assert.deepEqual([m.view.history.entries.length, openMenu(m), Boolean(barOf(m)), selectedText(m).includes("world")], [entries + 1, null, true, true], c);
+    assert.equal(iconOf(must(m.tree(), "md-format-color")).style.text_color, textColor(theme(), c), `${c}: the button's icon`);
+    barPress(m, "color");
+    assert.deepEqual(checkedRows(m), [`text-${c}`, "highlight-none"], `${c}: checked`);
+    barPress(m, "color");
+  }
+  barPress(m, "color");
+  rowPress(m, "text-default");
+  assert.deepEqual([m.view.text, iconOf(must(m.tree(), "md-format-color")).style.text_color], ["Hello world.\n\nEnd\n", "muted"], "Default takes the colour off");
+  barPress(m, "color");
+  rowPress(m, "highlight-yellow");
+  assert.deepEqual([m.view.text, must(m.tree(), "md-format-color").style.bg], ["Hello <mark>world</mark>.\n\nEnd\n", highlightColor(theme())]);
+  barPress(m, "color");
+  assert.deepEqual(checkedRows(m), ["text-default", "highlight-yellow"]);
+  rowPress(m, "highlight-none");
+  assert.deepEqual([m.view.text, Boolean(barOf(m)), selectedText(m)], ["Hello world.\n\nEnd\n", true, "world"]);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Hello <mark>world</mark>.\n\nEnd\n", "one Cmd+Z");
+});
+
+test("the Colour menu checks no text colour and no highlight for a selection whose colours or highlights differ", async () => {
+  const doc = 'Say <span style="color: red">red</span> and <mark>marked</mark> words.\n\nEnd\n';
+  const m = await page(doc, { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const value = m.view.field.value(), span = word => [value.indexOf(word), value.indexOf(word) + word.length];
+  await caretTo(m, span("red")[0] + 1);
+  await selectByMouse(m, ...span("red"));
+  barPress(m, "color");
+  assert.deepEqual(checkedRows(m), ["text-red", "highlight-none"], "all red");
+  await selectByMouse(m, 0, value.length);
+  barPress(m, "color");
+  assert.deepEqual(checkedRows(m), [], "red and default, marked and not");
+});
+
+test("presses and pointer moves on a bar menu go no further, the row under the pointer highlights, and the field keeps the keyboard and its selection through every press on the bar and its menus", async () => {
+  const m = await page("Plain words\n\nHello world.\n\nMore plain words\n", { 0: 24, 1: 38, 2: 38 });
+  calibrate(m);
+  await openBlock(m, 1);
+  await selectByMouse(m, 6, 11);
+  const p = { x: X + 60, y: topOf(m, 1) + 60 };
+  barPress(m, "style");
+  const stopped = m.cx.stopped;
+  fire(barMenuOf(m), "on_mouse_move", { position: p, local_position: p, modifiers: NO_MODS }, m.cx);
+  fire(barMenuOf(m), "on_mouse_down:left", press(p), m.cx);
+  fire(barMenuOf(m), "on_mouse_up:left", press(p), m.cx);
+  fire(must(m.tree(), "md-bar-row-h1"), "on_mouse_move", { position: p, local_position: p, modifiers: NO_MODS }, m.cx);
+  assert.equal(m.cx.stopped - stopped, 4, "none of them goes on");
+  await flush();
+  assert.deepEqual(rowNodes(m).filter(n => n.style.bg === "hover").map(n => n.id), ["md-bar-row-h1"], "the row under the pointer");
+  assert.deepEqual([openMenu(m), m.view.press, m.view.sel, m.view.field.focused, ...editing(m)], ["style", null, null, true, keyAt(m, 1), "Hello world.", { start: 6, end: 11 }]);
+  for (const name of ["color", "list", "list", "style"]) barPress(m, name);
+  rowPress(m, "h3");
+  barPress(m, "color");
+  rowPress(m, "text-teal");
+  assert.deepEqual([m.view.field.focused, m.view.blockByKey(m.view.activeKey).kind, selectedText(m).includes("world"), Boolean(barOf(m))], [true, "heading", true, true]);
+});
+
 const noteBoxOf = m => find(m.tree(), "md-note");
 const writeNote = (m, text) => m.view.noteField.set_value(text);
 const saveNote = m => m.view.noteField.submit(m.cx);
@@ -7411,7 +7681,7 @@ test("the bar's Comment button opens the same box, and is never shown pressed", 
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
   await selectByMouse(m, 6, 11);
-  assert.notEqual(must(m.tree(), "md-format-comment").style.bg, "selected");
+  assert.equal(isPressed(must(m.tree(), "md-format-comment")), false);
   const stopped = m.cx.stopped;
   barPress(m, "comment");
   assert.equal(m.cx.stopped - stopped, 1, "the press goes no further");
