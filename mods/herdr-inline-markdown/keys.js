@@ -47,10 +47,21 @@ export const ACTIONS = [...new Set(BINDINGS.map(b => b.action))];
 
 // A flag on globalThis outlives a reload of the mod, which a module variable does not.
 const INSTALLED = `herdr-inline-markdown.keys.${VERSION}`;
-export { INSTALLED };
+// Herdr 0.1.16 clears every binding mods made each time it reads keys.json again, keeping its own and the person's,
+// so a change to keys.json puts the table back: once for all open editors (REBOUND holds when), after Herdr has read it.
+const REBOUND = "herdr-inline-markdown.keys.rebound";
+export const KEYS_SETTLE_MS = 500;
+export { INSTALLED, REBOUND };
 
-export function installKeys(cx) {
-  if (globalThis[INSTALLED]) return false;
+// -> whether this editor puts the table back for a keys.json change, which only the first to ask does.
+export function claimRebind(now = Date.now()) {
+  if (now - (globalThis[REBOUND] ?? -Infinity) < 2 * KEYS_SETTLE_MS) return false;
+  globalThis[REBOUND] = now;
+  return true;
+}
+
+export function installKeys(cx, { again = false } = {}) {
+  if (globalThis[INSTALLED] && !again) return false;
   cx.bind_keys(BINDINGS);
   globalThis[INSTALLED] = true;
   return true;

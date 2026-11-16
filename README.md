@@ -146,7 +146,9 @@ gives way to the pane's header, which shows the same file name and toggle.
   read), looks with `kill -0` every 2 s that it is still running, and ends it with `kill` when its pane closes.
   `mkdir -p` and `cp` put a picture from outside the note's folder into `images/` beside it. Files are written only on
   this computer: the one you edit, a new note, the diagram and picture caches (the dialog's answer too), and the
-  pictures copied beside a note.
+  pictures copied beside a note. Herdr's own folder (`~/.config/herdr-app`) is watched for changes to `keys.json`:
+  Herdr drops the keys a mod bound each time it reads that file again, so the editor binds its keys again half a
+  second after each change.
 
 ### Block editing
 

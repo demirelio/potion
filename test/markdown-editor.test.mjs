@@ -15,7 +15,7 @@ const { theme } = await import("./mocks/herdr.mjs");
 const { echoTokenSets, liveFields, TextareaState } = await import("./mocks/gpui-base.mjs");
 const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
-const { TEXT, RAW, SOURCE, NOTE, INSTALLED } = await import("../mods/herdr-inline-markdown/keys.js");
+const { TEXT, RAW, SOURCE, NOTE, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
 const { PICTURE, pictureLayout, BAR, barSize, NOTE_BOX, NOTES, CARD } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
@@ -68,9 +68,9 @@ const split = (pane, file, machine = null) => ["pane.split", { direction: "right
 
 async function mount({ file = FILE, machine, disk, props } = {}) {
   if (disk !== undefined) state.disk.set(file, disk);
-  const commands = [], watching = [];
+  const commands = [], watching = [], keyWatches = [];
   state.nextCommand = () => new Promise(done => commands.push(done));
-  state.watchFolder = dir => new Promise((done, fail) => watching.push({ dir, done, fail }));
+  state.watchFolder = dir => new Promise((done, fail) => (dir === state.appHome ? keyWatches : watching).push({ dir, done, fail }));
   const p = props ?? { file, machine };
   state.props = p;
   const cx = makeCx();
@@ -80,7 +80,7 @@ async function mount({ file = FILE, machine, disk, props } = {}) {
   await flush();
   const tree = () => view.render(cx);
   return {
-    view, cx, tree, watching,
+    view, cx, tree, watching, keyWatches,
     send: async name => { commands.shift()(name); await flush(); },
     touch: async paths => { watching.shift().done(paths); await flush(); },
     // Typing in the source, which leaves its caret after what changed.
@@ -948,9 +948,12 @@ test("a mode switch does not write while a conflict or a deletion stands", async
   assert.equal(m.status(), "Conflict");
 });
 
+// The folders watched for the file, leaving out Herdr's own, which each editor watches for keys.json.
+const fileWatches = () => calls.watchFolder.filter(dir => dir !== state.appHome);
+
 test("a change on disk with nothing unsaved is shown at once in Reading, and in the source field when it next shows; no write", async () => {
   const m = await mount({ disk: "one\n" });
-  assert.deepEqual(calls.watchFolder, ["/n/docs"], "the folder of the file is watched");
+  assert.deepEqual(fileWatches(), ["/n/docs"], "the folder of the file is watched");
   state.disk.set(FILE, "# two\n");
   await m.touch([FILE]);
   assert.deepEqual([m.view.text, m.view.disk], ["# two\n", "# two\n"]);
@@ -959,7 +962,7 @@ test("a change on disk with nothing unsaved is shown at once in Reading, and in 
   assert.equal(m.status(), "Saved");
   assert.equal(find(m.tree(), "md-banner"), null);
   assert.equal(calls.writeTextFile.length, 0);
-  assert.equal(calls.watchFolder.length, 2, "and watched again after each report");
+  assert.equal(fileWatches().length, 2, "and watched again after each report");
   state.disk.set(FILE, "three");
   await m.touch([FILE]);
   assert.equal(shownAt(m, 0), "three");
@@ -1300,7 +1303,7 @@ test("when watching fails the file is looked at every 4 s instead; a poll that f
   const view = new Editor();
   view.init({ file: FILE }, cx);
   await flush();
-  assert.equal(calls.watchFolder.length, 1, "asked once, not in a loop");
+  assert.equal(fileWatches().length, 1, "asked once, not in a loop");
   const polls = cx.timers.filter(t => !t.once);
   assert.deepEqual(polls.map(t => t.ms), [4000]);
   const before = cx.notified;
@@ -1319,7 +1322,7 @@ test("a file straight in the home folder (or /) is polled, not watched", async (
     reset();
     state.disk.set(file, "x");
     const m = await mount({ file });
-    assert.equal(calls.watchFolder.length, 0, file);
+    assert.equal(fileWatches().length, 0, file);
     assert.deepEqual(m.cx.timers.filter(t => !t.once).map(t => t.ms), [4000]);
   }
 });
@@ -3082,6 +3085,32 @@ function calibrate(m) {
   }
   assert.equal(m.view.calibrating, false);
 }
+
+test("Herdr drops the keys mods bound each time it reads keys.json again: a change to keys.json puts the table back, after Herdr has read it, once for all open editors", async () => {
+  delete globalThis[INSTALLED];
+  delete globalThis[REBOUND];
+  const a = await mount({ disk: "x" }), b = await mount({ disk: "y" });
+  const bound = () => a.cx.bound.length + b.cx.bound.length;
+  assert.equal(bound(), 1);
+  assert.deepEqual([a.keyWatches.length, b.keyWatches[0]?.dir], [1, state.appHome], "each editor watches Herdr's folder");
+  const change = async name => {
+    for (const w of [...a.keyWatches.splice(0), ...b.keyWatches.splice(0)]) w.done([`${state.appHome}/${name}`]);
+    await flush();
+  };
+  const settle = async () => { await fire_timers(a.cx, { ms: KEYS_SETTLE_MS }); await fire_timers(b.cx, { ms: KEYS_SETTLE_MS }); };
+  await change("shared.json");
+  await settle();
+  assert.equal(bound(), 1, "another file of the folder changes nothing");
+  await change("keys.json");
+  assert.equal(bound(), 1, "not before Herdr has read it");
+  await settle();
+  assert.equal(bound(), 2, "the table goes in again, once");
+  assert.deepEqual([...a.cx.bound, ...b.cx.bound].at(-1), a.cx.bound[0]);
+  delete globalThis[REBOUND];
+  await change("keys.json");
+  await settle();
+  assert.equal(bound(), 3, "and again for a later change");
+});
 
 test("the key table goes in once per runtime: versioned contexts of the editor's own fields only, mdb-* actions that md-root handles", async () => {
   delete globalThis[INSTALLED];

@@ -2,7 +2,7 @@
 // typing is saved a moment later, only over the text this pane last saw there, and a change on disk shows up here.
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
-import { theme, settings, home, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
+import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, sameDefs, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
 import { BAR, CARD, COLUMN, FRAME, MENU, NOTES, NOTE_BOX, anchorBlock, barPlace, blockAt, canZoom, cardPlace, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
@@ -12,7 +12,7 @@ import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
 import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
-import { ACTIONS, NOTE, SOURCE, installKeys } from "./keys.js";
+import { ACTIONS, KEYS_SETTLE_MS, NOTE, SOURCE, claimRebind, installKeys } from "./keys.js";
 import { hasMark, toggleMark, wordAround } from "./format.js";
 import { addComment, commentable, commentsIn, editComment, highlightColor, resolveComment } from "./comments.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
@@ -369,6 +369,7 @@ export class Editor {
     this.load(cx);
     this.listen(cx);
     this.watch(cx);
+    this.watchKeys(cx);
     rememberRecent(this.file, this.machine);
   }
 
@@ -955,6 +956,22 @@ export class Editor {
     else if (name === "mdb-escape") this.escape(cx);
     else if (MARK_ACTIONS[name]) this.format(MARK_ACTIONS[name], cx);
     else if (name === "mdb-comment") this.openNote(cx);
+  }
+
+  watchKeys(cx) {
+    if (!this.keysBound || this.remote) return;
+    const dir = appHome().replace(/\/+$/, "");
+    cx.spawn(async cx => {
+      for (;;) {
+        let paths;
+        try { paths = await watchFolder(dir); } catch { return; }
+        if (this.closed) return;
+        if (!paths.some(p => p === `${dir}/keys.json`) || !claimRebind()) continue;
+        await new Promise(done => cx.timer.after(KEYS_SETTLE_MS, () => done()));
+        if (this.closed) return;
+        installKeys(cx, { again: true });
+      }
+    });
   }
 
   listen(cx) {
