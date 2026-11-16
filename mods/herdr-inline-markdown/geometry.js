@@ -1,6 +1,6 @@
 // No imports from herdr or gpui-*. Lengths are logical pixels.
-import { codeIndent, visibleMap } from "./blocks.js";
-import { hideComments } from "./comments.js";
+import { codeIndent } from "./blocks.js";
+import { visibleMap } from "./inline.js";
 
 export const COLUMN = { maxWidth: 780, padX: 32, padTop: 28, padBottom: 160 };
 export const REVEAL = { top: 24, bottom: 72 };
@@ -58,11 +58,6 @@ export function snapToWord(line, at) {
   return best;
 }
 
-function shownMap(line) {
-  const shown = hideComments(line);
-  return visibleMap(shown.text).map(k => shown.at[k]);
-}
-
 // `map[v]` is the line offset of visible character v. A start is where visible character v is; an end is just past
 // the one before it, so the marks Reading hides between them stay outside either.
 function wordEdge(line, map, v, side) {
@@ -82,7 +77,7 @@ function textPress(t, x, y, cal, side) {
   const perRow = Math.max(1, Math.floor(t.width / cal.advance));
   let row = Math.max(0, Math.floor(y / cal.rowPx));
   for (let i = 0; i < lines.length; i++) {
-    const map = shownMap(lines[i]), visible = map.length - 1;
+    const map = visibleMap(lines[i]), visible = map.length - 1;
     const rows = Math.max(1, Math.ceil((visible * cal.advance) / t.width));
     if (row < rows || i === lines.length - 1) {
       const v = clamp(Math.min(row, rows - 1) * perRow + Math.round(Math.max(0, x) / cal.advance), 0, visible);

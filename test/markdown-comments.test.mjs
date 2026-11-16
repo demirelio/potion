@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  POINT, addComment, commentable, commentsIn, editComment, hideComments, highlight, highlightColor, oneLine, resolveComment, showComments,
+  POINT, addComment, commentable, commentsIn, editComment, highlight, highlightColor, oneLine, resolveComment, showComments,
 } from "../mods/herdr-inline-markdown/comments.js";
 
 const COLOR = "#e5c07b55";
@@ -80,16 +80,6 @@ test("the highlight is the theme's yellow at a third, so text stays readable on 
   assert.equal(highlightColor({ ansi3: "#fc0" }), "#ffcc0055");
   assert.equal(highlightColor({ ansi3: "ansi3" }), "#f5c54255", "not a colour: amber");
   assert.equal(highlightColor({}), "#f5c54255");
-});
-
-test("hideComments maps the text a reader sees back to the source, a point comment as its marker", () => {
-  const text = "a {==b==}{>>n<<} c{>>p<<}d";
-  const { text: seen, at } = hideComments(text);
-  assert.equal(seen, `a b c${POINT}d`);
-  assert.deepEqual(at.slice(0, 5), [0, 1, 5, 16, 17]);
-  assert.equal(at[5], text.indexOf("{>>p"), "the marker sits where the point comment starts");
-  assert.equal(at.at(-2), text.length - 1);
-  assert.equal(at.at(-1), text.length);
 });
 
 test("add wraps the selection, spaces at its ends left outside, and leaves the caret after the comment", () => {

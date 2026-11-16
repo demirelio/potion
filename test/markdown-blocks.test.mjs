@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import {
   parse, reparse, field, fieldToDoc, docToField, type, separators, applySplice, diff, counters, isText, split, insertAfter,
   insertBefore, insertAt, mergeIntoPrevious, mergeNext, remove, removeRange, toParagraph, indent, outdent, nest, unnest,
-  move, toggleTask, paste, closeFence, fenceGuard, visibleMap, shortcut, codeIndent, FENCE, CLOSE, closes, parseInSteps,
+  move, toggleTask, paste, closeFence, fenceGuard, shortcut, codeIndent, FENCE, CLOSE, closes, parseInSteps,
   retype, insertLines,
 } from "../mods/herdr-inline-markdown/blocks.js";
+import { visibleMap } from "../mods/herdr-inline-markdown/inline.js";
 import { originals, corpus, docs, htmlKinds, docKinds, random, bigDocument, VARIANTS } from "./markdown-corpus.mjs";
 
 const kinds = d => d.blocks.map(b => b.kind);

@@ -1295,59 +1295,6 @@ export function type(f, next, caret, linePrefix) {
   return { start, end, insert, caret: fieldToDoc(f, a + ins.length), fieldCaret: a + ins.length };
 }
 
-// -> map, where map[v] is the field offset of visible character v; map.length is the visible length + 1.
-export function visibleMap(value) {
-  const map = [], n = value.length, hidden = [];
-  let i = 0;
-  while (i < n) {
-    if (hidden.length && i === hidden.at(-1).at) { i = hidden.pop().to; continue; }
-    const c = value.charCodeAt(i);
-    if (c === BSL && i + 1 < n && ESCAPABLE.test(value[i + 1])) { map.push(i + 1); i += 2; continue; }
-    if (c === BT) {
-      let run = 1;
-      while (value.charCodeAt(i + run) === BT) run++;
-      const close = value.indexOf("`".repeat(run), i + run);
-      const to = close > 0 ? close : i + run;
-      for (let k = close > 0 ? i + run : i; k < to; k++) map.push(k);
-      i = close > 0 ? close + run : i + run;
-      continue;
-    }
-    if (c === 38) {
-      const m = /^&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/.exec(value.slice(i, i + 40));
-      if (m) { map.push(i); i += m[0].length; continue; }
-    }
-    if (c === LT) {
-      const m = /^<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>|^<[^\s@<>]+@[^\s@<>]+>/.exec(value.slice(i, i + 2048));
-      if (m) {
-        for (let k = i + 1; k < i + m[0].length - 1; k++) map.push(k);
-        i += m[0].length;
-        continue;
-      }
-    }
-    if (c === LBR || (c === 33 && value.charCodeAt(i + 1) === LBR)) {
-      const open = c === LBR ? i : i + 1, close = value.indexOf("]", open + 1);
-      if (close > 0 && (value[close + 1] === "(" || value[close + 1] === "[")) {
-        const end = value.indexOf(value[close + 1] === "(" ? ")" : "]", close + 2);
-        if (end > 0) {
-          hidden.push({ at: close, to: end + 1 });
-          i = open + 1;
-          continue;
-        }
-      }
-    }
-    if (c === STAR || c === UNDER || c === TILDE) {
-      let run = 1;
-      while (value.charCodeAt(i + run) === c) run++;
-      const before = i > 0 ? value[i - 1] : " ", after = value[i + run] ?? " ";
-      if (!(/\s/.test(before) && /\s/.test(after))) { i += run; continue; }
-    }
-    map.push(i);
-    i++;
-  }
-  map.push(n);
-  return map;
-}
-
 // On a line of its own, a block marker with nothing after it is an empty heading, item or quote, not a paragraph.
 const LONE_MARKER = /^ {0,3}(?:#{1,6}|[-*+]|\d{1,9}[.)]|>)$/;
 export const loneMarker = value => LONE_MARKER.test(value);

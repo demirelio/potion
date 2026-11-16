@@ -3,6 +3,7 @@
 // UTF-16 indices. No imports.
 
 const OPEN = "{==", CLOSE = "==}", NOTE_OPEN = "{>>", NOTE_CLOSE = "<<}";
+const BACKSLASH = 92, BACKTICK = 96, BRACE = 123, EQUALS = 61, LESS = 60;
 const MAY_HOLD = /\{(?:==|>>)/;
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
@@ -57,11 +58,10 @@ function linesOf(text) {
 // Past the code span whose backtick run starts at `i`, or past the run alone when no run as long closes it before `to`.
 function pastCode(text, i, to, spans) {
   let n = 0;
-  while (text[i + n] === "`") n++;
-  for (let j = i + n; j < to;) {
-    if (text[j] !== "`") { j++; continue; }
+  while (text.charCodeAt(i + n) === BACKTICK) n++;
+  for (let j = text.indexOf("`", i + n); j >= 0 && j < to; j = text.indexOf("`", j)) {
     let m = 0;
-    while (text[j + m] === "`") m++;
+    while (text.charCodeAt(j + m) === BACKTICK) m++;
     if (m === n) {
       spans?.push({ start: i, end: j + m, block: false });
       return j + m;
@@ -85,10 +85,13 @@ const pointAt = (text, i, to) => {
 function highlightAt(text, i, to) {
   const from = i + OPEN.length;
   let j = from;
-  while (j < to && !text.startsWith(CLOSE, j)) {
-    if (text.startsWith(OPEN, j) || text.startsWith(NOTE_OPEN, j) || text.startsWith(NOTE_CLOSE, j)) return null;
-    if (text[j] === "\\") j += 2;
-    else if (text[j] === "`") j = pastCode(text, j, to);
+  while (j < to) {
+    const ch = text.charCodeAt(j);
+    if (ch === EQUALS && text.startsWith(CLOSE, j)) break;
+    if (ch === BRACE && (text.startsWith(OPEN, j) || text.startsWith(NOTE_OPEN, j))) return null;
+    if (ch === LESS && text.startsWith(NOTE_CLOSE, j)) return null;
+    if (ch === BACKSLASH) j += 2;
+    else if (ch === BACKTICK) j = pastCode(text, j, to);
     else j++;
   }
   if (j >= to || j === from) return null;
@@ -97,11 +100,24 @@ function highlightAt(text, i, to) {
     : { kind: "highlight", start: i, end: closed, from, to: j, note: null, noteAt: -1 };
 }
 
+const nextOf = (text, ch, from, to) => {
+  const k = text.indexOf(ch, from);
+  return k < 0 || k >= to ? to : k;
+};
+
+// Only a backslash, a backtick or a brace can start something here, so the scan jumps between them.
 function scan(text, from, to, comments, code) {
+  let backslash = -1, backtick = -1, brace = -1;
   for (let i = from; i < to;) {
-    if (text[i] === "\\") { i += 2; continue; }
-    if (text[i] === "`") { i = pastCode(text, i, to, code); continue; }
-    const c = text.startsWith(OPEN, i) ? highlightAt(text, i, to) : text.startsWith(NOTE_OPEN, i) ? pointAt(text, i, to) : null;
+    if (backslash < i) backslash = nextOf(text, "\\", i, to);
+    if (backtick < i) backtick = nextOf(text, "`", i, to);
+    if (brace < i) brace = nextOf(text, "{", i, to);
+    i = Math.min(backslash, backtick, brace);
+    if (i >= to) return;
+    const ch = text.charCodeAt(i);
+    if (ch === BACKSLASH) { i += 2; continue; }
+    if (ch === BACKTICK) { i = pastCode(text, i, to, code); continue; }
+    const c = ch !== BRACE ? null : text.startsWith(OPEN, i) ? highlightAt(text, i, to) : text.startsWith(NOTE_OPEN, i) ? pointAt(text, i, to) : null;
     i = c ? c.end : i + 1;
     if (c) comments.push(c);
   }
@@ -142,27 +158,6 @@ function replaced(text, fill) {
 
 // The markdown Reading draws: marked text highlighted (its formatting still renders), the marks and the comment gone.
 export const showComments = (text, color) => replaced(text, c => highlight(c.kind === "point" ? POINT : text.slice(c.from, c.to), color));
-
-// The text as Reading shows it, and for each of its offsets (and its end) the offset in `text` it comes from.
-export function hideComments(text) {
-  const at = [];
-  const kept = (from, to) => {
-    for (let i = from; i < to; i++) at.push(i);
-    return text.slice(from, to);
-  };
-  let shown = "", from = 0;
-  for (const c of commentsIn(text)) {
-    shown += kept(from, c.start);
-    if (c.kind === "point") {
-      shown += POINT;
-      for (let i = 0; i < POINT.length; i++) at.push(c.start);
-    } else shown += kept(c.from, c.to);
-    from = c.end;
-  }
-  shown += kept(from, text.length);
-  at.push(text.length);
-  return { text: shown, at };
-}
 
 // A comment is one line, and `<<}` in it would end it early.
 export const oneLine = note => String(note ?? "").replace(LINE_BREAK, " ").replaceAll(NOTE_CLOSE, "<< }").trim();
