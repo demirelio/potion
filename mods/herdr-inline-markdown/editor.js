@@ -116,7 +116,7 @@ const noted = text => commentsIn(text).filter(c => c.note !== null);
 // the look of its card when not active.
 const cardsOf = value => noted(value).map((c, index) => {
   const { when, text } = readNote(c.note);
-  return { c, index, at: c.kind === "point" ? c.start : c.from, when, text, look: cardLook({ text, header: Boolean(when) }) };
+  return { c, index, at: c.kind === "point" ? c.start : c.from, when, text, look: cardLook({ text, header: true }) };
 });
 const clip = (text, n) => {
   const chars = [...text];
@@ -4390,7 +4390,7 @@ export class Editor {
   // The card of the comment being written, at the start of the text it goes on.
   newCard() {
     const i = this.at.get(this.activeKey), at = this.note.range.start, id = NEW_CARD;
-    const look = cardLook({ text: this.noteField.value(), header: false, full: true });
+    const look = cardLook({ text: this.noteField.value(), header: true, full: true });
     return { id, key: this.activeKey, index: -1, c: null, when: null, text: "", i, at, want: this.rowTop(i, this.blocks[i], null, at), h: this.raisedH(id, look.h), active: true, editing: true };
   }
 
@@ -4432,7 +4432,7 @@ export class Editor {
   marginCard(e, writable, now, t) {
     const m = this.margin;
     return v_flex().id(e.id).absolute().left(m.cardLeft).top(COLUMN.padTop + e.top).w(m.cardW).p(CARDS.pad).gap(CARDS.rowGap)
-      .rounded(8).border_1().bg(t.raised).border_color(e.active ? t.muted : t.border).cursor_pointer()
+      .rounded(8).border_1().bg(t.raised).border_color(e.active ? deepHighlightColor(t) : t.border).cursor_pointer()
       .when(e.active, el => el.shadow_lg().on_size_change((size, cx) => this.cardSized(e.id, size, cx)))
       .when(!e.active, el => el.h(e.h).overflow_hidden())
       .when(e.editing, el => el.on_mouse_down_out((_e, cx) => this.closeNote(cx)))
@@ -4441,18 +4441,19 @@ export class Editor {
       .children(this.cardBody(e, writable, now, t));
   }
 
-  // The card's time and, on the active card of a file that can be edited, its Resolve button; then its text, or the
-  // field it is edited in.
+  // The card's header (its time, "Comment" for a note written with none) and, on the active card of a file that can be
+  // edited, Edit and Resolve; then its text, or the field it is edited in.
   cardBody(e, writable, now, t) {
-    const label = timeLabel(e.when, now), resolve = e.active && writable && Boolean(e.c), out = [];
-    if (label || resolve) {
-      out.push(h_flex().h(CARDS.headH).flex_none().items_center().gap(6)
-        .child(div().id(`${e.id}-time`).flex_1().min_w(0).truncate().text_size(CARD_TIME_SIZE).text_color(t.dim).child(label))
-        .when(resolve, el => el.child(h_flex().id(`${e.id}-resolve`).size(CARDS.headH).flex_none().items_center().justify_center().rounded(5)
-          .cursor_pointer().tooltip("Resolve").hover(s => s.bg(t.hover))
-          .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.resolveCard(e, cx); })
-          .child(svg(ICON("check")).size(14).flex_none().text_color(t.muted)))));
-    }
+    const buttons = e.active && writable && Boolean(e.c), out = [];
+    const button = (name, icon, tip, run) => h_flex().id(`${e.id}-${name}`).size(CARDS.headH).flex_none().items_center().justify_center()
+      .rounded(5).cursor_pointer().tooltip(tip).hover(s => s.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run(cx); })
+      .child(svg(ICON(icon)).size(14).flex_none().text_color(t.muted));
+    out.push(h_flex().id(`${e.id}-head`).h(CARDS.headH).flex_none().items_center().gap(6)
+      .child(svg(ICON("message-square")).size(13).flex_none().text_color(t.dim))
+      .child(div().id(`${e.id}-time`).flex_1().min_w(0).truncate().text_size(CARD_TIME_SIZE).text_color(t.dim).child(timeLabel(e.when, now) || "Comment"))
+      .when(buttons && !e.editing, el => el.child(button("edit", "pencil", "Edit", cx => this.cardDown(e, true, cx))))
+      .when(buttons, el => el.child(button("resolve", "check", "Resolve", cx => this.resolveCard(e, cx)))));
     if (e.editing) {
       out.push(div().id(`${e.id}-input`).w_full().key_context(NOTE)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -4531,7 +4532,7 @@ export class Editor {
     if (!place) return null;
     const e = { id: FLOAT_CARD, key: this.activeKey, index, c, when, text, active: true, editing: false };
     return v_flex().id(FLOAT_CARD).absolute().left(place.left).top(place.top).w(place.w).p(CARDS.pad).gap(CARDS.rowGap)
-      .rounded(8).border_1().bg(t.popover).border_color(t.border).shadow_lg()
+      .rounded(8).border_1().bg(t.popover).border_color(deepHighlightColor(t)).shadow_lg()
       .on_size_change((size, cx) => this.cardSized(FLOAT_CARD, size, cx))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())

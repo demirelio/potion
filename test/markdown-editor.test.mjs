@@ -7875,7 +7875,7 @@ const cardId = (m, i, n = 0) => `md-card-${keyAt(m, i)}-${n}`;
 const cardAt = (m, i, n = 0, t = m.tree()) => find(t, cardId(m, i, n));
 // A card's top in the scrolled page, where the column starts 28 px down.
 const wantTop = (m, i, row = 0) => 28 + m.view.sums[i] + m.view.data.get(keyAt(m, i)).space + row * m.view.data.get(keyAt(m, i)).row;
-const lookOfCard = (text, header = false, more = {}) => cardLook({ text, header, ...more });
+const lookOfCard = (text, header = true, more = {}) => cardLook({ text, header, ...more });
 // The time a test runs at: 22:00 on 16 November 2026.
 const NOW = new Date(2026, 10, 16, 22, 0);
 const atTime = async (now, body) => {
@@ -7940,14 +7940,14 @@ test("each card sits level with the row its marked text starts on, a point comme
   assert.deepEqual(cardsOf(m, t).map(n => n.style.h), [h, h, h, h], "each as tall as its look, so none overlaps the next");
 });
 
-test("a card shows its comment's time and text, never the stamp: the hour today, the day this year, the day and the year before it; none without a stamp", async () => {
+test("a card shows its comment's time and text, never the stamp: the hour today, the day this year, the day and the year before it; 'Comment' without a stamp", async () => {
   await atTime(NOW, async () => {
     const doc = "A {==b==}{>>2026-11-16 20:51 | today<<} c {>>2026-11-15 09:00 | yesterday<<} d {>>2025-11-15 20:51 | last year<<} e {>>plain<<}.\n";
     const m = await widePage(doc, { 0: 24 });
     const t = m.tree(), card = n => cardAt(m, 0, n, t), part = (n, name) => find(card(n), `${cardId(m, 0, n)}-${name}`);
     assert.deepEqual([0, 1, 2].map(n => textOf(part(n, "time")).trim()), ["8:51 PM", "Nov 15", "Nov 15, 2025"]);
     assert.deepEqual([0, 1, 2, 3].map(n => textOf(part(n, "text")).trim()), ["today", "yesterday", "last year", "plain"]);
-    assert.equal(part(3, "time"), null, "no stamp: no time");
+    assert.equal(textOf(part(3, "time")).trim(), "Comment", "no stamp: the header says what it is");
     assert.deepEqual([card(0).style.h, card(3).style.h], [lookOfCard("today", true).h, lookOfCard("plain").h]);
     const time = part(0, "time");
     assert.deepEqual([time.style.text_color, time.style.text_size < 13], ["dim", true], "small and dim");
@@ -7964,12 +7964,12 @@ test("a long comment is clipped to a few lines with an ellipsis", async () => {
 
 test("cards move with the page as it scrolls, and only the ones near the viewport are drawn", async () => {
   const blocks = Array.from({ length: 60 }, (_, i) => `Para ${i} {==marked==}{>>note ${i}<<} here.`);
-  const sizes = Object.fromEntries(blocks.map((_, i) => [i, 60]));
+  const sizes = Object.fromEntries(blocks.map((_, i) => [i, lookOfCard("note 10").h + CARDS.gap]));
   const m = await widePage(`${blocks.join("\n\n")}\n`, sizes);
   let t = m.tree();
   assert.ok(cardAt(m, 0, 0, t) && !cardAt(m, 50, 0, t), "the first ones, not those far below");
   const top = cardAt(m, 0, 0, t).style.top;
-  m.view.scrollTo(2800, m.cx);
+  m.view.scrollTo(m.view.sums[50] - 100, m.cx);
   t = m.tree();
   assert.deepEqual([must(t, "md-scroller").style.top, cardAt(m, 0, 0, t)], [-m.view.offset, null], "scrolled away");
   assert.equal(cardAt(m, 50, 0, t).style.top, wantTop(m, 50), "in the scrolled page, where its text is");
@@ -8001,7 +8001,7 @@ test("cards are placed once for what places them, not on every draw; a commented
 
 // The colours block i's field draws its tokens' pieces on, in order.
 const tokenBgs = (m, i) => ownField(m, i).tokens().flatMap(x => all(inputOf(m, i).token({ token: x.token, range: x.range, selected: false, line_height: 24, available_width: 700 }, m.cx), n => n.style.bg !== undefined).map(n => n.style.bg));
-const isRaised = card => card.style.border_color === "muted" && card.style.shadow_lg === true;
+const isRaised = card => card.style.border_color === deepHighlightColor(theme()) && card.style.shadow_lg === true;
 const cardText = (m, i, n = 0) => textOf(must(cardAt(m, i, n), `${cardId(m, i, n)}-text`)).trim();
 const cardInput = card => all(card, n => n.kind === "textarea")[0] ?? null;
 
@@ -8174,6 +8174,29 @@ test("without room for a margin the comment box floats over the selection and wr
     writeNote(m, "why");
     saveNote(m);
     assert.equal(m.view.text, "A {==b==}{>>first<<} c.\n\nHello {==world==}{>>2026-11-16 22:00 | why<<}.\n");
+  });
+});
+
+test("a card always has its header: the comment icon and the time, or 'Comment' for a note with no time; the active card has Edit and Resolve and an ochre border", async () => {
+  await atTime(NOW, async () => {
+    const doc = "A {==b==}{>>first<<} c {==d==}{>>2026-11-16 20:51 | second<<}.\n\nEnd\n";
+    const m = await widePage(doc, { 0: 24, 1: 38 });
+    const header = n => {
+      const card = cardAt(m, 0, n), time = must(card, `${cardId(m, 0, n)}-time`);
+      return [textOf(time).trim(), all(must(card, `${cardId(m, 0, n)}-head`), x => x.kind === "svg")[0]?.path];
+    };
+    assert.deepEqual([header(0), header(1)], [["Comment", icon("message-square")], ["8:51 PM", icon("message-square")]]);
+    assert.equal(find(cardAt(m, 0, 0), `${cardId(m, 0, 0)}-edit`), null, "no buttons until the card is active");
+    cardPress(m, cardId(m, 0, 0));
+    await flush();
+    const card = cardAt(m, 0, 0), edit = must(card, `${cardId(m, 0, 0)}-edit`);
+    assert.deepEqual([edit.style.tooltip, all(edit, n => n.kind === "svg")[0].path], ["Edit", icon("pencil")]);
+    assert.ok(find(card, `${cardId(m, 0, 0)}-resolve`), "Resolve beside it");
+    assert.equal(card.style.border_color, deepHighlightColor(theme()), "the active card's border is its highlight's ochre");
+    fire(edit, "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+    await flush();
+    assert.deepEqual([Boolean(cardInput(cardAt(m, 0, 0))), m.view.noteField.value()], [true, "first"], "Edit edits the comment in its card");
+    audit(m.tree());
   });
 });
 
