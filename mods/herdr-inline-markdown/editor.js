@@ -1669,7 +1669,7 @@ export class Editor {
     const p = this.point(e);
     if (p && e.modifiers?.shift) { this.press = null; return this.shiftTo(this.hit(p)?.block, cx); }
     const hit = p ? this.hit(p) : null;
-    this.press = p ? { ...p, beside: null, key: hit?.block?.key ?? null } : null;
+    this.press = p ? { ...p, beside: null, key: hit?.block?.key ?? null, on: hit?.on ?? null } : null;
     const v = hit?.on === "frame" && this.dragFrom ? this.viewOf(hit.block.key) : null;
     if (v) this.pan = { key: hit.block.key, from: this.dragFrom, x0: v.x, y0: v.y, moved: false };
     if (!this.press || !this.activeKey) return;
@@ -1679,19 +1679,53 @@ export class Editor {
     }
   }
 
-  // A drag that stayed in a block not being edited selected its rendered text, for a Cmd+C where the press left the
-  // keyboard: editing goes on, and neither this nor the root's mouse-up gives the field the keyboard back. Any other
-  // press, a frame pan included, leaves the field the keyboard (keepKeyboard).
+  // A drag that stayed in a text block not being edited opens it with what it crossed selected (openDragged). One that
+  // stayed in another block, code say, selected its rendered text, for a Cmd+C where the press left the keyboard:
+  // editing goes on, and neither this nor the root's mouse-up gives the field the keyboard back. A press that began in
+  // a field and ended beside it is that field's mouse-up. Any other press, a frame pan included, leaves the field the
+  // keyboard (keepKeyboard).
   viewportUp(e, cx) {
     if (this.endThumb(cx)) return this.keepKeyboard();
-    const down = this.press, p = this.point(e), linked = this.linked, panned = this.endPan(cx);
+    const down = this.press, held = this.fieldHeld, p = this.point(e), linked = this.linked, panned = this.endPan(cx);
     this.press = null; this.linked = false; this.fieldHeld = null;
     if (panned) return this.keepKeyboard();
     if (this.tookPress(e, "up")) return;
+    if (held && held === this.armedKey) this.takeArmed(cx);
+    if (held && held === this.activeKey) this.readLater(cx);
     const pressed = down && !linked ? down : null;
     if (pressed && p && e.click_count >= 1 && Math.hypot(p.x - pressed.x, p.y - pressed.y) <= CLICK_SLOP) this.clickAt(p, cx, e.click_count);
+    else if (pressed && p && this.openDragged(pressed, p, cx)) return;
     else if (pressed?.key && this.activeKey && pressed.key !== this.activeKey && !this.sel) return cx.stop_propagation();
     this.keepKeyboard();
+  }
+
+  // The format bar shows over the selection the drag made.
+  openDragged(from, to, cx) {
+    const b = from.on === "block" && !this.sel && this.editable() ? this.blockByKey(from.key) : null;
+    if (!b || b.key === this.activeKey || !isText(b) || b.image) return false;
+    const r = this.dragRange(b, from, to);
+    if (!r || !this.activate(b.key, r, cx, { reveal: false })) return false;
+    this.openBar(cx);
+    return true;
+  }
+
+  // The field range between view points p and q over text block b, out to the edges of the words they fall in and
+  // without the spaces at its ends; null when it holds no text.
+  dragRange(b, p, q) {
+    const i = this.at.get(b.key);
+    if (i === undefined) return null;
+    const a = this.blockPoint(i, p), z = this.blockPoint(i, q), value = b.key === this.activeKey ? this.seen : this.openedValue(b);
+    let start = Math.min(this.pressCaret(b, a.x, a.y, "start"), this.pressCaret(b, z.x, z.y, "start"));
+    let end = Math.max(this.pressCaret(b, a.x, a.y, "end"), this.pressCaret(b, z.x, z.y, "end"));
+    while (start < end && /\s/.test(value[start])) start++;
+    while (end > start && /\s/.test(value[end - 1])) end--;
+    return start < end ? { start, end } : null;
+  }
+
+  // A double-click's second press that reached the page before the block its first press opened was drawn as a field.
+  selectWord(b, p, cx) {
+    const r = isText(b) ? this.dragRange(b, p, p) : null;
+    if (r && this.selectField(r)) this.openBar(cx);
   }
 
   // A press beside the field (a task box, link, toolbar, banner, scrollbar) can take the keyboard from it, and the
@@ -1718,7 +1752,10 @@ export class Editor {
     if (hit.on === "outside") return this.deactivate(cx);
     if (hit.on === "end") return this.openPending(cx);
     const key = hit.block.key;
-    if (key === this.activeKey) return;
+    if (key === this.activeKey) {
+      if (count >= 2) this.selectWord(hit.block, p, cx);
+      return;
+    }
     if (key === this.armedKey) {
       this.takeArmed(cx);
       this.readLater(cx);
@@ -2326,21 +2363,26 @@ export class Editor {
   clickBlock(key, p, cx) {
     const i = this.at.get(key), b = this.blockByKey(key);
     if (i === undefined || !b) return;
-    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0), y = p.y + this.offset - COLUMN.padTop - this.sums[i];
-    const fenced = Boolean(b.fence) || b.kind === "frontmatter";
+    const { x, y } = this.blockPoint(i, p), fenced = Boolean(b.fence) || b.kind === "frontmatter";
     this.activate(key, this.pressCaret(b, x, y), cx, { shift: fenced && b.kind !== "mermaid" ? this.data.get(key).row : 0, reveal: false });
   }
 
+  // View point p as x from the column's left edge and y from the top of block i.
+  blockPoint(i, p) {
+    return { x: columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0), y: p.y + this.offset - COLUMN.padTop - this.sums[i] };
+  }
+
   // The field caret for a press at (x, y) on block b, x from the column's left edge and y from the block's top,
-  // estimated from the field as currently drawn: rendered, or the field itself for the edited block.
-  pressCaret(b, x, y) {
+  // estimated from the field as currently drawn: rendered, or the field itself for the edited block. `side` as
+  // pressToField takes it.
+  pressCaret(b, x, y, side = null) {
     const d = this.data.get(b.key), active = b.key === this.activeKey, c = this.chromeOf(d, active), cal = this.calOf(d.style);
     const value = active ? this.seen : this.openedValue(b);
     if (b.kind === "mermaid" && !active) return this.entry(b, value, 1, null);
     if (d.look === "picture" && !active) return value.length;
     const height = (this.heights.get(b.key) ?? this.estimate(b)) - c.y - c.below - (active ? d.padActive : d.padRendered);
     const fenced = !active && (Boolean(b.fence) || b.kind === "frontmatter");
-    return pressToField({ kind: b.kind, value, fenced, closed: b.closed, rows: this.rowsOf(d, active), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance });
+    return pressToField({ kind: b.kind, value, fenced, closed: b.closed, rows: this.rowsOf(d, active), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance }, side);
   }
 
   openedValue(b) {

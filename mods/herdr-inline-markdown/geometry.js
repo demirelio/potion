@@ -13,11 +13,12 @@ const WORD = /[\p{L}\p{N}_]/u;
 // (x, y) is relative to the block's content box. `target` is { kind, value, fenced, closed, rows, width, height }:
 // `fenced` when the field's first line is a fence or front matter dashes that Reading does not draw, `rows` the
 // measured row count when known. `cal` is { rowPx, advance, monoAdvance }: the row height and the average prose and
-// mono character advances.
-export function pressToField(target, x, y, cal) {
+// mono character advances. In prose a press lands on the nearest word edge; `side` "start" or "end" takes the start
+// or the end of the word it falls in instead, for the ends of a selection.
+export function pressToField(target, x, y, cal, side = null) {
   if (target.kind === "table") return tablePress(target, x, y);
   if (MONO.has(target.kind)) return monoPress(target, x, y, cal);
-  return textPress(target, x, y, cal);
+  return textPress(target, x, y, cal, side);
 }
 
 function lineStarts(lines) {
@@ -62,7 +63,21 @@ function shownMap(line) {
   return visibleMap(shown.text).map(k => shown.at[k]);
 }
 
-function textPress(t, x, y, cal) {
+// `map[v]` is the line offset of visible character v. A start is where visible character v is; an end is just past
+// the one before it, so the marks Reading hides between them stay outside either.
+function wordEdge(line, map, v, side) {
+  let i;
+  if (side === "start") {
+    i = map[v];
+    if (WORD.test(line[i] ?? "")) while (i > 0 && WORD.test(line[i - 1])) i--;
+  } else {
+    i = v > 0 ? map[v - 1] + 1 : map[0];
+    if (i > 0 && WORD.test(line[i - 1])) while (i < line.length && WORD.test(line[i])) i++;
+  }
+  return i;
+}
+
+function textPress(t, x, y, cal, side) {
   const lines = t.value.split("\n"), starts = lineStarts(lines);
   const perRow = Math.max(1, Math.floor(t.width / cal.advance));
   let row = Math.max(0, Math.floor(y / cal.rowPx));
@@ -71,7 +86,7 @@ function textPress(t, x, y, cal) {
     const rows = Math.max(1, Math.ceil((visible * cal.advance) / t.width));
     if (row < rows || i === lines.length - 1) {
       const v = clamp(Math.min(row, rows - 1) * perRow + Math.round(Math.max(0, x) / cal.advance), 0, visible);
-      return starts[i] + snapToWord(lines[i], map[v]);
+      return starts[i] + (side ? wordEdge(lines[i], map, v, side) : snapToWord(lines[i], map[v]));
     }
     row -= rows;
   }

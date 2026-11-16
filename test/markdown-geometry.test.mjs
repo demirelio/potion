@@ -105,6 +105,17 @@ test("prose lands on a word boundary, through the inline syntax", () => {
   assert.equal(snapToWord("ab cd", 2), 2);
 });
 
+test("a selection's ends from presses: the start goes back to the start of the word it falls in, the end on to its end, and marks Reading hides stay outside", () => {
+  const plain = { kind: "paragraph", value: "The quick brown fox", width: 700 };
+  const at = (t, col, side) => pressToField(t, col * cal.advance + 1, 5, cal, side);
+  assert.deepEqual([at(plain, 6, "start"), at(plain, 6, "end")], [4, 9], "inside `quick`");
+  assert.deepEqual([at(plain, 4, "start"), at(plain, 9, "end")], [4, 9], "at its edges they stay");
+  assert.deepEqual([at(plain, 3, "start"), at(plain, 3, "end")], [3, 3], "on a space they stay");
+  const marked = { kind: "paragraph", value: "a **bold** word", width: 700 };
+  assert.deepEqual([at(marked, 3, "start"), at(marked, 3, "end")], [4, 8], "`bold` without its **");
+  assert.equal(at(plain, 6), 4, "without a side: the nearest word edge, as a click lands");
+});
+
 test("prose that wraps finds the row the press is on", () => {
   const words = Array.from({ length: 30 }, (_, i) => `w${String(i).padStart(2, "0")}`).join(" ");
   const t = { kind: "paragraph", value: words, width: 40 * cal.advance };

@@ -5776,7 +5776,7 @@ test("a press beside the field that leaves the editing where it was gives the fi
   assert.equal(m.view.text, "Notes\n\n- [ ] Task\n");
 });
 
-test("a drag inside a block not being edited selects its text and leaves the editing as it was: the keyboard stays where the press put it, for that text's Cmd+C", async () => {
+test("a drag inside another paragraph while one is edited opens that one with the words it crossed selected; the first keeps what was typed", async () => {
   const m = await page("First words\n\nSecond words\n", { 0: 24, 1: 38 });
   await openBlock(m, 0, 5);
   m.view.field.type("!", m.cx);
@@ -5784,13 +5784,11 @@ test("a drag inside a block not being edited selects its text and leaves the edi
   fire(must(m.tree(), "md-viewport"), "on_mouse_down:left", press(from), m.cx);
   m.view.field.blur(m.cx);
   fire(must(m.tree(), "md-viewport"), "on_mouse_move", { position: to, local_position: to, modifiers: NO_MODS, pressed_button: "left" }, m.cx);
-  const stopped = m.cx.stopped;
   fire(must(m.tree(), "md-viewport"), "on_mouse_up:left", press(to, { click_count: 0 }), m.cx);
-  assert.deepEqual([m.view.activeKey, m.view.sel, m.view.field.value(), m.view.data.get(keyAt(m, 0)).mode], [keyAt(m, 0), null, "First! words", "active"], "nothing selected as blocks, the same block being edited");
-  assert.equal(m.view.field.focused, false, "the field is not given the keyboard back");
-  assert.equal(m.cx.stopped, stopped + 1, "nor by the root's mouse-up");
-  await clickAt(m, { x: X + 10, y: topOf(m, 1) + 14 + 10 });
-  assert.equal(m.view.activeKey, keyAt(m, 1), "a click there moves the editing, as always");
+  await flush();
+  assert.deepEqual([m.view.activeKey, m.view.sel, selectedText(m)], [keyAt(m, 1), null, "Second words"], "nothing selected as blocks");
+  assert.equal(m.view.field.focused, true, "the field has the keyboard");
+  assert.ok(barOf(m));
   assert.equal(m.view.text, "First! words\n\nSecond words\n");
 });
 
@@ -7072,6 +7070,66 @@ test("the key-up readout after Shift+arrows or Cmd+A shows the format bar; one t
   keyUp(m, "left", { shift: true });
   await flush();
   assert.equal(barOf(m), null, "a space alone");
+});
+
+// A drag over the page from column `a` to column `b` of block i's first row, as a press on its rendered text makes it.
+async function dragOnPage(m, i, a, b) {
+  const advance = STYLES.p.size * 0.47, y = topOf(m, i) + 14 + 10, at = col => ({ x: X + col * advance + 1, y });
+  const vp = () => must(m.tree(), "md-viewport");
+  fire(vp(), "on_mouse_down:left", press(at(a)), m.cx);
+  fire(vp(), "on_mouse_move", { position: at(b), local_position: at(b), modifiers: NO_MODS, pressed_button: "left" }, m.cx);
+  fire(vp(), "on_mouse_up:left", press(at(b), { click_count: 0 }), m.cx);
+  await flush();
+}
+const selectedText = m => {
+  const r = m.view.field.selected_range();
+  return m.view.field.value().slice(r.start, r.end);
+};
+
+test("a drag across a paragraph not being edited opens it with the words it crossed selected, whole, and the format bar over them", async () => {
+  const doc = "Intro words\n\nThe **quick** brown fox\n\nEnd\n";
+  const m = await page(doc, { 0: 24, 1: 38, 2: 38 });
+  await dragOnPage(m, 1, 11, 17);
+  assert.deepEqual([m.view.activeKey, selectedText(m)], [keyAt(m, 1), "brown fox"], "from inside `brown` to inside `fox`");
+  assert.ok(barOf(m), "the bar shows at once");
+  assert.equal(m.view.text, doc, "nothing written");
+  const n = await page(doc, { 0: 24, 1: 38, 2: 38 });
+  await dragOnPage(n, 1, 17, 11);
+  assert.deepEqual([n.view.activeKey, selectedText(n)], [keyAt(n, 1), "brown fox"], "the same drawn backwards");
+  assert.ok(barOf(n));
+});
+
+test("a drag in the edited paragraph whose mouse-up lands beside its field still reads the selection and shows the format bar", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const inside = { x: X + 20, y: topOf(m, 0) + 10 }, beside = { x: 12, y: topOf(m, 0) + 10 };
+  fire(must(m.tree(), `md-field-${keyAt(m, 0)}`), "on_mouse_down:left", press(inside), m.cx);
+  fire(must(m.tree(), "md-viewport"), "on_mouse_down:left", press(inside), m.cx);
+  m.view.field.select(6, 11);
+  fire(must(m.tree(), "md-viewport"), "on_mouse_up:left", press(beside, { click_count: 0 }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+  assert.equal(selectedText(m), "world");
+  assert.ok(barOf(m), "read after the mouse-up the page heard");
+});
+
+test("a double-click whose second press reaches the page, before the paragraph it opened is drawn as a field, selects the word under it", async () => {
+  const m = await page("Intro words\n\nThe **quick** brown fox\n\nEnd\n", { 0: 24, 1: 38, 2: 38 });
+  const advance = STYLES.p.size * 0.47, p = { x: X + 12 * advance + 1, y: topOf(m, 1) + 14 + 10 };
+  await clickAt(m, p);
+  assert.equal(m.view.activeKey, keyAt(m, 1), "the first click opens it");
+  fire(must(m.tree(), "md-viewport"), "on_mouse_down:left", press(p, { click_count: 2 }), m.cx);
+  fire(must(m.tree(), "md-viewport"), "on_mouse_up:left", press(p, { click_count: 2 }), m.cx);
+  await flush();
+  assert.equal(selectedText(m), "brown");
+  assert.ok(barOf(m));
+});
+
+test("a drag inside a code block not being edited leaves its rendered text selected and the editing where it was", async () => {
+  const m = await page("First words\n\n```\nlet code = 1\n```\n", { 0: 24, 1: 60 });
+  await openBlock(m, 0, 5);
+  await dragOnPage(m, 1, 1, 6);
+  assert.deepEqual([m.view.activeKey, barOf(m)], [keyAt(m, 0), null]);
 });
 
 test("the format bar shows in a heading, an item and a quote; not in a code block or a table, in the Markdown view, or once the file can't be edited", async () => {

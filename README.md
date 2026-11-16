@@ -179,7 +179,7 @@ file.
 | Cmd+Shift+C | The same for inline code: `` `text` ``, with a longer run of backticks when the text holds some |
 | Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
-| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it |
+| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag over one that is not being edited opens it with the words it crossed selected, whole words, and a double-click selects a word, either way with the bar. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
