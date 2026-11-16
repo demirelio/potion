@@ -5,7 +5,7 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, sameDefs, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, CARD, COLUMN, FRAME, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardPlace, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, BAR_MENU, CARD, COLUMN, FRAME, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardPlace, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, linkPopoverSize, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -13,12 +13,13 @@ import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, KEYS_SETTLE_MS, NOTE, SOURCE, claimRebind, installKeys } from "./keys.js";
-import { colorOf, hasMark, highlightOf, setColor, setMark, toggleMark, wordAround } from "./format.js";
+import { actedOn, colorOf, hasMark, highlightOf, setColor, setMark, toggleMark, wordAround } from "./format.js";
+import { addLink, clipboardAddress, linkAddress, setAddress, unlink } from "./links.js";
 import { addComment, commentable, commentsIn, editComment, resolveComment } from "./comments.js";
 import { TEXT_COLORS, highlightColor, textColor } from "./colors.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, parsedInline, visibleMap } from "./inline.js";
-import { drawnOffset, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
+import { drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
 
 const SAVE_MS = 700;
 const LOCAL_POLL = 4000, REMOTE_POLL = 5000;
@@ -58,6 +59,7 @@ const UNSIZED_VIEW_H = 1200;
 // A recalibration whose samples, once drawn, never report sizes keeps the measurements it had.
 const CAL_GIVE_UP_MS = 2000;
 const UNDO_ACTIONS = { "mdb-undo": -1, "mdb-redo": 1 }, UNDO_KEYS = { "cmd-z": -1, "cmd-shift-z": 1 };
+// The mark each format action stands for, which the bar shows pressed; the link is made by the address box (linkKey).
 const MARK_ACTIONS = {
   "mdb-bold": "bold", "mdb-italic": "italic", "mdb-underline": "underline", "mdb-strike": "strike", "mdb-code": "code",
   "mdb-highlight": "highlight", "mdb-link": "link",
@@ -111,6 +113,24 @@ const clip = (text, n) => {
   const chars = [...text];
   return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text;
 };
+const clipMiddle = (text, n) => {
+  const chars = [...text], tail = Math.floor((n - 1) / 2);
+  return chars.length > n ? `${chars.slice(0, n - 1 - tail).join("")}…${chars.slice(-tail).join("")}` : text;
+};
+// What a press on a token of a writable text block can pick, besides text: an element, which the press selects whole
+// and whose float shows in place of the format bar. Keyed by the kind of its parseInline span; `float` is the method
+// that draws it.
+const ELEMENTS = { link: { float: "linkPopover" } };
+const LINK_BUTTONS = [
+  { name: "open", icon: "external-link", tip: "Open link" },
+  { name: "copy", icon: "copy", tip: "Copy link", done: { icon: "check", tip: "Copied" } },
+  { name: "edit", icon: "pencil", tip: "Edit link" },
+  { name: "remove", icon: "unlink", tip: "Remove link" },
+];
+const NO_ADDRESS = "No address";
+const LINK_REFUSED = "A link can't hold another link";
+// Whether a link can go somewhere does not depend on its address: this one stands in before one is typed.
+const ANY_ADDRESS = "#";
 const SOURCE_TYPING = "source";
 const spliceOf = d => ({ start: d.at, end: d.at + d.removed, insert: d.inserted });
 
@@ -388,6 +408,11 @@ export class Editor {
     this.card = null; this.note = null; this.highlight = highlightColor(theme()); this.notesFor = null;
     this.noteField = InputState.new({ placeholder: "Comment" });
     this.noteField.on("submit", (_e, cx) => this.saveNote(cx));
+    // Links: `element` the element a press picked (its popover shows while the selection stays in it), `pressedOn` the
+    // one that was picked when the press began, `linkBox` what the address box (`linkField`) is open for.
+    this.element = null; this.pressedOn = null; this.linkBox = null;
+    this.linkField = InputState.new({ placeholder: "Paste or type a link" });
+    this.linkField.on("submit", (_e, cx) => this.applyLinkBox(cx));
 
     // Calibration: `cal` is in use while `calNext` collects a run's measurements; `look` is the theme, fonts and zoom
     // last drawn in (a change reruns calibration; `calGen` names each run, `calTimed` the last one whose give-up clock
@@ -972,7 +997,7 @@ export class Editor {
       this.closeSlash(cx);
       return this.undo(UNDO_ACTIONS[name], cx);
     }
-    if (name === "mdb-note-cancel") return this.cancelNote(cx);
+    if (name === "mdb-note-cancel") return this.linkBoxOpen() ? this.cancelLinkBox(cx) : this.cancelNote(cx);
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
     this.syncField(cx);
     if (this.slashOpen()) {
@@ -994,9 +1019,11 @@ export class Editor {
     else if (name === "mdb-up" || name === "mdb-down") this.crossRow(name === "mdb-up" ? -1 : 1, cx);
     else if (name === "mdb-left-start") { this.cross(-1, cx); this.ownKeyUp = "left"; }
     else if (name === "mdb-right-end") { this.cross(1, cx); this.ownKeyUp = "right"; }
+    else if (name === "mdb-escape" && this.elementNow()) this.closeElement(cx);
     else if (name === "mdb-escape" && this.barMenuOpen()) this.closeBarMenu(cx);
     else if (name === "mdb-escape" && this.barOpen()) this.closeBar(cx);
     else if (name === "mdb-escape") this.escape(cx);
+    else if (name === "mdb-link") this.linkKey(cx);
     else if (MARK_ACTIONS[name]) this.format(MARK_ACTIONS[name], cx);
     else if (name === "mdb-comment") this.openNote(cx);
   }
@@ -1028,6 +1055,7 @@ export class Editor {
         else if (name === "focus") {
           if (this.mode === "markdown" && !this.remote && !this.readWhenParsed) this.source.focus();
           else if (this.noteOpen()) this.noteField.focus();
+          else if (this.linkBoxOpen()) this.linkField.focus();
           else if (this.activeKey) this.field.focus();
           else this.handle.focus();
         }
@@ -1883,7 +1911,7 @@ export class Editor {
   // A press beside the field (a task box, link, toolbar, banner, scrollbar) can take the keyboard from it, and the
   // root's keys ignore the page while a block is edited, so the field gets it back.
   keepKeyboard() {
-    if (this.activeKey && this.editable() && this.focusedState !== this.field && !this.noteOpen()) this.field.focus();
+    if (this.activeKey && this.editable() && this.focusedState !== this.field && !this.boxOpen()) this.field.focus();
   }
 
   // A frame fills much of the pane, so a single click on it (a tap, a click to focus the window) opens nothing: a
@@ -2348,6 +2376,8 @@ export class Editor {
     this.post(cx => this.pressToken(key, ev, x, cx));
   }
 
+  // A press on an element picks it: all of it is selected and its float shows. A press on the element already picked
+  // places the caret, so its text can be edited.
   pressToken(key, ev, x, cx) {
     if (!this.editable()) return;
     if (ev?.modifiers?.platform && this.openLinkIn(key, ev.range, cx)) return;
@@ -2357,7 +2387,76 @@ export class Editor {
     const r = this.richNow(), box = ev?.bounds, range = ev?.range;
     if (!r || !range) return;
     const at = pressedAt(r, range, typeof x === "number" && box?.width > 0 ? (x - box.x) / box.width : 1);
+    const span = this.elementPressed(range, at);
+    if (span && !this.wasPicked(span)) return this.pickElement(span, cx);
     this.placeCaret(at, cx);
+    if (span) this.element = { act: this.act, kind: span.kind };
+    cx.notify();
+  }
+
+  // The element span the token at field range `range` shows part of; when it shows more than one, the one holding the
+  // press's letter edge `at`.
+  elementPressed(range, at) {
+    const hit = parsedInline(this.seen, this.defsNow().map).spans.filter(sp => ELEMENTS[sp.kind] && sp.from < range.end && range.start < sp.to);
+    return hit.find(sp => sp.from <= at && at <= sp.to) ?? hit[0] ?? null;
+  }
+
+  wasPicked(span) {
+    const p = this.pressedOn;
+    return Boolean(p) && p.key === this.activeKey && p.value === this.seen && p.kind === span.kind && p.start === span.start;
+  }
+
+  pickElement(span, cx) {
+    this.element = { act: this.act, kind: span.kind };
+    this.known = { start: span.start, end: span.end, valid: true };
+    this.retoken();
+    this.selectField(this.known);
+    this.slashCaret(this.known, cx);
+    this.closeBar(cx);
+    cx.notify();
+  }
+
+  // The element picked, while the selection lies inside it: { kind, span, extent }, or null.
+  elementNow() {
+    const e = this.element, k = this.known;
+    if (!e || e.act !== this.act || !this.activeKey || this.pending || !this.editable() || !k.valid || this.noteOpen()) return null;
+    return this.elementHolding(e.kind, k);
+  }
+
+  // The element of `kind` whose text, with the hidden marks that go with it (its extent), holds `range` of the field.
+  elementHolding(kind, range) {
+    const r = this.tokensOff ? null : this.richNow();
+    for (const span of parsedInline(this.seen, this.defsNow().map).spans) {
+      if (span.kind !== kind) continue;
+      const extent = r ? extentOf(r, span) : { start: span.start, end: span.end };
+      if (extent.start <= range.start && range.end <= extent.end) return { kind, span, extent };
+    }
+    return null;
+  }
+
+  // After the selection was read or typed in: the element picked stays while the selection lies inside it.
+  keepElement() {
+    if (this.element && this.known.valid && !this.elementNow()) this.element = null;
+  }
+
+  closeElement(cx) {
+    if (!this.element) return;
+    this.element = null;
+    cx?.notify();
+  }
+
+  // A press outside the element's float: one in the edited field is that field's to judge (fieldDown, pressToken);
+  // any other closes it, once the press has gone where it goes.
+  elementPressOut() {
+    const picked = this.element;
+    if (picked) this.post(cx => { if (this.element === picked) this.closeElement(cx); });
+  }
+
+  // Drawn by the root, the link picked or the address box over it.
+  elementFloat(t) {
+    if (this.linkBoxOpen()) return this.linkBoxView(t);
+    const picked = this.elementNow();
+    return picked ? this[ELEMENTS[picked.kind].float](picked, t) : null;
   }
 
   placeCaret(at, cx) {
@@ -2384,7 +2483,7 @@ export class Editor {
   focusField(cx) {
     const act = this.act, state = this.field;
     state.focus();
-    cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.act === act && this.activeKey && !this.noteOpen()) state.focus(); });
+    cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.act === act && this.activeKey && !this.boxOpen()) state.focus(); });
   }
 
   // What was typed is parsed in, an emptied block goes, and a pending one is never written unless it holds a marker held
@@ -2405,6 +2504,7 @@ export class Editor {
     if (gone) this.f = null;
     this.commit(cx);
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
+    this.element = null; this.linkBox = null;
     this.letField();
     if (pending) this.forget(pending.key);
     if (gone) this.setText(applySplice(base, gone), cx);
@@ -2440,6 +2540,7 @@ export class Editor {
   release() {
     const pending = this.pending;
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
+    this.element = null; this.linkBox = null;
     this.letField();
     if (pending) this.forget(pending.key);
   }
@@ -2566,6 +2667,7 @@ export class Editor {
     this.seen = value;
     if (!s) return this.retoken();
     this.known = { start: s.fieldCaret, end: s.fieldCaret, valid: true };
+    this.keepElement();
     const a = s.fieldCaret - d.inserted.length;
     this.slashChanged({ a, r: d.removed, ins: value.slice(a, s.fieldCaret) }, value, own, cx);
     const rec = this.typing(this.act, s.end, s.caret);
@@ -2599,6 +2701,7 @@ export class Editor {
     if (on) this.focusedState = state;
     else if (this.focusedState === state) this.focusedState = null;
     if (!on && state === this.field) this.closeBar(cx);
+    if (!on && state === this.field && !this.linkBoxOpen()) this.closeElement(cx);
     const key = on && state !== this.field ? this.fieldKeys.get(state) : undefined;
     if (key !== undefined && key !== this.shiftField && key !== this.cmdPress?.key) this.takeField(key, cx);
   }
@@ -2741,6 +2844,7 @@ export class Editor {
     const selects = e?.keystroke === "cmd-a" || (m.shift && MOVES.has(k));
     this.ownKeyUp = null; this.menuKeyUp = null;
     if (selects) {
+      this.element = null;
       this.syncField(cx);
       this.caretNow();
       this.retoken();
@@ -2781,11 +2885,15 @@ export class Editor {
   // The field's wrapper lives in the block's view, whose cx cannot redraw this one: what needs a cx goes to the size
   // task. The press is marked so the viewport, if it hears it too, leaves it to the field. With Shift the press selects
   // blocks and the field's focus is not taken; with Cmd it may open a link (openLinkIn). A press in the edited field
-  // leaves its caret unknown until it is read after the mouse-up, so that a key-up meanwhile crosses no edge.
+  // leaves its caret unknown until it is read after the mouse-up, so that a key-up meanwhile crosses no edge. The
+  // element picked is let go: only a click on a token picks one (pressToken), so a drag shows the bar.
   fieldDown(key, e) {
     this.fieldPress = { kind: "down", x: e?.position?.x, y: e?.position?.y };
     this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e); this.pressX = e?.position?.x ?? null;
     this.cmdPress = e?.modifiers?.platform ? { key, opened: false } : null;
+    const picked = key === this.activeKey ? this.elementNow() : null;
+    this.pressedOn = picked && { key, value: this.seen, kind: picked.kind, start: picked.span.start };
+    this.element = null;
     if (this.sel && !e?.modifiers?.shift) this.post(cx => this.setSel(null, cx));
     if (key === this.activeKey) {
       this.known = { ...this.known, valid: false }; this.ownKeyUp = null;
@@ -2818,6 +2926,7 @@ export class Editor {
       if (key !== this.activeKey) this.takeField(key, cx);
       if (key !== this.activeKey || !this.editable()) return;
       this.syncField(cx);
+      this.element = null;
       const c = this.caretNow(), word = c && c.start === c.end ? wordAround(this.seen, c.start) : null;
       if (word) this.selectField(word);
       this.retoken();
@@ -2889,6 +2998,7 @@ export class Editor {
   caretNow() {
     const c = caretOf(this.field);
     this.known = c ? { ...c, valid: true } : NO_CARET;
+    this.keepElement();
     return c;
   }
 
@@ -3179,7 +3289,7 @@ export class Editor {
   }
 
   format(mark, cx) {
-    this.formatWith((value, r) => toggleMark(value, r, mark, mark === "link" ? cx.read_from_clipboard?.() : "", { defs: this.doc?.defs }), cx);
+    this.formatWith((value, r) => toggleMark(value, r, mark, { defs: this.doc?.defs }), cx);
   }
 
   // The bar's colour menu: every character of the selection (or the word holding the caret) in text colour `name`, one
@@ -3199,13 +3309,17 @@ export class Editor {
     if (!this.takesMarks()) return;
     const bar = this.barOpen(), r = this.caretNow(), value = this.seen;
     const next = r && edit(value, r);
-    if (!next) return;
-    const before = this.f && !this.pending ? docRange(this.f, r) : null, was = this.text;
+    if (next && this.typeChange(value, r, next, cx) && bar) this.openBar(cx);
+  }
+
+  // Field value `value` with `range` selected becomes `next` ({ value, start, end }), its range selected, as one entry
+  // of the history whose undo puts `range` back. -> false when the field stopped showing what was typed.
+  typeChange(value, range, next, cx) {
+    const before = this.f && !this.pending ? docRange(this.f, range) : null, was = this.text;
     const typed = this.typeEdits(value, marksEdits(value, next.value), cx) && this.selectField(next);
     this.retoken();
-    if (!typed) return;
-    if (before && this.text !== was) this.history.select(this.text, before, docRange(this.f, next));
-    if (bar) this.openBar(cx);
+    if (typed && before && this.text !== was) this.history.select(this.text, before, docRange(this.f, next));
+    return typed;
   }
 
   takesMarks() {
@@ -3548,11 +3662,11 @@ export class Editor {
   }
 
   // The format bar belongs to one activation of a writable text block, as the menu does, and shows while the selection
-  // last read or set holds more than spaces and the menu and the comment box are shut.
+  // last read or set holds more than spaces, the menu and the boxes are shut, and no element is picked.
   barOpen() {
     const k = this.known;
     return this.bar?.act === this.act && Boolean(this.activeKey) && this.editable() && k.valid
-      && Boolean(this.seen.slice(k.start, k.end).trim()) && !this.slashOpen() && !this.noteOpen() && this.takesMarks();
+      && Boolean(this.seen.slice(k.start, k.end).trim()) && !this.slashOpen() && !this.boxOpen() && !this.elementNow() && this.takesMarks();
   }
 
   // After a readout of the field's selection, or a format key while the bar is open: the bar shows over a selection and
@@ -3625,13 +3739,13 @@ export class Editor {
     this.openBar(cx);
   }
 
-  // Over the first row of field range `k` or under its last, its left edge at the range's start; the bar, or a float of
-  // `size`. Null while that row is off the page.
-  placeBar(k = this.known, size = this.barLayout()) {
+  // Over the first row of field range `k` or under its last (`place` says which first), its left edge at the range's
+  // start; the bar, or a float of `size`. Null while that row is off the page.
+  placeBar(k = this.known, size = this.barLayout(), place = barPlace) {
     const key = this.activeKey, i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
     const c = this.chromeOf(d, true), onPane = at => COLUMN.padTop + this.caretTop(i, at) - this.offset;
-    return barPlace({
+    return place({
       firstTop: onPane(k.start), lastTop: onPane(k.end), rowH: d.row, size,
       col: this.columnOf(k.start), advance: this.calOf(d.style).advance, fieldW: c.w, fieldX: c.x,
       viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H,
@@ -3797,10 +3911,7 @@ export class Editor {
     const next = n.kind === "add" ? addComment(n.value, n.range, text) : editComment(n.value, n.comment, text);
     if (!next || next.refused) return this.cancelNote(cx);
     this.note = null;
-    const before = docRange(this.f, n.range), was = this.text;
-    const typed = this.typeEdits(n.value, marksEdits(n.value, next.value), cx) && this.selectField(next);
-    this.retoken();
-    if (typed && this.text !== was) this.history.select(this.text, before, docRange(this.f, next));
+    this.typeChange(n.value, n.range, next, cx);
     this.focusField(cx);
     cx.notify();
   }
@@ -3833,6 +3944,144 @@ export class Editor {
       .on_mouse_move((_e, cx) => cx.stop_propagation())
       .on_mouse_down_out((_e, cx) => this.closeNote(cx))
       .child(Input.new(this.noteField).flex_1().h_full().text_size(13).text_color(t.foreground));
+  }
+
+  // A box over the page that holds the keyboard: the comment box or the address box.
+  boxOpen() {
+    return this.noteOpen() || this.linkBoxOpen();
+  }
+
+  // Drawn by the root under the link picked, over it when there is no room. Presses on it go no further, so the field
+  // keeps the keyboard and the selection.
+  linkPopover({ span, extent }, t) {
+    const shown = clipMiddle(span.url, LINK_POP.addressChars), place = this.placeBar(extent, linkPopoverSize([...shown].length), popoverPlace);
+    if (!place) return null;
+    const copied = Boolean(this.element.copied);
+    return h_flex().id("md-link").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(BAR.pad).items_center()
+      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().text_size(12.5)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_move((_e, cx) => cx.stop_propagation())
+      .on_mouse_down_out(() => this.elementPressOut())
+      .child(div().id("md-link-address").flex_1().min_w(0).px(LINK_POP.addressPad).truncate().text_color(span.url ? t.muted : t.dim)
+        .tooltip(span.url || NO_ADDRESS).child(shown || NO_ADDRESS))
+      .child(div().flex_none().w(1).h(BAR_RULE_H).mx((BAR.sep - 1) / 2).bg(t.border))
+      .children(LINK_BUTTONS.map(b => this.linkButton(b, copied && b.done ? b.done : b, t)));
+  }
+
+  linkButton(b, look, t) {
+    return h_flex().id(`md-link-${b.name}`).size(BAR.button).flex_none().items_center().justify_center().rounded(6).cursor_pointer()
+      .tooltip(look.tip)
+      .hover(s => s.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.linkAction(b.name, cx); })
+      .child(svg(ICON(look.icon)).size(16).flex_none().text_color(t.muted));
+  }
+
+  // The popover's buttons. Open goes where Cmd+click goes; Copy puts the address on the clipboard; Edit opens the
+  // address box in the popover's place; Remove takes the link off, its text staying selected, as one entry of the history.
+  linkAction(name, cx) {
+    const picked = this.elementNow();
+    if (picked?.kind !== "link") return;
+    const { span, extent } = picked;
+    if (name === "open") return this.link(span.url, cx);
+    if (name === "copy") {
+      cx.write_to_clipboard(span.url);
+      this.element = { ...this.element, copied: true };
+      return cx.notify();
+    }
+    if (name === "edit") return this.showLinkBox({ link: span, place: extent, text: span.url, back: true }, cx);
+    const value = this.seen, next = unlink(value, span, { defs: this.doc.defs });
+    if (!next) return;
+    this.element = null;
+    this.typeChange(value, this.known, next, cx);
+    cx.notify();
+  }
+
+  // Cmd+K or the bar's Link button: the address box, for the link picked or the one the selection lies in (a caret at
+  // its edge is outside it), else for a new link over the selection, the word holding the caret, or at the caret,
+  // offering the address the clipboard holds.
+  linkKey(cx) {
+    if (!this.takesMarks()) return;
+    const r = this.caretNow();
+    if (!r) return;
+    const picked = this.elementNow(), held = picked?.kind === "link" ? picked : this.elementHolding("link", r);
+    const inside = held && (picked || r.start !== r.end || (held.extent.start < r.start && r.start < held.extent.end));
+    if (inside) return this.showLinkBox({ link: held.span, place: held.extent, text: held.span.url, back: false }, cx);
+    const sel = actedOn(this.seen, r), target = sel.start === undefined ? { start: sel.caret, end: sel.caret } : { start: sel.start, end: sel.end };
+    if (!addLink(this.seen, target, ANY_ADDRESS, { defs: this.doc.defs })) return notify({ title: LINK_REFUSED, level: "info" });
+    this.element = null;
+    this.showLinkBox({ link: null, target, place: target, text: clipboardAddress(cx.read_from_clipboard?.()), back: false }, cx);
+  }
+
+  // The address box belongs to one activation of a writable block, over the field value it was opened on.
+  linkBoxOpen() {
+    const b = this.linkBox;
+    return Boolean(b) && b.act === this.act && Boolean(this.activeKey) && this.editable() && b.value === this.seen;
+  }
+
+  // The box takes the keyboard holding `text`, all selected, while the field keeps its selection. `link` is the link it
+  // changes (none: a new one goes over `target`), `place` the range it sits under, and `back` whether Escape goes back
+  // to the link's popover.
+  showLinkBox({ link, target = null, place, text, back }, cx) {
+    this.closeSlash(cx);
+    this.closeBar(cx);
+    this.linkBox = { act: this.act, value: this.seen, range: this.known, link: link && { start: link.start }, target, place, back };
+    this.guard(() => {
+      this.linkField.set_value(text);
+      this.linkField.set_selected_range({ start: 0, end: text.length });
+    });
+    this.linkField.focus();
+    cx.notify();
+  }
+
+  // Enter in the address box: the link gets the address typed (an empty one takes the link off), or a new link to it is
+  // made, as one entry of the history whose undo puts the selection back. The link stays selected with its popover
+  // showing the new address. An empty address for a new link changes nothing.
+  applyLinkBox(cx) {
+    const b = this.linkBox;
+    if (!this.linkBoxOpen()) return this.closeLinkBox(cx);
+    const address = linkAddress(this.linkField.value()), value = this.seen, defs = { defs: this.doc.defs };
+    const span = b.link && parsedInline(value, this.defsNow().map).spans.find(sp => sp.kind === "link" && sp.start === b.link.start);
+    if (!span && !address) return this.cancelLinkBox(cx);
+    const next = span ? (address ? setAddress(value, span, address, defs) : unlink(value, span, defs)) : addLink(value, b.target, address, defs);
+    this.linkBox = null;
+    if (next) this.typeChange(value, b.range, next, cx);
+    else this.selectField(b.range);
+    this.element = next && address ? { act: this.act, kind: "link" } : null;
+    this.focusField(cx);
+    cx.notify();
+  }
+
+  // Escape in the address box: nothing changes, the field gets the keyboard back with its selection, and the popover
+  // shows again when the box came from it.
+  cancelLinkBox(cx) {
+    const b = this.linkBox;
+    if (!this.linkBoxOpen()) return this.closeLinkBox(cx);
+    this.linkBox = null;
+    this.selectField(b.range);
+    this.retoken();
+    if (!b.back) this.element = null;
+    this.focusField(cx);
+    cx.notify();
+  }
+
+  closeLinkBox(cx) {
+    if (!this.linkBox) return;
+    this.linkBox = null;
+    cx?.notify();
+  }
+
+  // Drawn by the root where the link's popover goes. Presses on it go no further; one outside closes it, writing nothing.
+  linkBoxView(t) {
+    const place = this.placeBar(this.linkBox.place, LINK_BOX, popoverPlace);
+    if (!place) return null;
+    return div().id("md-link-box").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(LINK_BOX.pad).flex()
+      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().key_context(NOTE)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_move((_e, cx) => cx.stop_propagation())
+      .on_mouse_down_out((_e, cx) => { this.closeLinkBox(cx); this.elementPressOut(); })
+      .child(Input.new(this.linkField).flex_1().h_full().text_size(13).text_color(t.foreground));
   }
 
   openCard(key, cx) {
@@ -4097,6 +4346,8 @@ export class Editor {
     const bar = this.barPlaces();
     if (bar) vp.child(this.formatBar(bar, t));
     if (bar?.menu) vp.child(this.barMenuOf(bar, t));
+    const float = this.elementFloat(t);
+    if (float) vp.child(float);
     if (this.calibrating) {
       vp.child(this.calStrip(t));
       this.giveUpLater(cx);

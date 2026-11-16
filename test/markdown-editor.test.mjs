@@ -6895,29 +6895,6 @@ test("setColor gives the selection a text colour as one undo step; default takes
   assert.equal(m.view.text, lit, "one undo step");
 });
 
-test("Cmd+K links the selection with the caret in the parentheses, or with the web address the clipboard holds and the caret after it", async () => {
-  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
-  await openBlock(m, 0);
-  const field = m.view.field;
-  m.cx.held = undefined;
-  field.select(6, 11);
-  act(m, "mdb-link");
-  assert.deepEqual([m.view.text, field.selection], ["Hello [world]().\n\nEnd\n", { start: 14, end: 14 }]);
-  field.type("https://a.org", m.cx);
-  assert.equal(m.view.text, "Hello [world](https://a.org).\n\nEnd\n");
-  act(m, "mdb-undo");
-  act(m, "mdb-undo");
-  assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }]);
-  m.cx.held = "  https://example.com/page\n";
-  act(m, "mdb-link");
-  assert.deepEqual([m.view.text, field.selection], ["Hello [world](https://example.com/page).\n\nEnd\n", { start: 39, end: 39 }]);
-  const log = field.log.length;
-  field.select(8, 10);
-  act(m, "mdb-link");
-  assert.equal(m.view.text, "Hello [world](https://example.com/page).\n\nEnd\n", "a link's text is not linked again");
-  assert.deepEqual(replaces(field, log), []);
-});
-
 test("a heading and a list item keep their hidden # and - when their text is formatted", async () => {
   const m = await page("# Title\n\n- one\n- two\n", { 0: 35, 1: 38, 2: 30 });
   await openBlock(m, 0);
@@ -7007,7 +6984,7 @@ test("marks around a selection across the line breaks of a hard-wrapped paragrap
     ["Para one\nline two\n\nEnd\n", [5, 13], "mdb-italic", "Para *one\nline* two\n\nEnd\n"],
     ["> one\n> two\n\nEnd\n", [0, 7], "mdb-bold", "> **one\n> two**\n\nEnd\n"],
     ["- item one\n  more\n\nEnd\n", [5, 13], "mdb-strike", "- item ~~one\n  more~~\n\nEnd\n"],
-    ["Para one\nline two\n\nEnd\n", [5, 13], "mdb-link", "Para [one\nline]() two\n\nEnd\n"],
+    ["Para one\nline two\n\nEnd\n", [5, 13], "mdb-link", "Para [one\nline](u) two\n\nEnd\n"],
   ]) {
     reset();
     const m = await page(doc, { 0: 60, 1: 38 });
@@ -7015,6 +6992,10 @@ test("marks around a selection across the line breaks of a hard-wrapped paragrap
     const shown = m.view.field.value();
     m.view.field.select(...select);
     act(m, action);
+    if (action === "mdb-link") {
+      m.view.linkField.set_value("u");
+      m.view.linkField.submit(m.cx);
+    }
     assert.equal(m.view.text, marked, action);
     if (action !== "mdb-link") {
       act(m, action);
@@ -7387,26 +7368,6 @@ test("a format key over a partly bold selection makes all of it bold, the bar's 
   assert.equal(m.view.text, "Plain **text and bold words** here.\n\nEnd\n", "one undo step per key");
   act(m, "mdb-undo");
   assert.equal(m.view.text, "Plain text and **bold words** here.\n\nEnd\n");
-});
-
-test("Link on the bar closes it, the caret left in the parentheses or after the clipboard's address; inside a link it shows pressed and changes nothing", async () => {
-  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
-  await openBlock(m, 0);
-  m.cx.held = undefined;
-  await selectByMouse(m, 6, 11);
-  barPress(m, "link");
-  assert.deepEqual([m.view.text, m.view.field.selection, barOf(m)], ["Hello [world]().\n\nEnd\n", { start: 14, end: 14 }, null]);
-  act(m, "mdb-undo");
-  assert.equal(m.view.text, "Hello world.\n\nEnd\n");
-  m.cx.held = "https://a.org";
-  await selectByMouse(m, 6, 11);
-  barPress(m, "link");
-  assert.deepEqual([m.view.text, m.view.field.selection, barOf(m)], ["Hello [world](https://a.org).\n\nEnd\n", { start: 28, end: 28 }, null]);
-  await selectByMouse(m, 7, 12);
-  assert.deepEqual(pressedMarks(m), ["link"]);
-  const log = m.view.field.log.length;
-  barPress(m, "link");
-  assert.deepEqual([m.view.text, replaces(m.view.field, log), Boolean(barOf(m))], ["Hello [world](https://a.org).\n\nEnd\n", [], true], "a link is left as it is");
 });
 
 test("presses and pointer moves on the format bar go no further than it, so the page and the field under it take nothing", async () => {
@@ -8180,25 +8141,337 @@ test("a drag inside a block selects in its field and shows the bar; one that rea
   assert.deepEqual([m.view.activeKey, other.selection.start === other.selection.end], [null, true], "a field that lost the keyboard shows no selection");
 });
 
-test("Cmd+press on a link opens it, in a block being edited or not, and opens no block; a plain press places the caret", async () => {
-  const m = await page("See [the docs](https://e.com/d) now\n\nOther\n", { 0: 24, 1: 38 });
+// A click on token `t` of block i's field, `share` of the way across it: the wrapper's mouse-down, the field taking the
+// keyboard, Herdr selecting the token and reporting the click, the mouse-up, and the readout 30 ms after it.
+async function clickToken(m, i, t, { modifiers = NO_MODS, share = 0.5 } = {}) {
+  const key = keyAt(m, i), state = m.view.blockField(key), wrap = () => must(m.tree(), `md-field-${key}`);
+  const bounds = { x: 100, y: 0, width: 100, height: 24 }, p = { x: bounds.x + share * bounds.width, y: 10 };
+  fire(wrap(), "on_mouse_down:left", press(p, { modifiers }), m.cx);
+  if (key !== m.view.activeKey) state.handlers.focus({}, m.cx);
+  state.select(t.range.start, t.range.end);
+  fire(inputOf(m, i), "on_token_click", { ...t, bounds, modifiers }, m.cx);
+  fire(wrap(), "on_mouse_up:left", press(p, { modifiers }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+}
+const tokenShowing = (m, i, text) => ownField(m, i).tokens().find(t => t.token.label === text);
+const tokenAt = (m, i, at) => ownField(m, i).tokens().find(t => t.range.start <= at && at < t.range.end);
+// What a field draws: its value with each token's source replaced by what the token shows.
+function drawnText(state) {
+  let out = "", at = 0;
+  for (const t of state.tokens()) {
+    out += state.value().slice(at, t.range.start) + t.token.label;
+    at = t.range.end;
+  }
+  return out + state.value().slice(at);
+}
+const LINK_DOC = "See [the docs](https://e.com/d) now\n\nOther\n";
+const popoverOf = m => find(m.tree(), "md-link");
+const linkBoxOf = m => find(m.tree(), "md-link-box");
+const linkPress = (m, name) => fire(must(m.tree(), `md-link-${name}`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+const addressOf = m => textOf(must(m.tree(), "md-link-address")).trim();
+const typeAddress = (m, text) => { m.view.linkField.set_value(text); m.view.linkField.submit(m.cx); };
+// Never a bracket, a "](" or the address in what the field draws.
+const assertNoSource = (m, address, why) => assert.doesNotMatch(drawnText(m.view.blockField(m.view.activeKey) ?? m.view.field), new RegExp(`[[\\]]|${address.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`), why);
+
+test("Cmd+press on a link opens it, in a block being edited or not, and opens no block; a plain press selects the link", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
   const key = keyAt(m, 0), state = ownField(m, 0), CMD = { ...NO_MODS, platform: true };
-  const pressToken = async (t, modifiers, focus) => {
-    const wrap = () => must(m.tree(), `md-field-${key}`);
-    fire(wrap(), "on_mouse_down:left", press({ x: 150, y: 10 }, { modifiers }), m.cx);
-    if (focus) state.handlers.focus({}, m.cx);
-    fire(inputOf(m, 0), "on_token_click", { ...t, bounds: { x: 100, y: 0, width: 100, height: 24 }, modifiers }, m.cx);
-    fire(wrap(), "on_mouse_up:left", press({ x: 150, y: 10 }, { modifiers }), m.cx);
-    await flush();
-    await fire_timers(m.cx, { ms: 30 });
-  };
-  await pressToken(state.tokens()[1], CMD, true);
+  await clickToken(m, 0, state.tokens()[1], { modifiers: CMD });
   assert.deepEqual([m.cx.opened, m.view.activeKey], [["https://e.com/d"], null], "opened, and the block is not edited");
-  await pressToken(state.tokens()[1], NO_MODS, true);
-  assert.deepEqual([m.cx.opened.length, m.view.activeKey, m.view.known.start], [1, key, 11], "a plain press puts the caret in the link's text, between o and c");
-  await pressToken(state.tokens().find(t => t.token.text.startsWith("[t")), CMD, false);
+  await clickToken(m, 0, state.tokens()[1]);
+  assert.deepEqual([m.cx.opened.length, m.view.activeKey, m.view.known], [1, key, { start: 4, end: 31, valid: true }], "a plain press selects the whole link");
+  await clickToken(m, 0, state.tokens().find(t => t.token.text.startsWith("[t")), { modifiers: CMD });
   assert.deepEqual([m.cx.opened.length, m.view.activeKey], [2, key], "Cmd+press in the edited block opens it too");
   assert.equal(m.view.known.start, m.view.known.end, "and leaves a caret");
+});
+
+test("a press on a link selects its whole text and shows its popover under it: the address, then Open, Copy, Edit and Remove; no format bar", async () => {
+  const advance = STYLES.p.size * 0.47;
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  assert.deepEqual([m.view.activeKey, m.view.field.selection], [keyAt(m, 0), { start: 4, end: 31 }]);
+  const t = m.tree(), pop = must(t, "md-link"), address = must(pop, "md-link-address");
+  assert.equal(barOf(m), null, "the popover, not the bar");
+  assert.deepEqual([textOf(address).trim(), address.style.tooltip], ["https://e.com/d", "https://e.com/d"]);
+  assert.deepEqual(["open", "copy", "edit", "remove"].map(b => must(pop, `md-link-${b}`).style.tooltip), ["Open link", "Copy link", "Edit link", "Remove link"]);
+  assert.deepEqual(["open", "copy", "edit", "remove"].map(b => iconOf(must(pop, `md-link-${b}`)).path), ["external-link", "copy", "pencil", "unlink"].map(icon));
+  assert.deepEqual([pop.style.top, pop.style.left, pop.style.h], [topOf(m, 0) + 24 + BAR.gap, X + 4 * advance, BAR.button + 2 * (BAR.pad + 1)], "under the link's row, at its start");
+  assert.deepEqual([pop.style.bg, pop.style.border_1, pop.style.border_color, pop.style.rounded, pop.style.shadow_lg], ["popover", true, "border", 8, true]);
+  assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-link", "md-cal"], "over the page");
+  audit(t);
+  assertNoSource(m, "https://e.com/d", "the link selected");
+  assert.equal(drawnText(m.view.field), "See the docs now");
+});
+
+test("a long address shows its start and its end, the middle left out; the popover is never wider than the pane", async () => {
+  const url = `https://example.com/${"a".repeat(80)}/end`;
+  const m = await page(`Go [there](${url}) now\n\nOther\n`, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "there"));
+  const shown = addressOf(m);
+  assert.ok(shown.startsWith("https://example.com/") && shown.endsWith("/end") && shown.includes("…") && shown.length < url.length, shown);
+  assert.equal(must(m.tree(), "md-link-address").style.tooltip, url, "the full address as its tooltip");
+  viewportOf(m, 260, 600);
+  const pop = popoverOf(m).style;
+  assert.ok(pop.left >= BAR.margin && pop.left + pop.w <= 260 - BAR.margin, `${pop.left} + ${pop.w}`);
+});
+
+test("a second press on the selected link puts the caret where it lands; the popover stays while the caret is in the link and goes once it leaves", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  await clickToken(m, 0, tokenShowing(m, 0, "o"), { share: 1 });
+  assert.deepEqual(m.view.field.selection, { start: 11, end: 11 }, "after the o");
+  assert.ok(popoverOf(m), "still there");
+  assert.equal(barOf(m), null);
+  assertNoSource(m, "https://e.com/d", "the caret in the link");
+  m.view.field.type("x", m.cx);
+  assert.equal(m.view.text, "See [the doxcs](https://e.com/d) now\n\nOther\n", "its text is edited");
+  assert.ok(popoverOf(m), "the caret is still in the link");
+  await caretTo(m, 1);
+  assert.equal(popoverOf(m), null, "the caret left the link");
+  await caretTo(m, 9);
+  assert.equal(popoverOf(m), null, "and coming back does not bring it back");
+  await clickToken(m, 0, tokenAt(m, 0, 5));
+  assert.deepEqual([m.view.field.selection, Boolean(popoverOf(m))], [{ start: 4, end: 32 }, true], "a press picks it again");
+});
+
+test("the link's popover closes on Escape, keeping the selection, and on a press outside it; a drag over the link's text shows the bar", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  escape(m);
+  assert.deepEqual([popoverOf(m), barOf(m), ...editing(m)], [null, null, keyAt(m, 0), "See [the docs](https://e.com/d) now", { start: 4, end: 31 }]);
+  escape(m);
+  assert.equal(m.view.activeKey, null, "Escape again stops editing");
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  fire(must(m.tree(), "md-link"), "on_mouse_down_out", press({ x: 600, y: 300 }), m.cx);
+  await flush();
+  assert.equal(popoverOf(m), null, "a press outside it");
+  await clickToken(m, 0, tokenAt(m, 0, 10));
+  await selectByMouse(m, 5, 12);
+  assert.deepEqual([popoverOf(m), Boolean(barOf(m))], [null, true], "a drag");
+  await clickToken(m, 0, tokenAt(m, 0, 10));
+  m.view.field.select(4, 8);
+  keyUp(m, "left", { shift: true });
+  await flush();
+  assert.deepEqual([popoverOf(m), Boolean(barOf(m))], [null, true], "Shift+arrows");
+});
+
+test("a link inside bold text: the press selects it with the bold's marks that go with its letters, the popover stays, and Remove keeps the bold", async () => {
+  const m = await page("Say **[the docs](u)** now\n\nOther\n", { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  assert.deepEqual([m.view.field.selection, addressOf(m)], [{ start: 4, end: 21 }, "u"]);
+  linkPress(m, "remove");
+  assert.deepEqual([m.view.text, selectedText(m)], ["Say **the docs** now\n\nOther\n", "**the docs**"]);
+});
+
+test("presses on the link's popover go no further, so the field keeps the keyboard and the selection", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  const stopped = m.cx.stopped, pop = must(m.tree(), "md-link");
+  fire(pop, "on_mouse_down:left", press({ x: 2, y: 2 }), m.cx);
+  fire(pop, "on_mouse_up:left", press({ x: 2, y: 2 }), m.cx);
+  fire(pop, "on_mouse_move", { position: { x: 2, y: 2 }, local_position: { x: 2, y: 2 }, modifiers: NO_MODS }, m.cx);
+  assert.equal(m.cx.stopped - stopped, 3);
+  await flush();
+  assert.deepEqual([Boolean(popoverOf(m)), ...editing(m)], [true, keyAt(m, 0), "See [the docs](https://e.com/d) now", { start: 4, end: 31 }]);
+});
+
+test("Open opens the link as Cmd+click does; Copy puts its address on the clipboard and shows a check", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  linkPress(m, "open");
+  assert.deepEqual(m.cx.opened, ["https://e.com/d"]);
+  linkPress(m, "copy");
+  assert.equal(m.cx.read_from_clipboard(), "https://e.com/d");
+  const copy = must(m.tree(), "md-link-copy");
+  assert.deepEqual([iconOf(copy).path, copy.style.tooltip], [icon("check"), "Copied"]);
+  assert.deepEqual([m.view.text, m.view.field.selection, Boolean(popoverOf(m))], [LINK_DOC, { start: 4, end: 31 }, true], "nothing else changes");
+});
+
+test("Remove takes the link's marks and address off, its text staying selected, as one undo step that brings the link and its selection back", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  linkPress(m, "remove");
+  assert.deepEqual([m.view.text, m.view.field.selection, popoverOf(m), barOf(m)], ["See the docs now\n\nOther\n", { start: 4, end: 12 }, null, null]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], [LINK_DOC, { start: 4, end: 31 }]);
+  assert.equal(m.view.history.canUndo, false, "one entry");
+});
+
+test("Edit turns the popover into the address box, holding the address all selected; Enter applies a new one as one undo step and the popover shows it", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  const at = popoverOf(m).style;
+  linkPress(m, "edit");
+  const t = m.tree(), box = must(t, "md-link-box"), input = all(box, n => n.kind === "input")[0];
+  assert.deepEqual([popoverOf(m), input.state, m.view.linkField.value(), m.view.linkField.selection, m.view.linkField.focused], [null, m.view.linkField, "https://e.com/d", { start: 0, end: 15 }, true]);
+  assert.equal(m.view.linkField.options.placeholder, "Paste or type a link");
+  assert.deepEqual([box.style.top, box.style.left, box.style.key_context], [at.top, at.left, NOTE], "where the popover was");
+  audit(t);
+  assertNoSource(m, "https://e.com/d", "while the box is open");
+  m.view.field.focused = false;
+  typeAddress(m, "google.com");
+  assert.equal(m.view.text, "See [the docs](https://google.com) now\n\nOther\n", "a bare domain gets https://");
+  assert.deepEqual([linkBoxOf(m), addressOf(m), m.view.field.selection, m.view.field.focused], [null, "https://google.com", { start: 4, end: 34 }, true], "the popover shows the new address");
+  assertNoSource(m, "google.com", "after Enter");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], [LINK_DOC, { start: 4, end: 31 }], "one undo step");
+});
+
+test("Escape in the address box goes back to the popover with nothing changed; an empty address with Enter takes the link off", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  linkPress(m, "edit");
+  m.view.linkField.set_value("https://other.org");
+  act(m, "mdb-note-cancel");
+  assert.deepEqual([linkBoxOf(m), addressOf(m), m.view.text, m.view.field.selection, m.view.field.focused], [null, "https://e.com/d", LINK_DOC, { start: 4, end: 31 }, true]);
+  linkPress(m, "edit");
+  typeAddress(m, "   ");
+  assert.deepEqual([m.view.text, m.view.field.selection, popoverOf(m), linkBoxOf(m)], ["See the docs now\n\nOther\n", { start: 4, end: 12 }, null, null]);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, LINK_DOC);
+});
+
+test("the address box writes what is typed as the link's address: anchors, paths and mail as typed, spaces and parentheses safely", async () => {
+  for (const [typed, written] of [
+    ["#intro", "#intro"], ["a.md", "a.md"], ["mailto:me@x.org", "mailto:me@x.org"], ["notes/my plan (draft.md", "<notes/my plan (draft.md>"],
+    ["https://en.wikipedia.org/wiki/Fish_(food)", "https://en.wikipedia.org/wiki/Fish_(food)"],
+  ]) {
+    reset();
+    const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+    await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+    linkPress(m, "edit");
+    typeAddress(m, typed);
+    assert.equal(m.view.text, `See [the docs](${written}) now\n\nOther\n`, typed);
+    assert.equal(must(m.tree(), "md-link-address").style.tooltip, typed);
+    assertNoSource(m, typed, typed);
+  }
+});
+
+test("Cmd+K on a selection opens the address box under it, empty; Enter makes the selection a link to the address and shows its popover; one undo step", async () => {
+  const advance = STYLES.p.size * 0.47;
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  m.cx.held = undefined;
+  await selectByMouse(m, 6, 11);
+  act(m, "mdb-link");
+  const box = must(m.tree(), "md-link-box");
+  assert.deepEqual([barOf(m), m.view.linkField.value(), m.view.linkField.focused, m.view.text], [null, "", true, "Hello world.\n\nEnd\n"], "nothing written yet");
+  assert.deepEqual([box.style.top, box.style.left], [topOf(m, 0) + 24 + BAR.gap, X + 6 * advance], "under the selection");
+  assertNoSource(m, "x-none", "the box open");
+  typeAddress(m, "a.org/x");
+  assert.equal(m.view.text, "Hello [world](https://a.org/x).\n\nEnd\n");
+  assert.deepEqual([addressOf(m), m.view.field.selection], ["https://a.org/x", { start: 6, end: 30 }]);
+  assertNoSource(m, "a.org", "the new link");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }]);
+});
+
+test("Cmd+K with an address on the clipboard offers it all selected; an empty address, or Escape, changes nothing and closes the box", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  m.cx.held = "  https://example.com/page\n";
+  await selectByMouse(m, 6, 11);
+  act(m, "mdb-link");
+  assert.deepEqual([m.view.linkField.value(), m.view.linkField.selection], ["https://example.com/page", { start: 0, end: 24 }]);
+  m.view.field.focused = false;
+  act(m, "mdb-note-cancel");
+  assert.deepEqual([linkBoxOf(m), popoverOf(m), m.view.text, m.view.field.selection, m.view.field.focused], [null, null, "Hello world.\n\nEnd\n", { start: 6, end: 11 }, true], "Escape: closed, not back to a popover");
+  m.cx.held = "not an address";
+  act(m, "mdb-link");
+  assert.equal(m.view.linkField.value(), "", "text that is no address is not offered");
+  typeAddress(m, "");
+  assert.deepEqual([linkBoxOf(m), popoverOf(m), m.view.text, m.view.history.canUndo], [null, null, "Hello world.\n\nEnd\n", false]);
+  m.cx.held = "https://example.com/page";
+  act(m, "mdb-link");
+  m.view.linkField.submit(m.cx);
+  assert.equal(m.view.text, "Hello [world](https://example.com/page).\n\nEnd\n", "Enter takes the address offered");
+});
+
+test("Cmd+K in a link opens the box with its address, as Edit does; Escape closes it", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await caretTo(m, 9);
+  await caretTo(m, 10);
+  act(m, "mdb-link");
+  assert.deepEqual([m.view.linkField.value(), m.view.field.selection], ["https://e.com/d", { start: 10, end: 10 }]);
+  typeAddress(m, "https://n.org");
+  assert.equal(m.view.text, "See [the docs](https://n.org) now\n\nOther\n");
+  await clickToken(m, 0, tokenShowing(m, 0, "s"));
+  act(m, "mdb-link");
+  assert.equal(m.view.linkField.value(), "https://n.org", "from the popover");
+  act(m, "mdb-note-cancel");
+  assert.deepEqual([linkBoxOf(m), popoverOf(m), m.view.text], [null, null, "See [the docs](https://n.org) now\n\nOther\n"]);
+});
+
+test("Cmd+K at a caret outside any word: Enter writes the address as a link whose text is the address; in a word, the word is linked", async () => {
+  const m = await page("Say  now.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  m.cx.held = undefined;
+  await caretTo(m, 4);
+  act(m, "mdb-link");
+  typeAddress(m, "https://a.org");
+  assert.deepEqual([m.view.text, m.view.field.selection, addressOf(m)], ["Say [https://a.org](https://a.org) now.\n\nEnd\n", { start: 4, end: 34 }, "https://a.org"]);
+  assert.equal(drawnText(m.view.field), "Say https://a.org now.", "the address shows once, as the text");
+  await caretTo(m, 36);
+  act(m, "mdb-link");
+  typeAddress(m, "#end");
+  assert.equal(m.view.text, "Say [https://a.org](https://a.org) [now](#end).\n\nEnd\n", "the word around the caret");
+});
+
+test("the bar's Link button opens the address box as Cmd+K does; inside a link it shows pressed", async () => {
+  const m = await page("Hello world [here](https://a.org).\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  m.cx.held = undefined;
+  await selectByMouse(m, 6, 11);
+  const stopped = m.cx.stopped;
+  barPress(m, "link");
+  assert.equal(m.cx.stopped - stopped, 1, "the press goes no further");
+  assert.deepEqual([barOf(m), Boolean(linkBoxOf(m)), m.view.linkField.value(), m.view.text], [null, true, "", "Hello world [here](https://a.org).\n\nEnd\n"]);
+  typeAddress(m, "https://w.org");
+  assert.equal(m.view.text, "Hello [world](https://w.org) [here](https://a.org).\n\nEnd\n");
+  const here = m.view.field.value().indexOf("here");
+  await caretTo(m, here + 1);
+  await selectByMouse(m, here, here + 4);
+  assert.deepEqual(pressedMarks(m), ["link"]);
+  barPress(m, "link");
+  assert.equal(m.view.linkField.value(), "https://a.org", "the link's own address");
+});
+
+test("a selection that would put a link in a link gets a notice and no box", async () => {
+  const m = await page("See [a](u) and more.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 0, 18);
+  act(m, "mdb-link");
+  assert.deepEqual([linkBoxOf(m), calls.notify], [null, [{ title: "A link can't hold another link", level: "info" }]]);
+});
+
+test("a reference link's popover shows its definition's address; Edit writes an inline address for that link and leaves the definition", async () => {
+  const doc = "See [the docs][ref] now\n\n[ref]: https://r.org\n";
+  const m = await page(doc, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  assert.equal(addressOf(m), "https://r.org");
+  linkPress(m, "edit");
+  typeAddress(m, "https://n.org");
+  assert.equal(m.view.text, "See [the docs](https://n.org) now\n\n[ref]: https://r.org\n");
+  linkPress(m, "remove");
+  assert.equal(m.view.text, "See the docs now\n\n[ref]: https://r.org\n");
+});
+
+test("an autolink or a bare address: Edit changes its text with its address, the form kept; Remove leaves its text, escaped so it does not link again", async () => {
+  const m = await page("Go <https://a.org> or www.b.org now\n\nEnd\n", { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "https://a.org"));
+  linkPress(m, "edit");
+  typeAddress(m, "c.org");
+  assert.equal(m.view.text, "Go <https://c.org> or www.b.org now\n\nEnd\n");
+  assert.equal(drawnText(m.view.field), "Go https://c.org or www.b.org now");
+  linkPress(m, "remove");
+  assert.equal(m.view.text, "Go https\\://c.org or www.b.org now\n\nEnd\n");
+  assert.equal(drawnText(m.view.field), "Go https://c.org or www.b.org now", "it shows as it did");
+  await clickToken(m, 0, tokenShowing(m, 0, "www.b.org"));
+  assert.equal(addressOf(m), "http://www.b.org");
+  linkPress(m, "remove");
+  assert.equal(m.view.text, "Go https\\://c.org or www\\.b.org now\n\nEnd\n");
 });
 
 test("a checked task's words are all tokens, so the line through it is drawn", async () => {

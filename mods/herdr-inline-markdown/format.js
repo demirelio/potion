@@ -1,14 +1,14 @@
 // The marks the format keys put on the selection of a text block's field, or take off it, and the selection's text
-// colour. A selection's formatting is rewritten by restyle.js; a caret outside a word writes empty marks here.
+// colour. A selection's formatting is rewritten by restyle.js; a caret outside a word writes empty marks here. Links
+// are made and changed by links.js.
 import { MARK_BITS, looksIn, restyle } from "./restyle.js";
+import { parsedInline } from "./inline.js";
 import { TEXT_COLORS } from "./colors.js";
 
 const SPACE = /\s/;
 const LOOSE_ON_SPACE = new Set(["bold", "italic"]);
 const TAGGED = { underline: ["<u>", "</u>"], highlight: ["<mark>", "</mark>"] };
 const WORD_BEFORE = /[\p{L}\p{M}\p{N}\p{Pc}]+$/u, WORD_AFTER = /^[\p{L}\p{M}\p{N}\p{Pc}]+/u;
-const ADDRESS = /^(?:https?:\/\/|mailto:)[^\s<>]+$/i;
-const LINK = /!?\[(?:[^[\]\n]|\[[^[\]\n]*\])*\]\((?:[^()\n]|\([^()\n]*\))*\)/g;
 
 const clampTo = (value, x) => Math.max(0, Math.min(value.length, Number(x) || 0));
 const caretAt = (value, at) => ({ value, start: at, end: at });
@@ -74,40 +74,9 @@ const AT_CARET = {
   highlight: (value, at) => taggedAt(value, at, TAGGED.highlight),
 };
 
-const balanced = s => {
-  let depth = 0;
-  for (const ch of s) {
-    if (ch === "(") depth++;
-    else if (ch === ")" && --depth < 0) return false;
-  }
-  return depth === 0;
-};
-
-// A link destination holds parentheses only in balanced pairs, unless it is written in <>.
-function addressIn(clipboard) {
-  const text = typeof clipboard === "string" ? clipboard.trim() : "";
-  if (!ADDRESS.test(text)) return "";
-  return balanced(text) ? text : `<${text}>`;
-}
-
-// A caret at a link's edge is outside it. A picture is not a link: it can be linked.
-const inLink = (value, { start, end }) => [...value.matchAll(LINK)].some(m => {
-  const from = m.index, to = from + m[0].length;
-  if (m[0][0] === "!") return false;
-  return start === end ? start > from && start < to : start >= from && end <= to;
-});
-
-function link(value, sel, clipboard) {
-  if (inLink(value, sel)) return null;
-  const address = addressIn(clipboard), text = value.slice(sel.start, sel.end);
-  const out = wrap(value, sel, "[", `](${address})`).value;
-  if (!text) return caretAt(out, sel.start + 1);
-  return caretAt(out, sel.start + text.length + (address ? address.length + 4 : 3));
-}
-
 // The selection a key acts on: spaces at its ends left out, a caret in a word the word ({ start, end, caret }), or
 // { caret } alone for a caret anywhere else.
-function actedOn(value, range) {
+export function actedOn(value, range) {
   const a = clampTo(value, range?.start), b = clampTo(value, range?.end);
   const sel = trimmed(value, Math.min(a, b), Math.max(a, b));
   if (sel.start !== sel.end) return { ...sel, caret: -1 };
@@ -123,18 +92,13 @@ function restyled(value, range, op, defs) {
   return sel.caret >= 0 ? caretAt(out.value, out.caret) : { value: out.value, start: out.start, end: out.end };
 }
 
-// `mark`: "bold" | "italic" | "strike" | "underline" | "code" | "highlight" | "link". `range`: the field's selection, in
-// UTF-16 offsets of `value`. `clipboard`: its text, which a link takes as its address when that is one web or mail
-// address. `defs`: the document's link reference definitions.
+// `mark`: "bold" | "italic" | "strike" | "underline" | "code" | "highlight". `range`: the field's selection, in UTF-16
+// offsets of `value`. `defs`: the document's link reference definitions.
 // -> { value, start, end }, the field's value and selection after the key, or null when nothing changes. Every
 // character of the selection gets the mark, unless every one has it, when it comes off them all; the selection stays on
 // them. A caret in a word acts on the word and keeps its place in it; a caret elsewhere writes an empty mark, or takes
 // one away.
-export function toggleMark(value, range, mark, clipboard = "", { defs } = {}) {
-  if (mark === "link") {
-    const sel = actedOn(value, range);
-    return link(value, sel.start === undefined ? { start: sel.caret, end: sel.caret } : sel, clipboard);
-  }
+export function toggleMark(value, range, mark, { defs } = {}) {
   if (!AT_CARET[mark]) return null;
   const sel = actedOn(value, range);
   if (sel.start === undefined) return AT_CARET[mark](value, sel.caret);
@@ -160,10 +124,17 @@ function looksOf(value, range, defs) {
   return sel.start === undefined ? [] : looksIn(value, sel, { defs });
 }
 
+// Whether the selection (the word holding the caret) lies in a link; a caret at a link's edge is outside it.
+function inLink(value, range, defs) {
+  const sel = actedOn(value, range), { start, end } = sel.start === undefined ? { start: sel.caret, end: sel.caret } : sel;
+  return parsedInline(value, defs ?? null).spans.some(sp => sp.kind === "link"
+    && (start === end ? sp.start < start && start < sp.end : sp.start <= start && end <= sp.end));
+}
+
 // Whether `mark` is on the selection already: every character of it has the mark, so its key would take it off; at a
-// caret outside a word, whether its key would take empty marks away; for a link, whether the key would change nothing.
+// caret outside a word, whether its key would take empty marks away; for a link, whether the selection lies in one.
 export function hasMark(value, range, mark, { defs } = {}) {
-  if (mark === "link") return toggleMark(value, range, mark) === null;
+  if (mark === "link") return inLink(value, range, defs);
   if (!AT_CARET[mark]) return false;
   const sel = actedOn(value, range);
   if (sel.start === undefined) return AT_CARET[mark](value, sel.caret).value.length < value.length;

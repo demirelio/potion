@@ -116,8 +116,9 @@ the source caret is being edited. Each file opens in the state it was last in, R
 note opens in Reading with an empty line to type in. `cmd-s` saves now. With a pane-header integration the toolbar
 gives way to the pane's header, which shows the same file name and toggle.
 
-- **Links in Reading:** Cmd+click on a link opens it; a plain click puts the caret in it, as in any text. In a file
-  you can't edit, a click opens it. `http(s)` opens in the browser and `mailto` in the mail app; a link to another
+- **Links in Reading:** Cmd+click on a link opens it; a plain click selects it and shows its [popover](#links), and a
+  second click puts the caret in it. In a file you can't edit, a click opens it. `http(s)` opens in the browser and
+  `mailto` in the mail app; a link to another
   markdown file opens in a pane beside this one, on the same machine; `#anchor` does nothing; any other file gives a
   notice "Can't open <name> here".
   A paragraph made only of images is drawn as pictures (see [Pictures](#pictures)); an image inside a line of text is
@@ -166,7 +167,8 @@ so it wraps as it did on the page, and keeps them in the file.
 | Key or click | What it does |
 |---|---|
 | Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, in a table at the start of the clicked cell (there the second click is exact) |
-| Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views); a plain click puts the caret in it |
+| Click a link | Selects the whole link and shows its [popover](#links) under it; a second click puts the caret in its text |
+| Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
 | Double-click a diagram or a picture | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
 | Click a linked picture | Opens its link, as Cmd+click on a link in text does; the picture itself is never opened for editing by a click |
@@ -180,15 +182,15 @@ so it wraps as it did on the page, and keeps them in the file.
 | Option+Up / Down | Moves the block (an item with its sub-items) above or below its neighbour |
 | Arrow keys | Move inside the block, and on to the block above or below at its edge |
 | Page Up / Page Down | Scrolls a page and takes the caret along |
-| Escape | Closes the format bar's open menu, else the format bar when it shows, else stops editing; Enter picks up where you were |
+| Escape | Closes a link's popover, else the format bar's open menu, else the format bar when it shows, else stops editing; Enter picks up where you were. In the address box it goes back to the popover |
 | Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them |
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code |
 | Cmd+B / Cmd+I / Cmd+U / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic, underline or strikethrough on the selection, all or nothing. If every letter of the selection has it already, the key takes it off all of them; otherwise it puts it on all of them, so a selection that is partly bold becomes all bold first. Text outside the selection keeps its formatting: a bold run the selection cuts is split, and runs that end up touching join into one. Every other formatting stays (bold-italic text that loses bold stays italic; a link keeps its address, a comment its note). The same letters stay selected, so the key again undoes it. Spaces at the ends of the selection stay outside. On a caret in a word they act on the word; elsewhere they write the two marks with the caret between them |
 | Cmd+Shift+C | The same for inline code: other formatting goes around the code (`` **`x`** ``), and making formatted text code keeps its formatting, splitting the code where it changes |
 | Cmd+Shift+H | The same for a highlight |
-| Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, the link shown as written until the caret leaves it, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
+| Cmd+K | Opens the [address box](#links) under the selection, offering the web or mail address the clipboard holds; Enter makes the selection a link to what you typed. On a caret in a word it links the word; elsewhere Enter writes the address as a link. In a link the box holds its address, to change it |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
-| Select text in a paragraph, heading, item or quote | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
+| Select text in a paragraph, heading, item or quote | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 The file stays plain markdown. Bold, italic, strikethrough and code are written `**…**`, `*…*`, `~~…~~` and
@@ -212,7 +214,7 @@ source; input methods that compose characters (Japanese, Chinese) may misbehave 
 formatted words, while direct typing in any script is fine. **Left out on purpose:** drag handles,
 images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
 (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
-the one toggle, a diagram's zoom, the format bar and the comments' cards.
+the one toggle, a diagram's zoom, the format bar, a link's popover and the comments' cards.
 
 ### The format bar
 
@@ -225,11 +227,42 @@ Selecting text in a paragraph, heading, item or quote shows a bar over it, its g
 | Bold, Italic, Underline, Strikethrough, Code | What their keys do. A button shows pressed, in the accent colour, when every letter of the selection has its mark |
 | Colour ▾ | A menu: Text (Default, Red, Yellow, Green, Teal, Purple) and Highlight (No highlight, Yellow), each with a swatch in the colour it draws in. The selection's colour and highlight are checked when all of it has the same one. A pick gives the whole selection that colour, takes it off (Default), or puts the highlight on or off. The button's icon takes the selection's colour, and its background the highlight |
 | List ▾ | A menu: Bulleted list, Numbered list and To-do list. A pick turns the block into an item of that list; the checked one, the list the block is in, turns it back into text. The button shows the block's list, pressed in one |
-| Link | What Cmd+K does |
+| Link | What Cmd+K does: the [address box](#links) |
 
 A menu opens under its button and closes on a second press of it, a pick, Escape or a press elsewhere; one menu
 shows at a time. Each pick is one Cmd+Z, the same text stays selected and the bar stays over it. The field keeps the
 keyboard throughout. In a pane too narrow for the bar it wraps onto more rows.
+
+### Links
+
+A link shows only its text, in the link colour; its brackets and address stay in the file. A click on a link selects
+all of it and shows a popover under it (over it at the bottom of the pane), in place of the format bar: the address,
+shortened in the middle when long (the whole one in its tooltip), then four buttons.
+
+| Button | What it does |
+|---|---|
+| Open | Opens the link, as Cmd+click does |
+| Copy | Puts the address on the clipboard; the button shows a check |
+| Edit | Turns the popover into the address box, holding the address |
+| Remove | Takes the link off: its text stays, selected, without the link |
+
+A second click on the link puts the caret in its text to edit it; the popover stays while the caret is in the link and
+goes when it leaves, on Escape or on a click elsewhere. A drag over the link's text, or a selection with the keyboard,
+shows the format bar instead.
+
+The **address box** is a one-line field in the popover's place, its address selected so typing replaces it. Enter
+applies it and the popover comes back showing it; Escape goes back to the popover, changing nothing; Enter on an empty
+box takes the link off. Cmd+K and the bar's Link button open the same box for a new link (Escape then closes it, and
+Enter on an empty box does nothing). A web host typed without its scheme (`google.com`, `www.x.org/a`) gets `https://`;
+`mailto:` and other schemes, `#anchors` and paths to files (`other.md`, `notes/plan.md`) are written as typed. An
+address with spaces or a parenthesis out of its pair is written in `<…>`. Each change is one Cmd+Z, which brings the
+link and its selection back.
+
+A reference link (`[text][label]`, `[label]`) shows its definition's address; Edit gives that one link an inline
+address of its own and leaves the definition. An autolink (`<https://…>`) or an address written bare shows its address
+as its text, so Edit changes both and keeps its form (as an inline link when the new address can't be one, a path for
+instance). Remove leaves such an address as plain text, with a backslash before its `:` (or the `.` after `www`, or
+its `@`) so it is not linked again: `https\://example.com`.
 
 ### Comments
 
@@ -385,7 +418,7 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
   rewritten the way a clone does it (simulated, not cloned by Herdr), and by loading the mod against test mocks;
   nothing here has been run inside the app or in another version. The keys rely on `mod.open` showing each mod as
   its `mod.json` overlay says (the companion's 2 px frameless popup included). Say so in the compatibility notes.
-- **Icon provenance.** Fourteen icons are from lucide-static 1.69.0 and four from 1.73.0; four more match the path
+- **Icon provenance.** Twenty icons are from lucide-static 1.69.0 and eight from 1.73.0; four more match the path
   data of current Lucide icons, but the release they were copied from was not recorded. `spinner.svg` and `dots.svg` were drawn for
   this package, and `file-markdown.svg` is the Material Icon Theme's markdown icon.
 - **Opening a file can fetch https pictures.** A markdown file can name pictures on the web, and the mod downloads

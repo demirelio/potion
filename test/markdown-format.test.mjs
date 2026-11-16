@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as format from "../mods/herdr-inline-markdown/format.js";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
+import { parse } from "../mods/herdr-inline-markdown/blocks.js";
 
 const { hasMark, toggleMark, wordAround } = format;
 
@@ -15,9 +16,9 @@ const marked = text => {
 const show = out => (out === null ? null : out.start === out.end
   ? out.value.slice(0, out.start) + "|" + out.value.slice(out.start)
   : out.value.slice(0, out.start) + "[" + out.value.slice(out.start, out.end) + "]" + out.value.slice(out.end));
-const press = (text, mark, clipboard) => {
+const press = (text, mark) => {
   const { value, range } = marked(text);
-  return show(toggleMark(value, range, mark, clipboard));
+  return show(toggleMark(value, range, mark));
 };
 const paint = (text, color) => {
   const { value, range } = marked(text);
@@ -346,7 +347,6 @@ test("spaces at the ends of the selection stay outside the marks; a selection of
   assert.equal(press("say[\thello\n]there", "code"), "say\t`[hello]`\nthere");
   assert.equal(press("say ** [hello] ** there", "bold"), "say ** **[hello]** ** there", "marks across a space are not the mark");
   assert.equal(press("a[   ]b", "bold"), "a**|**   b");
-  assert.equal(press("a[ ]b", "link"), "a[|]() b");
 });
 
 test("bold, italic and a colour show nothing on a space: a space between bold words does not make the selection mixed", () => {
@@ -357,37 +357,8 @@ test("bold, italic and a colour show nothing on a space: a space between bold wo
   assert.equal(press("[**a** b]", "underline"), "<u>**[a** b]</u>");
 });
 
-test("a link wraps the selection as [text](); the caret waits in the parentheses for the address", () => {
-  assert.equal(press("see [docs] here", "link"), "see [docs](|) here");
-  assert.equal(press("see [docs] here", "link", "two words"), "see [docs](|) here");
-  assert.equal(press("see do|cs here", "link"), "see [docs](|) here", "a caret in a word links the word");
-  assert.equal(press("see | here", "link"), "see [|]() here", "elsewhere the caret goes inside the brackets");
-});
-
-test("a link takes one web or mail address from the clipboard, and the caret goes after it", () => {
-  const url = "https://example.com/a?b=c#d";
-  assert.equal(press("see [docs] here", "link", url), `see [docs](${url})| here`);
-  assert.equal(press("see [docs] here", "link", `  ${url}\n`), `see [docs](${url})| here`, "spaces and line breaks around it are left out");
-  assert.equal(press("see [docs] here", "link", "HTTP://EXAMPLE.COM"), "see [docs](HTTP://EXAMPLE.COM)| here");
-  assert.equal(press("write [me]", "link", "mailto:me@example.com"), "write [me](mailto:me@example.com)|");
-  assert.equal(press("see | here", "link", url), `see [|](${url}) here`, "an empty link gets the address, the caret goes in the brackets");
-  assert.equal(press("see do|cs here", "link", url), `see [docs](${url})| here`);
-  assert.equal(press("a [b]", "link", "https://en.wikipedia.org/wiki/Fish_(food)"), "a [b](https://en.wikipedia.org/wiki/Fish_(food))|");
-  assert.equal(press("a [b]", "link", "https://example.com/a(b"), "a [b](<https://example.com/a(b>)|", "unbalanced parentheses go in <>");
-  for (const clip of ["https://a.com https://b.com", "ftp://example.com", "example.com", "https://", "javascript:alert(1)", "https://a.com\nmore", "https://a<b>.com"]) {
-    assert.equal(press("see [docs] here", "link", clip), "see [docs](|) here", clip);
-  }
-});
-
-test("a link that is already there is not changed: the whole link selected, its text, its address, or a caret in it", () => {
-  const link = "see [docs](https://x.org) here";
-  for (const [start, end] of [[4, 25], [3, 26], [5, 9], [7, 7], [11, 24], [20, 20]]) {
-    assert.equal(toggleMark(link, { start, end }, "link", "https://y.org"), null, `${start}-${end}`);
-  }
-  assert.deepEqual(toggleMark(link, { start: 4, end: 4 }, "link"), { value: "see []()[docs](https://x.org) here", start: 5, end: 5 }, "a caret just before a link is outside it");
-  assert.equal(toggleMark("a []() b", { start: 3, end: 3 }, "link"), null);
-  assert.equal(toggleMark("a []() b", { start: 5, end: 5 }, "link"), null);
-  assert.deepEqual(toggleMark("![a](b.png)", { start: 0, end: 11 }, "link"), { value: "[![a](b.png)]()", start: 14, end: 14 }, "a picture is no link: it can be linked");
+test("toggleMark writes no link: the address box makes links (links.js)", () => {
+  for (const text of ["see [docs] here", "see do|cs here", "see | here"]) assert.equal(press(text, "link"), null, text);
 });
 
 test("offsets are UTF-16 code units: an emoji before or inside the selection, and letters outside the BMP in a word", () => {
@@ -456,12 +427,17 @@ test("a mark is on the selection when every character of it has the mark: its ke
   }
 });
 
-test("a link is on the selection when it lies in one, where the key changes nothing", () => {
+test("a link is on the selection when it lies in one, of any form", () => {
   const link = "see [docs](https://x.org) here";
-  for (const [start, end] of [[4, 25], [5, 9], [11, 24]]) assert.equal(hasMark(link, { start, end }, "link"), true, `${start}-${end}`);
+  for (const [start, end] of [[4, 25], [5, 9], [11, 24], [7, 7]]) assert.equal(hasMark(link, { start, end }, "link"), true, `${start}-${end}`);
   assert.equal(hasMark(link, { start: 0, end: 3 }, "link"), false);
   assert.equal(hasMark(link, { start: 0, end: 9 }, "link"), false, "from outside the link into it");
+  assert.equal(hasMark(link, { start: 4, end: 4 }, "link"), false, "a caret at its edge is outside it");
   assert.equal(hasMark("![a](b.png)", { start: 0, end: 11 }, "link"), false, "a picture is no link");
+  const defs = parse("x\n\n[ref]: https://r.org\n").defs;
+  assert.equal(hasMark("a [docs][ref] b", { start: 3, end: 7 }, "link", { defs }), true, "a reference link");
+  assert.equal(hasMark("a <https://x.org> b", { start: 5, end: 9 }, "link"), true, "an autolink");
+  assert.equal(hasMark("a www.x.org b", { start: 2, end: 5 }, "link"), true, "a bare address");
 });
 
 test("the selection's text colour and highlight: one name, default or none, or mixed", () => {

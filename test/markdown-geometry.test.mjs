@@ -5,7 +5,7 @@ import {
   estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
-  barMenuPlace, PICTURE, pictureLayout,
+  barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
@@ -439,6 +439,30 @@ test("the comment box goes where the bar goes, at its own size", () => {
   const size = { w: NOTE_BOX.w, h: NOTE_BOX.h };
   assert.deepEqual(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, size }), { side: "above", top: 200 - BAR.gap - size.h, left: 92 + 24, w: size.w, h: size.h });
   assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 95, fieldW: 700, size }).left, 900 - BAR.margin - size.w, "kept inside the pane");
+});
+
+test("a link's popover goes under the link's last row at its start column, over its first row when there is no room under it, and stays inside the pane", () => {
+  const size = { w: 300, h: 36 }, at = { ...BAR_AT, size };
+  assert.deepEqual(popoverPlace({ ...at, firstTop: 200, lastTop: 224 }), { side: "below", top: 224 + 24 + BAR.gap, left: 92 + 24, w: 300, h: 36 });
+  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, col: 10 }).left, 92 + 24 + 70, "ten characters in");
+  const low = 600 - BAR.margin - 36 - BAR.gap - 24;
+  assert.equal(popoverPlace({ ...at, firstTop: low, lastTop: low }).side, "below", "just room under it");
+  assert.deepEqual(popoverPlace({ ...at, firstTop: low + 1, lastTop: low + 1 }), { side: "above", top: low + 1 - BAR.gap - 36, left: 92 + 24, w: 300, h: 36 });
+  assert.equal(popoverPlace({ ...at, firstTop: 20, lastTop: 570 }).top, 600 - BAR.margin - 36, "no room on either side: as low as the pane keeps it");
+  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, col: 95, fieldW: 700 }).left, 900 - BAR.margin - 300, "kept inside the pane");
+  assert.deepEqual(popoverPlace({ ...at, firstTop: 200, lastTop: 200, viewW: 250 }).w, 250 - 2 * BAR.margin, "never wider than the pane");
+  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, viewW: 250 }).left, BAR.margin);
+  assert.equal(popoverPlace({ ...at, firstTop: 600, lastTop: 600 }), null, "the link below the pane");
+  assert.equal(popoverPlace({ ...at, firstTop: -200, lastTop: -24 }), null, "above it");
+});
+
+test("a link's popover is as tall as the bar and as wide as its address, a rule and four buttons, its address never narrower than a short one", () => {
+  const edge = BAR.pad + 1, buttons = BAR.sep + 4 * BAR.button + 2 * edge;
+  assert.equal(linkPopoverSize(20).h, BAR.button + 2 * edge);
+  assert.equal(linkPopoverSize(20).w, Math.ceil(20 * LINK_POP.charW + 2 * LINK_POP.addressPad + buttons));
+  assert.equal(linkPopoverSize(30).w - linkPopoverSize(20).w, Math.ceil(10 * LINK_POP.charW), "ten characters more");
+  assert.equal(linkPopoverSize(0).w, linkPopoverSize(1).w, "an empty address keeps a short one's width");
+  assert.ok(LINK_BOX.w > linkPopoverSize(LINK_POP.addressChars).w / 2 && LINK_BOX.h > 0);
 });
 
 test("a bar menu's height counts its rows, its section titles, its padding and its border", () => {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
 import { parse } from "../mods/herdr-inline-markdown/blocks.js";
-import { drawnOffset, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "../mods/herdr-inline-markdown/tokens.js";
+import { drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "../mods/herdr-inline-markdown/tokens.js";
 
 const rich = (value, opts) => richOf(value, parseInline(value, opts));
 const caret = at => ({ start: at, end: at });
@@ -118,13 +118,23 @@ test("a caret or a selection end inside hidden marks moves to a letter's edge, n
   assert.deepEqual(tokensFor(rich("x \\* y"), caret(3)).sel, caret(2), "inside an escape: before its character");
 });
 
-test("a link whose address holds the caret stays as typed, so the address can be typed; elsewhere its address is hidden", () => {
+test("a range's extent reaches out to the hidden marks that go with the letters at its ends", () => {
+  const value = "say **[a b](u)** now", link = parseInline(value).spans.find(sp => sp.kind === "link");
+  assert.deepEqual(extentOf(rich(value), link), { start: 4, end: 16 }, "the bold's marks around the link");
+  assert.deepEqual(extentOf(rich("[a](u) x"), { start: 0, end: 6 }), { start: 0, end: 6 });
+  assert.deepEqual(extentOf(rich("x *word* y"), { start: 3, end: 7 }), { start: 2, end: 8 });
+  assert.deepEqual(extentOf(rich("plain words"), { start: 2, end: 7 }), { start: 2, end: 7 });
+});
+
+test("a link's address never shows: a caret in it moves after the link, as in any hidden marks", () => {
   const value = "Hello [world]() and **b**", r = rich(value), at = value.indexOf(")");
-  assert.deepEqual(tokensFor(r, caret(at)), { tokens: tokensFor(r, FAR).tokens.slice(1), sel: caret(at) }, "the caret in ()");
-  assert.deepEqual(texts(value, FAR), ["[world]()", "**b**"]);
-  assert.deepEqual(texts("[w](https://a.org) x", caret(10)), [], "anywhere inside the parentheses");
-  assert.deepEqual(texts("[w](https://a.org) x", caret(4)), [], "right after the (");
-  assert.deepEqual(texts("[w](u) x", caret(6)), ["[w](u)"], "after the ) it is a token again");
+  assert.deepEqual(tokensFor(r, caret(at)).sel, caret(at + 1), "the caret in ()");
+  assert.deepEqual(tokens(value, caret(at)).map(t => t[1]), ["w", "o", "r", "l", "d", "b"]);
+  for (const x of [4, 10, 17]) {
+    const link = "[w](https://a.org) x";
+    assert.deepEqual(tokensFor(rich(link), caret(x)).sel, caret(18), `at ${x}`);
+    assert.deepEqual(tokens(link, caret(x)).map(t => t[1]), ["w"], `at ${x}`);
+  }
 });
 
 test("letters are whole characters: combining marks, emoji with modifiers and joiners, flags", () => {

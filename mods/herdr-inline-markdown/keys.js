@@ -4,7 +4,7 @@
 // A binding at `X > Input` takes the key from the field entirely; one at `X` fires only for the keys the field gives
 // away there (Backspace and Left at offset 0, Right at the end, Tab, Escape).
 const VERSION = 6;
-// NOTE is the comment box's field.
+// NOTE is the field of a box over the page, the comment box's or the link's address box's: Escape there cancels it.
 export const TEXT = `MdText${VERSION}`, RAW = `MdRaw${VERSION}`, SOURCE = `MdSource${VERSION}`, NOTE = `MdNote${VERSION}`;
 
 const deep = ctx => `${ctx} > Input`;

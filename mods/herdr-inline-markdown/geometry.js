@@ -375,6 +375,27 @@ export function barPlace({ firstTop, lastTop, rowH, size, viewW, viewH, ...at })
   return { side, top, left: clamp(columnAt({ ...at, viewW }), BAR.margin, viewW - BAR.margin - w), w, h };
 }
 
+// A link's popover: its address, at most `addressChars` long and about `charW` px a character, in `addressPad` each
+// side, then a rule and four buttons in the bar's padding and border. The address box is `LINK_BOX`, `pad` inside it.
+export const LINK_POP = { addressChars: 40, charW: 6.6, addressPad: 8, buttons: 4 };
+export const LINK_BOX = { w: 340, h: 40, pad: 6 };
+
+export function linkPopoverSize(chars) {
+  const edge = BAR.pad + 1, address = Math.max(1, chars) * LINK_POP.charW + 2 * LINK_POP.addressPad;
+  return { w: Math.ceil(address + BAR.sep + LINK_POP.buttons * BAR.button + 2 * edge), h: BAR.button + 2 * edge };
+}
+
+// Under the last row of a range (row tops in pane y) at its start column, else over its first row when there is no room
+// under it, else as low as the pane keeps it, for a float of `size` { w, h } narrowed to the pane. -> { side, top, left,
+// w, h }, or null while the range is out of the pane.
+export function popoverPlace({ firstTop, lastTop, rowH, size, viewW, viewH, ...at }) {
+  const w = Math.min(size.w, viewW - 2 * BAR.margin), h = size.h, under = lastTop + rowH + BAR.gap, over = firstTop - BAR.gap - h;
+  if (lastTop + rowH <= 0 || firstTop >= viewH) return null;
+  let side = "below", top = Math.min(under, viewH - BAR.margin - h);
+  if (under + h > viewH - BAR.margin && over >= BAR.margin) [side, top] = ["above", over];
+  return { side, top, left: clamp(columnAt({ ...at, viewW }), BAR.margin, viewW - BAR.margin - w), w, h };
+}
+
 // The bar's menus: rows `rowH` tall and section titles `titleH`, in `pad` and a 1 px border, `gap` under their button.
 export const BAR_MENU = { w: 220, rowH: 28, titleH: 26, pad: 4, gap: 4 };
 export const barMenuH = (rows, titles = 0) => rows * BAR_MENU.rowH + titles * BAR_MENU.titleH + 2 * BAR_MENU.pad + 2;

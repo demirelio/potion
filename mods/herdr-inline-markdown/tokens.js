@@ -259,11 +259,10 @@ class Builder {
   // character, one shown from other source text, or one carrying marks is a token, unless its edges would cut a
   // character. `tokenized` marks the atoms in tokens.
   finish() {
-    const { s, atoms } = this, n = atoms.count, tokenized = new Uint8Array(n), wordStart = new Int32Array(n), wordEnd = new Int32Array(n);
+    const { s, atoms } = this, n = atoms.count, tokenized = new Uint8Array(n), wordEnd = new Int32Array(n);
     for (let k = 0; k < n;) {
       if (atoms.kind[k] !== LETTER) {
         tokenized[k] = atoms.kind[k] !== GAP && !cuts(s, atoms.start[k]) && !cuts(s, atoms.end[k]) ? 1 : 0;
-        wordStart[k] = k;
         wordEnd[k] = k;
         k++;
         continue;
@@ -274,10 +273,10 @@ class Builder {
       }
       const token = rich && !cuts(s, atoms.start[k]) && !cuts(s, atoms.end[j - 1]) ? 1 : 0;
       const last = token && j < n && this.joins(j) ? j : j - 1;
-      for (let m = k; m <= last; m++) { tokenized[m] = token; wordStart[m] = k; wordEnd[m] = last; }
+      for (let m = k; m <= last; m++) { tokenized[m] = token; wordEnd[m] = last; }
       k = last + 1;
     }
-    return { value: s, atoms, looks: this.looks.names, tokenized, wordStart, wordEnd, addresses: this.addresses(), ...drawnOf(atoms, tokenized) };
+    return { value: s, atoms, looks: this.looks.names, tokenized, wordEnd, ...drawnOf(atoms, tokenized) };
   }
 
   // Spaces inside a formatted run (any spaces between a checked task's words) go with the word before them, so its
@@ -285,15 +284,6 @@ class Builder {
   joins(k) {
     const { s, atoms } = this;
     return atoms.kind[k] === GAP && (atoms.look[k] !== 0 || this.everyWord) && !hasControl(s, atoms.start[k], atoms.end[k]) && !cuts(s, atoms.end[k]);
-  }
-
-  // Where an inline link's address can be typed: from just after its "(" to just before its ")".
-  addresses() {
-    const s = this.s, out = [];
-    for (const sp of this.spans) {
-      if (sp.kind === "link" && s.startsWith("](", sp.to) && s[sp.end - 1] === ")") out.push(sp.to + 2, sp.end - 1);
-    }
-    return out;
   }
 }
 
@@ -432,25 +422,16 @@ function letterToken(r, letters, i, j) {
 
 const touches = (start, end, x) => x >= start && x <= end;
 
-// The first atom of the word that stays as typed because caret x is in a link's address (Cmd+K leaves it there), or -1.
-function typedAt(r, x) {
-  const { addresses, atoms, wordStart } = r;
-  for (let i = 0; i < addresses.length; i += 2) {
-    if (x >= addresses[i] && x <= addresses[i + 1]) return wordStart[atoms.at(x)];
-  }
-  return -1;
-}
-
 // -> { tokens, sel }: the field's tokens for selection `sel` (null: none known), each as set_value takes it ({ range,
 // token: { id, text, label } }), and the selection moved off any token's inside. A word holding or touching an end of
 // the selection is a token per letter, so the caret can stop between them; every other word is one token.
 export function tokensFor(r, sel) {
   const { atoms, tokenized, wordEnd } = r, s = r.value, n = atoms.count, tokens = [];
-  const caret = sel && sel.start === sel.end, typed = caret ? typedAt(r, sel.start) : -1;
-  const a = sel ? (typed >= 0 ? sel.start : snapped(r, sel.start, caret ? CARET : START)) : -1;
+  const caret = sel && sel.start === sel.end;
+  const a = sel ? snapped(r, sel.start, caret ? CARET : START) : -1;
   const b = sel ? (caret ? a : snapped(r, sel.end, END)) : -1;
   for (let k = 0; k < n; k++) {
-    if (!tokenized[k] || k === typed) { k = wordEnd[k]; continue; }
+    if (!tokenized[k]) { k = wordEnd[k]; continue; }
     const last = wordEnd[k];
     if (atoms.kind[k] !== LETTER) { tokens.push(tokenOf(r, k, k)); continue; }
     const start = atoms.start[k], end = atoms.end[last];
@@ -467,6 +448,11 @@ export function tokensFor(r, sel) {
     k = last;
   }
   return { tokens, sel: sel ? { start: a, end: b } : null };
+}
+
+// `range` grown out to the hidden marks that go with the letters at its ends, which a selection of it takes along.
+export function extentOf(r, range) {
+  return { start: snapped(r, range.start, START), end: snapped(r, range.end, END) };
 }
 
 // Value offset x as an offset of the drawn text.

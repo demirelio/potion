@@ -139,6 +139,12 @@ function destination(s, p, limit) {
   return { url: unescaped(s.slice(p, q)), end: q };
 }
 
+// Where the destination of the inline link whose "(" is at `open` is written: { start, end }, or null.
+export function destinationSpan(s, open) {
+  const p = spnl(s, open + 1), dest = destination(s, p, s.length);
+  return dest ? { start: p, end: dest.end } : null;
+}
+
 function title(s, p, limit) {
   const m = sticky(TITLE, s, p);
   return m && TITLE.lastIndex <= limit ? { text: unescaped(m[1] ?? m[2] ?? m[3]), end: TITLE.lastIndex } : null;
