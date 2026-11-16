@@ -63,7 +63,7 @@ test("a local picture is copied into the cache folder under the hash of its byte
   assert.deepEqual(log.writeFile, [`${IMAGES}/${sha(picture)}.png`]);
   assert.equal(files.get(`${IMAGES}/${sha(picture)}.png`), picture);
   assert.deepEqual(log.mkdir, [[IMAGES, { recursive: true }]]);
-  assert.deepEqual(changes, [cx], "the view is told once, with the cx of the task");
+  assert.deepEqual(changes, [cx.taskCx], "the view is told once, with the cx of the task");
   assert.equal(cx.notified, 1);
 });
 

@@ -13,7 +13,7 @@ import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, NOTE, SOURCE, installKeys } from "./keys.js";
-import { hasMark, toggleMark } from "./format.js";
+import { hasMark, toggleMark, wordAround } from "./format.js";
 import { addComment, commentable, commentsIn, editComment, highlightColor, resolveComment } from "./comments.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, visibleMap } from "./inline.js";
@@ -1423,9 +1423,9 @@ export class Editor {
     };
   }
 
-  // A text block not being edited shows its comments' count, where notesPlace puts it.
+  // A text block shows its comments' count where notesPlace puts it; the edited one counts what its field holds.
   notesData(b, look, space, cal, width) {
-    const notes = look.look === "text" && b.key !== this.activeKey ? noted(b.content).length : 0;
+    const notes = look.look === "text" ? noted(b.key === this.activeKey ? this.seen : b.content).length : 0;
     if (!notes) return { notes: 0, notesX: 0, notesY: 0 };
     const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: cal.row });
     return { notes, notesX: at.x, notesY: at.y };
@@ -2705,16 +2705,17 @@ export class Editor {
   }
 
   // Reads the caret once the field has put it where the press went. It is under the pointer, so the page stays put.
+  // Herdr 0.1.16 draws nothing for a notify() from a timer the size task started, so the reading goes back to it.
   readLater(cx) {
     const act = this.act;
-    cx.timer.after(READ_AFTER_UP_MS, cx => {
+    cx.timer.after(READ_AFTER_UP_MS, () => this.post(cx => {
       if (this.closed || this.act !== act || !this.activeKey || !this.editable()) return;
       this.syncField(cx);
       const c = this.caretNow();
       this.retoken();
       this.slashCaret(c, cx);
       this.openBar(cx);
-    });
+    }));
   }
 
   // The field's wrapper lives in the block's view, whose cx cannot redraw this one: what needs a cx goes to the size
@@ -2747,6 +2748,20 @@ export class Editor {
     this.post(cx => {
       if (began) this.fieldReleased(key, cx);
       else if (key === this.activeKey) this.readLater(cx);
+    });
+  }
+
+  // Herdr's field has already kept the selection under a right-click, or moved the caret there: the bar shows over the
+  // selection, or over the word at the caret.
+  fieldRightUp(key) {
+    this.post(cx => {
+      if (key !== this.activeKey) this.takeField(key, cx);
+      if (key !== this.activeKey || !this.editable()) return;
+      this.syncField(cx);
+      const c = this.caretNow(), word = c && c.start === c.end ? wordAround(this.seen, c.start) : null;
+      if (word) this.selectField(word);
+      this.retoken();
+      this.openBar(cx);
     });
   }
 
@@ -3595,6 +3610,7 @@ export class Editor {
   }
 
   openCard(key, cx) {
+    if (key === this.activeKey) this.commit(cx);
     this.card = { key };
     cx.notify();
   }
@@ -3605,10 +3621,9 @@ export class Editor {
     cx?.notify();
   }
 
-  // The comments of the card's block as its field shows them (a soft line break a space); null when it has none or is
-  // being edited.
+  // The comments of the card's block as its field shows them (a soft line break a space); null when it has none.
   cardComments() {
-    const key = this.card?.key, b = key && key !== this.activeKey ? this.blockByKey(key) : null;
+    const key = this.card?.key, b = key ? this.blockByKey(key) : null;
     if (!b || !isText(b)) return null;
     const f = fieldOf(this.doc, b), list = noted(f.value);
     return list.length ? { b, f, list } : null;

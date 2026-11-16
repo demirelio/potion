@@ -2,7 +2,10 @@ import { find, ids } from "./mocks/element.mjs";
 
 // A cx like the one Herdr hands a callback. spawn() starts the body at once and keeps its promise;
 // settle() waits until every task (and the tasks they started) has finished.
+// As in Herdr 0.1.16, a timer started from a spawned task's cx hands its callback a cx whose notify() redraws nothing:
+// those calls are counted in `lostNotifies`.
 export function makeCx() {
+  let taskCx = null;
   const tasks = [], cx = {
     notified: 0, stopped: 0, clipboard: [], timers: [], handles: [], opened: [],
     entities: [], notifiedEntities: [],
@@ -40,7 +43,7 @@ export function makeCx() {
     focus_handle() { const h = { focused: false, focus() { h.focused = true; } }; cx.handles.push(h); return h; },
     spawn(body) {
       let task;
-      try { task = Promise.resolve(body(cx)); } catch (e) { task = Promise.reject(e); }
+      try { task = Promise.resolve(body(taskCx)); } catch (e) { task = Promise.reject(e); }
       tasks.push(task);
       return task;
     },
@@ -52,7 +55,16 @@ export function makeCx() {
       after(ms, fn) { return timerTask(cx.timers, { ms, fn, once: true, after: true }); },
     },
     async settle() { while (tasks.length) await Promise.all(tasks.splice(0)); },
+    lostNotifies: 0,
   };
+  taskCx = Object.create(cx);
+  taskCx.timer = {
+    every(ms, fn) { return timerTask(cx.timers, { ms, fn, fromTask: true }); },
+    after(ms, fn) { return timerTask(cx.timers, { ms, fn, once: true, after: true, fromTask: true }); },
+  };
+  cx.taskCx = taskCx;
+  cx.lostCx = Object.create(cx);
+  cx.lostCx.notify = () => { cx.lostNotifies++; };
   return cx;
 }
 
@@ -66,7 +78,7 @@ function timerTask(timers, entry) {
 export async function fire_timers(cx, { ms } = {}) {
   const due = cx.timers.filter(t => t.once && !t.cancelled && !t.ran && (ms === undefined || t.ms === ms));
   for (const t of due) t.ran = true;
-  await Promise.all(due.map(t => t.fn(cx)));
+  await Promise.all(due.map(t => t.fn(t.fromTask ? cx.lostCx : cx)));
   await cx.settle();
 }
 

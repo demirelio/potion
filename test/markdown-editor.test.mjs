@@ -6976,6 +6976,41 @@ test("a drag or a double-click that leaves text selected in the paragraph being 
   assert.ok(barOf(m), "a double-click on a word");
 });
 
+test("the readout after a mouse selection asks the page to redraw, so the bar shows: Herdr ignores a redraw asked by a timer the size task started", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const p = { x: X + 20, y: topOf(m, 0) + 10 }, wrap = () => must(m.tree(), `md-field-${keyAt(m, 0)}`);
+  fire(wrap(), "on_mouse_down:left", press(p), m.cx);
+  m.view.field.select(6, 11);
+  fire(wrap(), "on_mouse_up:left", press(p), m.cx);
+  await flush();
+  const asked = m.cx.notified, lost = m.cx.lostNotifies;
+  await fire_timers(m.cx, { ms: 30 });
+  await flush();
+  assert.ok(barOf(m), "the bar is open");
+  assert.ok(m.cx.notified > asked, "and the page was asked to draw it");
+  assert.equal(m.cx.lostNotifies, lost, "no redraw went to a cx that draws nothing");
+});
+
+test("a right-click on selected text shows the format bar over it, keeping the selection; on a caret in a word it selects the word first", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const rightClick = async i => {
+    const p = { x: X + 20, y: topOf(m, i) + 10 + (i ? 14 : 0) };
+    fire(must(m.tree(), `md-field-${keyAt(m, i)}`), "on_mouse_up:right", press(p, { button: "right" }), m.cx);
+    await flush();
+  };
+  m.view.field.select(0, 5);
+  await rightClick(0);
+  assert.deepEqual([selectedText(m), Boolean(barOf(m))], ["Hello", true]);
+  m.view.field.select(8);
+  await rightClick(0);
+  assert.deepEqual([selectedText(m), Boolean(barOf(m))], ["world", true], "the word around the caret");
+  m.view.blockField(keyAt(m, 1)).select(0, 3);
+  await rightClick(1);
+  assert.deepEqual([m.view.activeKey, selectedText(m), Boolean(barOf(m))], [keyAt(m, 1), "End", true], "in a block not being edited, that block takes the keyboard");
+});
+
 test("the key-up readout after Shift+arrows or Cmd+A shows the format bar; one that finds a caret, or only a space selected, takes it away", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0, 6);
@@ -7361,6 +7396,20 @@ test("a block with comments shows their count right of its first row; a click on
   await clickCount(m, 0);
   await m.key("escape");
   assert.equal(cardOf(m), null, "so does Escape");
+});
+
+test("the block being edited keeps its comment count, which counts what the field holds, and a click on it opens its card", async () => {
+  const m = await page("A {==b==}{>>first<<} c.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0, 2);
+  assert.equal(textOf(must(m.tree(), `md-notes-${keyAt(m, 0)}`)).trim(), "1", "editing does not hide it");
+  m.view.field.select(m.view.field.value().length);
+  m.view.field.type(" {>>second<<}", m.cx);
+  await m.view.redraw([keyAt(m, 0)], m.cx);
+  assert.equal(textOf(must(m.tree(), `md-notes-${keyAt(m, 0)}`)).trim(), "2", "a comment typed in counts");
+  await clickCount(m, 0);
+  const card = must(m.tree(), "md-notes-card");
+  assert.match(textOf(must(card, "md-note-0")), /^b first Edit Resolve$/);
+  assert.match(textOf(must(card, "md-note-1")), /^second Edit Resolve$/);
 });
 
 test("Resolve takes a comment off and keeps its marked text, one undo step each; the card follows what is left", async () => {

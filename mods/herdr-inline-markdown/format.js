@@ -28,7 +28,8 @@ function trimmed(value, start, end) {
   return s === e ? { start, end: start } : { start: s, end: e };
 }
 
-function wordAround(value, at) {
+// -> the word holding offset `at`, null when `at` is not inside one.
+export function wordAround(value, at) {
   const before = WORD_BEFORE.exec(value.slice(0, at))?.[0].length ?? 0, after = WORD_AFTER.exec(value.slice(at))?.[0].length ?? 0;
   return before && after ? { start: at - before, end: at + after } : null;
 }

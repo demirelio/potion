@@ -186,6 +186,7 @@ function field(owner, d, t, state) {
     .on_key_up((e, cx) => owner.fieldKeyUp(d.key, e, cx))
     .on_mouse_down("left", (e, cx) => owner.fieldDown(d.key, e, cx))
     .on_mouse_up("left", (e, cx) => owner.fieldUp(d.key, e, cx))
+    .on_mouse_up("right", () => owner.fieldRightUp(d.key))
     .child(input);
   if (d.kind === "frontmatter") return frontBox(t, wrap);
   return raw ? codeBox(t, wrap) : wrap;

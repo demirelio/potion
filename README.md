@@ -3,7 +3,7 @@
 A Markdown reader and editor for the Herdr app, with mermaid diagrams and pictures.
 
 A **Markdown pane** shows one markdown file, as a rendered page you edit in place or as its source, and saves what
-{==you type. It opens beside==}{>>this is test comment<<} your terminals in the current tab, or in a tab of its own. It is meant for reading the
+you type. It opens beside your terminals in the current tab, or in a tab of its own. It is meant for reading the
 plans an agent writes into a file as they appear, and for writing notes next to your terminals.
 
 The package holds:
@@ -185,7 +185,7 @@ so it wraps as it did on the page, and keeps them in the file.
 | Cmd+Shift+C | The same for inline code: `` `text` ``, with a longer run of backticks when the text holds some |
 | Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, the link shown as written until the caret leaves it, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
-| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
+| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
@@ -220,7 +220,8 @@ A comment at a point{>>check the date<<} marks no text.
 - **Reading** highlights the marked text in the theme's yellow, its formatting still drawn, and leaves out the marks
   and the comment; a comment at a point shows as a highlighted 💬. A highlight with no comment (`{==text==}`) is
   highlighted too. The block being edited looks the same: the marks and the comment stay hidden.
-- **The count** at the right of a block's first row says how many comments it holds. A click on it opens a card listing
+- **The count** at the right of a block's first row says how many comments it holds, also while the block is being
+  edited. A click on it opens a card listing
   them: the marked text, the comment, and **Edit** (the block opens with the marked text selected and the box holds
   the comment) and **Resolve** (the comment and its marks go, the marked text stays). Each is one undo step. A file
   that can't be edited shows the card without them. The footer counts the file's comments.

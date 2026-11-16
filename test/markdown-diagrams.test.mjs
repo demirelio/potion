@@ -390,7 +390,7 @@ test("onChange(cx) is called wherever the view is redrawn, with the task's cx, s
   d.onChange = c => told.push([c, cx.notified, d.get(SRC, c).state]);
   await draw(cx, d);
   assert.ok(told.length >= 3);
-  assert.ok(told.every(([c]) => c === cx));
+  assert.ok(told.every(([c]) => c === cx.taskCx));
   assert.deepEqual(told.map(([, n]) => n), told.map((_, i) => i + 1), "right after each redraw it asks for");
   assert.equal(told[0][2], "pending");
   assert.equal(told.at(-1)[2], "ok", "the last one finds the image");
