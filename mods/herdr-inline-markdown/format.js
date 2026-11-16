@@ -1,10 +1,14 @@
-// The marks the format keys put around the selection of a text block's field, or take off it. No imports.
+// The marks the format keys put on the selection of a text block's field, or take off it, and the selection's text
+// colour. A selection's formatting is rewritten by restyle.js; a caret outside a word writes empty marks here.
+import { MARK_BITS, looksIn, restyle } from "./restyle.js";
+import { TEXT_COLORS } from "./colors.js";
 
 const SPACE = /\s/;
+const LOOSE_ON_SPACE = new Set(["bold", "italic"]);
+const TAGGED = { underline: ["<u>", "</u>"], highlight: ["<mark>", "</mark>"] };
 const WORD_BEFORE = /[\p{L}\p{M}\p{N}\p{Pc}]+$/u, WORD_AFTER = /^[\p{L}\p{M}\p{N}\p{Pc}]+/u;
 const ADDRESS = /^(?:https?:\/\/|mailto:)[^\s<>]+$/i;
 const LINK = /!?\[(?:[^[\]\n]|\[[^[\]\n]*\])*\]\((?:[^()\n]|\([^()\n]*\))*\)/g;
-const BACKTICKS = /`+/g;
 
 const clampTo = (value, x) => Math.max(0, Math.min(value.length, Number(x) || 0));
 const caretAt = (value, at) => ({ value, start: at, end: at });
@@ -40,59 +44,35 @@ const wrap = (value, { start, end }, open, close = open) => ({
   end: end + open.length,
 });
 
-// `takes(n)`: how many of a run of n `ch` beside the text are this mark, 0 when the run is not it. The run on each side
-// counts the marks inside the selection with those outside it, and the ones inside go first.
-function paired(value, { start, end }, mark, takes) {
-  const ch = mark[0], text = value.slice(start, end), lead = runAfter(text, 0, ch), onlyMarks = lead === text.length;
-  const inStart = onlyMarks ? 0 : lead, inEnd = onlyMarks ? 0 : runBefore(text, text.length, ch);
-  const k = takes(runBefore(value, start, ch) + inStart);
-  if (!k || takes(inEnd + runAfter(value, end, ch)) !== k) return wrap(value, { start, end }, mark);
-  const fromStart = Math.min(inStart, k), fromEnd = Math.min(inEnd, k), kept = text.slice(fromStart, text.length - fromEnd);
-  const at = start - (k - fromStart);
-  return { value: value.slice(0, at) + kept + value.slice(end + k - fromEnd), start: at, end: at + kept.length };
+// Empty marks around caret `at`, or the empty marks around it taken away. `takes(n)`: how many of a run of n `ch` on
+// each side are this mark, 0 when the run is not it.
+function pairedAt(value, at, mark, takes) {
+  const ch = mark[0], k = takes(runBefore(value, at, ch));
+  if (!k || takes(runAfter(value, at, ch)) !== k) return caretAt(wrap(value, { start: at, end: at }, mark).value, at + mark.length);
+  return caretAt(value.slice(0, at - k) + value.slice(at + k), at - k);
 }
 
-// Code spans as CommonMark finds them: a backtick run up to the next run of the same length. `from` and `to` bound the
-// content less the space that pads both of its ends.
-function codeSpans(value) {
-  const runs = [...value.matchAll(BACKTICKS)].map(m => ({ at: m.index, n: m[0].length })), spans = [];
-  for (let i = 0; i < runs.length; i++) {
-    const open = runs[i], j = runs.findIndex((r, k) => k > i && r.n === open.n);
-    if (j < 0) continue;
-    const close = runs[j], content = value.slice(open.at + open.n, close.at);
-    const pad = content.length > 1 && content[0] === " " && content.at(-1) === " " && content.trim() ? 1 : 0;
-    spans.push({ start: open.at, end: close.at + close.n, from: open.at + open.n + pad, to: close.at - pad });
-    i = j;
+function codeAt(value, at) {
+  const n = runBefore(value, at, "`");
+  if (n && runAfter(value, at, "`") === n) return caretAt(value.slice(0, at - n) + value.slice(at + n), at - n);
+  return caretAt(wrap(value, { start: at, end: at }, "`").value, at + 1);
+}
+
+function taggedAt(value, at, [open, close]) {
+  if (value.slice(at - open.length, at) === open && value.startsWith(close, at)) {
+    return caretAt(value.slice(0, at - open.length) + value.slice(at + close.length), at - open.length);
   }
-  return spans;
+  return caretAt(wrap(value, { start: at, end: at }, open, close).value, at + open.length);
 }
 
-const longestRun = text => (text.match(BACKTICKS) ?? []).reduce((n, run) => Math.max(n, run.length), 0);
-
-function fence(value, sel) {
-  const text = value.slice(sel.start, sel.end), ticks = "`".repeat(longestRun(text) + 1);
-  const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
-  return wrap(value, sel, ticks + pad, pad + ticks);
-}
-
-const unfence = (value, span, from, to) => ({
-  value: value.slice(0, span.start) + value.slice(from, to) + value.slice(span.end),
-  start: span.start,
-  end: span.start + to - from,
-});
-
-function code(value, sel) {
-  const { start, end } = sel;
-  if (start === end) {
-    const n = runBefore(value, start, "`");
-    return n && runAfter(value, end, "`") === n ? caretAt(value.slice(0, start - n) + value.slice(end + n), start - n) : fence(value, sel);
-  }
-  for (const span of codeSpans(value)) {
-    if (span.from === start && span.to === end) return unfence(value, span, start, end);
-    if (span.start === start && span.end === end) return unfence(value, span, span.from, span.to);
-  }
-  return fence(value, sel);
-}
+const AT_CARET = {
+  bold: (value, at) => pairedAt(value, at, "**", n => (n === 2 || n === 3 ? 2 : 0)),
+  italic: (value, at) => pairedAt(value, at, "*", n => (n === 1 || n === 3 ? 1 : 0)),
+  strike: (value, at) => pairedAt(value, at, "~~", n => (n === 1 || n === 2 ? n : 0)),
+  code: codeAt,
+  underline: (value, at) => taggedAt(value, at, TAGGED.underline),
+  highlight: (value, at) => taggedAt(value, at, TAGGED.highlight),
+};
 
 const balanced = s => {
   let depth = 0;
@@ -125,32 +105,81 @@ function link(value, sel, clipboard) {
   return caretAt(out, sel.start + text.length + (address ? address.length + 4 : 3));
 }
 
-const MARKS = {
-  bold: (value, sel) => paired(value, sel, "**", n => (n === 2 || n === 3 ? 2 : 0)),
-  italic: (value, sel) => paired(value, sel, "*", n => (n === 1 || n === 3 ? 1 : 0)),
-  strike: (value, sel) => paired(value, sel, "~~", n => (n === 1 || n === 2 ? n : 0)),
-  code,
-  link,
-};
-
-// `mark`: "bold" | "italic" | "strike" | "code" | "link". `range`: the field's selection, in UTF-16 offsets of `value`.
-// `clipboard`: its text, which a link takes as its address when that is one web or mail address.
-// -> { value, start, end }, the field's value and selection after the key, or null when nothing changes. A caret in a
-// word acts on the word and keeps its place in it; a caret elsewhere writes an empty mark, or takes one away.
-export function toggleMark(value, range, mark, clipboard = "") {
-  const toggle = MARKS[mark];
-  if (!toggle) return null;
+// The selection a key acts on: spaces at its ends left out, a caret in a word the word ({ start, end, caret }), or
+// { caret } alone for a caret anywhere else.
+function actedOn(value, range) {
   const a = clampTo(value, range?.start), b = clampTo(value, range?.end);
   const sel = trimmed(value, Math.min(a, b), Math.max(a, b));
-  const word = sel.start === sel.end ? wordAround(value, sel.start) : null;
-  const out = toggle(value, word ?? sel, clipboard);
-  if (!out || !word || mark === "link") return out;
-  return caretAt(out.value, out.start + sel.start - word.start);
+  if (sel.start !== sel.end) return { ...sel, caret: -1 };
+  const word = wordAround(value, sel.start);
+  return word ? { ...word, caret: sel.start } : { caret: sel.start };
 }
 
-// Whether `mark` is on the selection already: its key would take it off, or, for a link, change nothing.
-export function hasMark(value, range, mark) {
-  if (!MARKS[mark]) return false;
-  const out = toggleMark(value, range, mark);
-  return mark === "link" ? out === null : out.value.length < value.length;
+function restyled(value, range, op, defs) {
+  const sel = actedOn(value, range);
+  if (sel.start === undefined) return null;
+  const out = restyle(value, sel, op, { defs, caret: sel.caret });
+  if (!out) return null;
+  return sel.caret >= 0 ? caretAt(out.value, out.caret) : { value: out.value, start: out.start, end: out.end };
+}
+
+// `mark`: "bold" | "italic" | "strike" | "underline" | "code" | "highlight" | "link". `range`: the field's selection, in
+// UTF-16 offsets of `value`. `clipboard`: its text, which a link takes as its address when that is one web or mail
+// address. `defs`: the document's link reference definitions.
+// -> { value, start, end }, the field's value and selection after the key, or null when nothing changes. Every
+// character of the selection gets the mark, unless every one has it, when it comes off them all; the selection stays on
+// them. A caret in a word acts on the word and keeps its place in it; a caret elsewhere writes an empty mark, or takes
+// one away.
+export function toggleMark(value, range, mark, clipboard = "", { defs } = {}) {
+  if (mark === "link") {
+    const sel = actedOn(value, range);
+    return link(value, sel.start === undefined ? { start: sel.caret, end: sel.caret } : sel, clipboard);
+  }
+  if (!AT_CARET[mark]) return null;
+  const sel = actedOn(value, range);
+  if (sel.start === undefined) return AT_CARET[mark](value, sel.caret);
+  return restyled(value, range, { mark }, defs);
+}
+
+// -> { value, start, end }: `mark` (as toggleMark names it, not "link") on every character of the selection, or the word
+// holding the caret, when `on`, else off all of them; null when nothing changes.
+export function setMark(value, range, mark, on, { defs } = {}) {
+  return AT_CARET[mark] ? restyled(value, range, { mark, on: Boolean(on) }, defs) : null;
+}
+
+// -> { value, start, end }: every character of the selection (or the word holding the caret) in text colour `name`, one
+// of TEXT_COLORS, or "default" for none; null when nothing changes.
+export function setColor(value, range, name, { defs } = {}) {
+  if (name !== "default" && !TEXT_COLORS.includes(name)) return null;
+  return restyled(value, range, { color: name }, defs);
+}
+
+// The formatting of each character of the selection (or of the word holding the caret).
+function looksOf(value, range, defs) {
+  const sel = actedOn(value, range);
+  return sel.start === undefined ? [] : looksIn(value, sel, { defs });
+}
+
+// Whether `mark` is on the selection already: every character of it has the mark, so its key would take it off; at a
+// caret outside a word, whether its key would take empty marks away; for a link, whether the key would change nothing.
+export function hasMark(value, range, mark, { defs } = {}) {
+  if (mark === "link") return toggleMark(value, range, mark) === null;
+  if (!AT_CARET[mark]) return false;
+  const sel = actedOn(value, range);
+  if (sel.start === undefined) return AT_CARET[mark](value, sel.caret).value.length < value.length;
+  const bit = MARK_BITS[mark], looks = looksOf(value, range, defs).filter(l => !(l.space && LOOSE_ON_SPACE.has(mark)) && !(mark === "code" && l.unit));
+  return looks.length > 0 && looks.every(l => (mark === "highlight" ? l.mark !== null : (l.bits & bit) !== 0));
+}
+
+// The selection's text colour: one name (or a colour written in the file), "default" when it has none, or "mixed".
+// Spaces show no colour and are left out.
+export function colorOf(value, range, { defs } = {}) {
+  const colors = new Set(looksOf(value, range, defs).filter(l => !l.space).map(l => l.color ?? "default"));
+  return colors.size === 1 ? [...colors][0] : colors.size ? "mixed" : "default";
+}
+
+// The selection's highlight: "none", "default" (the editor's own colour), a colour written in the file, or "mixed".
+export function highlightOf(value, range, { defs } = {}) {
+  const marks = new Set(looksOf(value, range, defs).map(l => (l.mark === null ? "none" : l.mark || "default")));
+  return marks.size === 1 ? [...marks][0] : marks.size ? "mixed" : "none";
 }

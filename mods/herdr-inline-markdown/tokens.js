@@ -19,6 +19,7 @@ const SEPARATORS = /[\s\p{Cc}]+/gu;
 const LOOKS = { strong: "b", em: "i", strike: "s", code: "c", link: "l", comment: "h", highlight: "h", image: "p" };
 const TAG_LOOKS = { strong: "b", b: "b", em: "i", i: "i", u: "u", s: "s", del: "s", strike: "s" };
 const LOOK_ORDER = "bisuclhp";
+const LOOK_LETTERS = /^[bisuclhp]*/;
 const LOOK_NAMES = { b: "bold", i: "italic", s: "strike", u: "underline", c: "code", l: "link", h: "highlight", p: "picture" };
 const NARROW = new Set("fijlrtI.,:;'!|` ");
 const WIDE = new Set("mwMW");
@@ -93,8 +94,10 @@ class Atoms {
   }
 }
 
-// A look is a name of letters in LOOK_ORDER, with a mark tag's colour after an "m": "bi", "l", "hm#fef08a". The
-// characters of a run share one ids array, so its look is worked out once.
+// A look is a name of letters in LOOK_ORDER, then a mark tag's colour after an "m" and a text colour after an "@":
+// "bi", "l", "hm#fef08a", "b@red". The characters of a run share one ids array, so its look is worked out once.
+const lookLetters = name => LOOK_LETTERS.exec(name)[0];
+
 class Looks {
   constructor(spans) {
     this.spans = spans;
@@ -117,23 +120,28 @@ class Looks {
     return k;
   }
 
+  // The innermost highlight and text colour win; a mark with no colour of its own is the highlight.
   nameOf(ids) {
     const on = new Set();
-    let mark = "";
+    let mark = "", bare = false, color = "";
     for (const id of ids) {
       const sp = this.spans[id];
       if (sp.kind === "html") {
-        if (sp.tag === "mark") mark = `m${sp.color}`;
+        if (sp.tag === "mark") {
+          bare = !sp.color;
+          mark = sp.color ? `m${sp.color}` : "";
+        } else if (sp.tag === "span") color = `@${sp.color}`;
         else if (TAG_LOOKS[sp.tag]) on.add(TAG_LOOKS[sp.tag]);
       } else if (LOOKS[sp.kind]) on.add(LOOKS[sp.kind]);
     }
+    if (bare) on.add("h");
     let name = "";
     for (const letter of LOOK_ORDER) if (on.has(letter)) name += letter;
-    return name + mark;
+    return name + mark + color;
   }
 
   hasPicture(k) {
-    return this.names[k].includes("p");
+    return lookLetters(this.names[k]).includes("p");
   }
 }
 
@@ -493,7 +501,7 @@ export function pressedAt(r, range, share) {
   while (last + 1 < atoms.count && atoms.start[last + 1] < range.end) last++;
   for (const letter of lettersOf(r, first, last)) {
     if (letter.start < range.start || letter.end > range.end) continue;
-    const code = looks[letter.look].includes("c") ? CODE_WIDTH : 1;
+    const code = lookLetters(looks[letter.look]).includes("c") ? CODE_WIDTH : 1;
     widths.push(widthOf(letter.text) * code + (letter.icon ? 1 : 0));
     edges.push(letter.end);
   }
@@ -509,14 +517,15 @@ export function pressedAt(r, range, share) {
 }
 
 function lookOf(name) {
-  const out = {}, hash = name.indexOf("#"), letters = hash >= 0 ? name.slice(0, hash - 1) : name;
+  const out = {}, letters = lookLetters(name), at = name.indexOf("@"), head = at >= 0 ? name.slice(0, at) : name;
   for (const letter of letters) out[LOOK_NAMES[letter]] = true;
-  if (hash >= 0) out.mark = name.slice(hash);
+  if (head.length > letters.length) out.mark = head.slice(letters.length + 1);
+  if (at >= 0) out.color = name.slice(at + 1);
   return out;
 }
 
-// What a token draws, from its id and label: pieces { text, ...look } in order, { icon } for a picture's icon, and
-// { text, point } for a point comment's marker.
+// What a token draws, from its id and label: pieces { text, ...look } in order (`mark` a highlight's colour, `color` a
+// text colour), { icon } for a picture's icon, and { text, point } for a point comment's marker.
 export function piecesOf(id, label) {
   const out = [];
   let at = 0;

@@ -11,22 +11,11 @@ const BLANK = /^[ \t]*$/;
 const INDENTED = /^(?: {0,3}\t| {4})/;
 const LINE_BREAK = /\s*(?:\r\n|\r|\n)\s*/g;
 const SPACE = /\s/;
-const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
-const AMBER = "f5c542";
-// About a third of the colour, so dark text on a light theme and light text on a dark one stay readable through it.
-const ALPHA = "55";
 
 // What a point comment shows in Reading, highlighted.
 export const POINT = "💬";
 
 export const highlight = (inner, color) => `<mark color="${color}">${inner}</mark>`;
-
-// The theme's yellow (ANSI 3, which light and dark themes both name) as #rrggbbaa.
-export function highlightColor(t) {
-  const hex = HEX.exec(String(t?.ansi3 ?? "").trim())?.[1] ?? AMBER;
-  const rgb = hex.length <= 4 ? [...hex.slice(0, 3)].map(ch => ch + ch).join("") : hex.slice(0, 6);
-  return `#${rgb.toLowerCase()}${ALPHA}`;
-}
 
 const closesFence = (line, mark) => {
   const m = FENCE_CLOSE.exec(line);

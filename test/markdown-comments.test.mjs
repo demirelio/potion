@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  POINT, addComment, commentable, commentsIn, editComment, highlight, highlightColor, oneLine, resolveComment, showComments,
+  POINT, addComment, commentable, commentsIn, editComment, highlight, oneLine, resolveComment, showComments,
 } from "../mods/herdr-inline-markdown/comments.js";
 
-const COLOR = "#e5c07b55";
+const COLOR = "#4a3b20";
 const shown = text => showComments(text, COLOR);
 const mark = inner => highlight(inner, COLOR);
 // `text` with the selection written in it: [ and ] around a selection, | for a caret.
@@ -72,14 +72,6 @@ test("the display transform draws marked text highlighted and drops the marks an
   assert.equal(shown("`{==code==}` and {==a==}"), `\`{==code==}\` and ${mark("a")}`);
   assert.equal(shown("plain text"), "plain text");
   assert.equal(mark("x"), `<mark color="${COLOR}">x</mark>`, "the highlight's markup");
-});
-
-test("the highlight is the theme's yellow at a third, so text stays readable on light and dark themes", () => {
-  assert.equal(highlightColor({ ansi3: "#E5C07B" }), "#e5c07b55");
-  assert.equal(highlightColor({ ansi3: "#c18401ff" }), "#c1840155", "its own alpha gives way");
-  assert.equal(highlightColor({ ansi3: "#fc0" }), "#ffcc0055");
-  assert.equal(highlightColor({ ansi3: "ansi3" }), "#f5c54255", "not a colour: amber");
-  assert.equal(highlightColor({}), "#f5c54255");
 });
 
 test("add wraps the selection, spaces at its ends left outside, and leaves the caret after the comment", () => {

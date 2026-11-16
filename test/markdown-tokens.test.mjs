@@ -23,7 +23,10 @@ test("a formatted word is one token that shows its characters and draws them in 
   assert.deepEqual(tokens("a **bold** b"), [["**bold**", "bold", "b:4"]]);
   assert.deepEqual(tokens("*it* ~~gone~~ `code`"), [["*it*", "it", "i:2"], ["~~gone~~", "gone", "s:4"], ["`code`", "code", "c:4"]]);
   assert.deepEqual(tokens("***both***"), [["***both***", "both", "bi:4"]]);
-  assert.deepEqual(tokens("<u>under</u> <mark>m</mark>"), [["<u>under</u>", "under", "u:5"], ["<mark>m</mark>", "m", "m#fef08a:1"]]);
+  assert.deepEqual(tokens("<u>under</u> <mark>m</mark>"), [["<u>under</u>", "under", "u:5"], ["<mark>m</mark>", "m", "h:1"]], "a mark with no colour of its own: the highlight");
+  assert.deepEqual(tokens('<mark color="#336699">m</mark>'), [['<mark color="#336699">m</mark>', "m", "m#336699:1"]]);
+  assert.deepEqual(tokens('<span style="color: red">re</span><span style="color: teal">**d**</span>'), [['<span style="color: red">re</span><span style="color: teal">**d**</span>', "red", "@red:2,b@teal:1"]]);
+  assert.deepEqual(tokens('<mark color="#336699"><span style="color: #ff0000">x</span></mark>'), [['<mark color="#336699"><span style="color: #ff0000">x</span></mark>', "x", "m#336699@#ff0000:1"]]);
 });
 
 test("a word that mixes formatting is one token drawn in pieces", () => {
@@ -191,6 +194,7 @@ test("the drawing pieces come back from a token's id and label", () => {
   assert.deepEqual(piecesOf("E:0", "\u{200b}"), []);
   assert.deepEqual(piecesOf("bisuclh:1", "x"), [{ text: "x", bold: true, italic: true, strike: true, underline: true, code: true, link: true, highlight: true }]);
   assert.deepEqual(piecesOf("im#fef08a:2", "ab"), [{ text: "ab", italic: true, mark: "#fef08a" }]);
+  assert.deepEqual(piecesOf("u@red:1,m#336699@#ff0000:1", "ab"), [{ text: "a", underline: true, color: "red" }, { text: "b", mark: "#336699", color: "#ff0000" }]);
 });
 
 test("tokens compare by range, text, id and label", () => {

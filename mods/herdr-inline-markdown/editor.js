@@ -13,10 +13,11 @@ import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, KEYS_SETTLE_MS, NOTE, SOURCE, claimRebind, installKeys } from "./keys.js";
-import { hasMark, toggleMark, wordAround } from "./format.js";
-import { addComment, commentable, commentsIn, editComment, highlightColor, resolveComment } from "./comments.js";
+import { hasMark, setColor, setMark, toggleMark, wordAround } from "./format.js";
+import { addComment, commentable, commentsIn, editComment, resolveComment } from "./comments.js";
+import { highlightColor } from "./colors.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
-import { parseInline, visibleMap } from "./inline.js";
+import { parseInline, parsedInline, visibleMap } from "./inline.js";
 import { drawnOffset, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
 
 const SAVE_MS = 700;
@@ -57,7 +58,10 @@ const UNSIZED_VIEW_H = 1200;
 // A recalibration whose samples, once drawn, never report sizes keeps the measurements it had.
 const CAL_GIVE_UP_MS = 2000;
 const UNDO_ACTIONS = { "mdb-undo": -1, "mdb-redo": 1 }, UNDO_KEYS = { "cmd-z": -1, "cmd-shift-z": 1 };
-const MARK_ACTIONS = { "mdb-bold": "bold", "mdb-italic": "italic", "mdb-strike": "strike", "mdb-code": "code", "mdb-link": "link" };
+const MARK_ACTIONS = {
+  "mdb-bold": "bold", "mdb-italic": "italic", "mdb-underline": "underline", "mdb-strike": "strike", "mdb-code": "code",
+  "mdb-highlight": "highlight", "mdb-link": "link",
+};
 const FORMAT_BUTTONS = [
   { name: "bold", action: "mdb-bold", icon: "bold", tip: "Bold (Cmd+B)" },
   { name: "italic", action: "mdb-italic", icon: "italic", tip: "Italic (Cmd+I)" },
@@ -1395,7 +1399,7 @@ export class Editor {
     if (kept.src === src && kept.defs === defs && kept.checked === checked) return;
     const value = fieldOf(this.doc, b).value;
     if (!kept.rich || value !== kept.value || checked !== kept.checked || (defs !== kept.defs && value.includes("["))) {
-      kept.rich = richOf(value, parseInline(value, { defs: defs.map }), { everyWord: checked });
+      kept.rich = richOf(value, parsedInline(value, defs.map), { everyWord: checked });
     }
     Object.assign(kept, { src, value, defs, checked });
     const tokens = tokensFor(kept.rich, null).tokens, state = kept.state;
@@ -2219,7 +2223,7 @@ export class Editor {
     if (kept && kept.key === key && kept.value === value && kept.defs === defs && kept.checked === checked) return kept.layout;
     const own = this.blockFields.get(key), same = own?.rich && own.value === value && own.defs === defs && own.checked === checked;
     const layout = !b || !isText(b) || b.image ? null
-      : same ? own.rich : richOf(value, parseInline(value, { defs: defs.map }), { everyWord: checked });
+      : same ? own.rich : richOf(value, parsedInline(value, defs.map), { everyWord: checked });
     this.rich = { key, value, defs, checked, layout };
     return layout;
   }
@@ -3135,12 +3139,27 @@ export class Editor {
     return true;
   }
 
-  // A format key's marks (toggleMark) go in as one entry of the history, whose undo puts the selection back. An open
-  // format bar stays over what is left selected.
   format(mark, cx) {
+    this.formatWith((value, r) => toggleMark(value, r, mark, mark === "link" ? cx.read_from_clipboard?.() : "", { defs: this.doc?.defs }), cx);
+  }
+
+  // The bar's colour menu: every character of the selection (or the word holding the caret) in text colour `name`, one
+  // of colors.js TEXT_COLORS, or "default" for none. One entry of the history, as a format key is.
+  setColor(name, cx) {
+    this.formatWith((value, r) => setColor(value, r, name, { defs: this.doc?.defs }), cx);
+  }
+
+  // The bar's menus: `mark` (as a format key names it) on the whole selection, or off it, whatever it has now.
+  setMark(mark, on, cx) {
+    this.formatWith((value, r) => setMark(value, r, mark, on, { defs: this.doc?.defs }), cx);
+  }
+
+  // `edit(value, selection)` -> { value, start, end } or null, typed into the field as one entry of the history, whose
+  // undo puts the selection back. An open format bar stays over what is left selected.
+  formatWith(edit, cx) {
     if (!this.takesMarks()) return;
     const bar = this.barOpen(), r = this.caretNow(), value = this.seen;
-    const next = r && toggleMark(value, r, mark, mark === "link" ? cx.read_from_clipboard?.() : "");
+    const next = r && edit(value, r);
     if (!next) return;
     const before = this.f && !this.pending ? docRange(this.f, r) : null, was = this.text;
     const typed = this.typeEdits(value, marksEdits(value, next.value), cx) && this.selectField(next);
@@ -3541,7 +3560,7 @@ export class Editor {
 
   // A mark's button is pressed while its mark is on the selection: its key would take the mark off.
   barButton({ name, action, icon, tip }, t) {
-    const mark = MARK_ACTIONS[action], pressed = Boolean(mark) && hasMark(this.seen, this.known, mark);
+    const mark = MARK_ACTIONS[action], pressed = Boolean(mark) && hasMark(this.seen, this.known, mark, { defs: this.doc?.defs });
     return div().id(`md-format-${name}`).size(BAR.button).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
       .tooltip(tip)
       .when(pressed, el => el.bg(t.selected))

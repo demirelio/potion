@@ -183,12 +183,21 @@ so it wraps as it did on the page, and keeps them in the file.
 | Escape | Closes the format bar when it shows, else stops editing; Enter picks up where you were |
 | Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them |
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code |
-| Cmd+B / Cmd+I / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic or strikethrough (`**`, `*`, `~~`) around the selection, or off it when it has them already; the text stays selected. Spaces at the ends of the selection stay outside the marks. On a caret in a word they mark the word; elsewhere they write the two marks with the caret between them |
-| Cmd+Shift+C | The same for inline code: `` `text` ``, with a longer run of backticks when the text holds some |
+| Cmd+B / Cmd+I / Cmd+U / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic, underline or strikethrough on the selection, all or nothing. If every letter of the selection has it already, the key takes it off all of them; otherwise it puts it on all of them, so a selection that is partly bold becomes all bold first. Text outside the selection keeps its formatting: a bold run the selection cuts is split, and runs that end up touching join into one. Every other formatting stays (bold-italic text that loses bold stays italic; a link keeps its address, a comment its note). The same letters stay selected, so the key again undoes it. Spaces at the ends of the selection stay outside. On a caret in a word they act on the word; elsewhere they write the two marks with the caret between them |
+| Cmd+Shift+C | The same for inline code: other formatting goes around the code (`` **`x`** ``), and making formatted text code keeps its formatting, splitting the code where it changes |
+| Cmd+Shift+H | The same for a highlight |
 | Cmd+K | Links the selection as `[text]()` with the caret in the parentheses, the link shown as written until the caret leaves it, or with the web or mail address the clipboard holds and the caret after it. A link is left as it is |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
-| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
+| Select text in a paragraph, heading, item or quote | A bar over the selection (under it at the top of the pane) with Bold, Italic, Strikethrough, Code, Link and Comment: each does what its key does, and a mark's button shows pressed when every letter of the selection has its mark. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
+
+The file stays plain markdown. Bold, italic, strikethrough and code are written `**…**`, `*…*`, `~~…~~` and
+`` `…` ``; where markdown can't open or close a mark at that spot (the closing `**` in `**"quote"**word`, say) the
+key writes the tag Reading draws instead: `<strong>`, `<em>` or `<s>`. Underline is written `<u>…</u>`, a highlight
+`<mark>…</mark>`, and a text colour `<span style="color: red">…</span>` (red, yellow, green, teal or purple, from the
+theme's terminal colours, so they suit light and dark themes). A `<mark color="…">` written by hand keeps its own
+colour. Text colours have no keys. Read-only files, and blocks far from the part of the page you are looking at, are
+drawn by Herdr's markdown view, which hides a span's tags but draws its text uncoloured.
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
 item, `[] ` or `[ ] ` a task, and `> ` a quote; Cmd+Z right after gives back what you typed. ```` ```js ```` then Enter
@@ -219,7 +228,8 @@ The release {==ships on Friday==}{>>too early? QA needs a day<<} and the docs fo
 A comment at a point{>>check the date<<} marks no text.
 ```
 
-- **Reading** highlights the marked text in the theme's yellow, its formatting still drawn, and leaves out the marks
+- **Reading** highlights the marked text in a muted ochre as light as the page (dark brown on a dark theme, whatever
+  its tint, soft beige on a light one), the colour `<mark>` highlights get too, its formatting still drawn, and leaves out the marks
   and the comment; a comment at a point shows as a highlighted 💬. A highlight with no comment (`{==text==}`) is
   highlighted too. The block being edited looks the same: the marks and the comment stay hidden.
 - **The count** at the right of a block's first row says how many comments it holds, also while the block is being

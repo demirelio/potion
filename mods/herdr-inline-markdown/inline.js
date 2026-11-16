@@ -7,6 +7,7 @@
 import { normalizeLabel } from "./blocks.js";
 import { commentsIn } from "./comments.js";
 import { ENTITIES } from "./entities.js";
+import { TEXT_COLORS } from "./colors.js";
 
 const TAB = 9, NL = 10, FF = 12, CR = 13, SP = 32, BANG = 33, DQUOTE = 34, AMP = 38, SQUOTE = 39, LPAREN = 40;
 const RPAREN = 41, STAR = 42, DASH = 45, DOT = 46, SLASH = 47, COLON = 58, SEMI = 59, LT = 60, EQUALS = 61, GT = 62;
@@ -35,7 +36,6 @@ const LETTER = /[A-Za-z]/;
 
 // The tags TextView pairs with their closing tag and draws with a style, as markdown.rs `inline_html_mark` lists them.
 const STYLED_TAGS = new Set(["strong", "b", "em", "i", "u", "s", "del", "strike", "mark"]);
-const DEFAULT_MARK = "#fef08a";
 const MARK_COLORS = new Map([["black", "#000000"], ["white", "#ffffff"], ["blue", "#3b82f6"], ["yellow", "#facc15"]]);
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const WWW_AFTER = "\t\n (*_[]~";
@@ -279,10 +279,16 @@ function colorOf(value) {
   return MARK_COLORS.get(v.toLowerCase()) ?? null;
 }
 
-// A <mark>'s highlight as TextView picks it: the color attribute, else the style's background-color, else its default.
+// A <mark>'s highlight as TextView picks it: the color attribute, else the style's background-color. Null for neither:
+// the editor draws it in its own highlight colour, which page.js displayText writes in for TextView.
 function markColor(attrs) {
   const style = attribute(attrs, "style");
-  return colorOf(attribute(attrs, "color")?.value) ?? colorOf(style && styleValue(style.value, "background-color")) ?? DEFAULT_MARK;
+  return colorOf(attribute(attrs, "color")?.value) ?? colorOf(style && styleValue(style.value, "background-color"));
+}
+
+function spanColor(attrs) {
+  const style = attribute(attrs, "style"), value = style && styleValue(style.value, "color")?.toLowerCase();
+  return value && (TEXT_COLORS.includes(value) || HEX_COLOR.test(value)) ? value : null;
 }
 
 // The tag s[p, end) as TextView reads it (markdown.rs `inline_html_tag`): its name is its leading letters and digits,
@@ -743,16 +749,20 @@ class Reader {
     for (const t of this.tags) if (!this.texts[t].paired) this.drawTag(t);
   }
 
-  // Pairs the tags of group[first, last) (leaf indices; `infos` their details), then those inside each pair.
+  // Pairs the tags of group[first, last) (leaf indices; `infos` their details), then those inside each pair. A span with
+  // a text colour pairs too, so the fields draw its colour; TextView hides span tags and draws its text uncoloured.
   pairTags(group, infos, first, last) {
     for (let i = first; i < last; i++) {
       const open = infos[i];
-      if (open.closing || open.selfClosing || !STYLED_TAGS.has(open.tag)) continue;
+      if (open.closing || open.selfClosing) continue;
+      const attrs = open.tag === "mark" || open.tag === "span" ? this.s.slice(open.attrsAt, open.attrsEnd) : "";
+      const color = open.tag === "mark" ? markColor(attrs) : open.tag === "span" ? spanColor(attrs) : null;
+      if (!STYLED_TAGS.has(open.tag) && !color) continue;
       const close = closingTag(infos, i, last);
       if (close < 0) continue;
       const a = group[i], b = group[close], start = this.starts[a], end = this.ends[b], from = this.ends[a], to = this.starts[b];
-      this.spans.push(open.tag === "mark"
-        ? { id: 0, kind: "html", start, end, from, to, tag: open.tag, color: markColor(this.s.slice(open.attrsAt, open.attrsEnd)) }
+      this.spans.push(open.tag === "mark" || open.tag === "span"
+        ? { id: 0, kind: "html", start, end, from, to, tag: open.tag, color }
         : { id: 0, kind: "html", start, end, from, to, tag: open.tag });
       open.paired = infos[close].paired = true;
       this.pairTags(group, infos, i + 1, close);
@@ -1099,8 +1109,9 @@ class Writer {
 // reference definitions as `doc.defs` holds them.
 // spans: [{ id, kind, start, end, from, to, ...data }] in source order, outer first: [start, end) the whole markup,
 // [from, to) the part that shows. Kinds and data: strong, em, strike, code, break; link { url, title }; image { url,
-// title, alt }; comment and point { note, noteAt }, highlight; html { tag, color for a mark }. A point comment and a
-// tag that draws nothing show nothing: their from and to are equal.
+// title, alt }; comment and point { note, noteAt }, highlight; html { tag, color: a mark's highlight (null: the
+// editor's own) or a span's text colour }. A point comment and a tag that draws nothing show nothing: their from and to
+// are equal.
 // chars: [{ start, end, text, spans }], each character that shows, a grapheme: its source range, what it shows, and
 // the ids of the spans around it, outermost first. An offset no character holds is in a span's marks.
 // runs: the same characters in stretches [{ start, end, text, verbatim, spans }]: a verbatim run shows its source
@@ -1113,6 +1124,21 @@ export function parseInline(value, { defs } = {}) {
   const reader = new Reader(s, defs ?? null).read(), writer = new Writer(reader);
   writer.write(reader);
   return writer.finish();
+}
+
+// The last few reads: a format key reads the value the editor's tokens were drawn from, and the editor then draws the
+// value the key wrote, which the key read to check it.
+const KEPT_READS = 4;
+const reads = [];
+
+// parseInline's answer for `value` read with `defs` (compared by identity), from the last few reads when it is there.
+export function parsedInline(value, defs = null) {
+  const s = String(value ?? ""), known = defs ?? null;
+  for (const r of reads) if (r.value === s && r.defs === known) return r.inline;
+  const inline = parseInline(s, { defs: known });
+  reads.unshift({ value: s, defs: known, inline });
+  if (reads.length > KEPT_READS) reads.pop();
+  return inline;
 }
 
 // -> map: map[v] is the value offset of the v-th character Reading draws (a point comment draws one), and the last

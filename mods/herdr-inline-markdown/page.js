@@ -6,6 +6,8 @@ import { diagramBlock } from "./diagrams.js";
 import { pictureBlock } from "./images.js";
 import { RAW, TEXT } from "./keys.js";
 import { showComments } from "./comments.js";
+import { textColor } from "./colors.js";
+import { parseInline } from "./inline.js";
 import { NOTES } from "./geometry.js";
 
 export const owners = new Map();
@@ -80,10 +82,24 @@ const sameList = (tree, a, b) => {
 };
 
 const BLOCK_START = /^(?:#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|>|`{3}|~{3}|\d{1,9}[.)](?:[ \t]|$)|(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$)/;
+const MAY_MARK = /<mark/i;
+
+// TextView draws a <mark> with no colour of its own in a bright yellow: it gets the highlight colour instead.
+function coloredMarks(text, color) {
+  if (!color || !MAY_MARK.test(text)) return text;
+  let out = "", at = 0;
+  for (const sp of parseInline(text).spans) {
+    if (sp.kind !== "html" || sp.tag !== "mark" || sp.color !== null) continue;
+    out += `${text.slice(at, sp.start)}<mark color="${color}">`;
+    at = sp.from;
+  }
+  return out + text.slice(at);
+}
+
 // A heading's text that would start a block of its own is escaped, and continuation lines are indented past anything
-// that could interrupt a paragraph: the source said they continue it. Comments show as highlights in `color`.
+// that could interrupt a paragraph: the source said they continue it. Comments and highlights show in `color`.
 export function displayText(b, color) {
-  const content = showComments(b.content, color), defs = b.render.slice(b.content.length);
+  const content = showComments(coloredMarks(b.content, color), color), defs = b.render.slice(b.content.length);
   if (b.kind === "quote") return content + defs;
   const lines = content.split("\n");
   if (b.kind === "heading" && BLOCK_START.test(lines[0])) lines[0] = lines[0].replace(/^(\d*)(.)/, "$1\\$2");
@@ -154,7 +170,8 @@ const frontBox = (t, inner) => div().w_full().rounded(8).bg(t.surface).border_1(
 function piece(owner, d, t, p) {
   const st = STYLES[d.style], { sans, mono } = owner.fonts;
   if (p.icon) return svg(PICTURE_ICON).size(st.size * ICON_SCALE).flex_none().text_color(t.muted);
-  const size = p.code ? st.size * CODE_SCALE : st.size, color = p.link ? t.accent : p.picture ? t.muted : t[d.color];
+  const size = p.code ? st.size * CODE_SCALE : st.size;
+  const color = p.link ? t.accent : p.picture ? t.muted : (p.color && textColor(t, p.color)) || t[d.color];
   return type(div().flex_none(), { ...st, size, weight: p.bold ? Math.max(st.weight, BOLD) : st.weight, lh: d.ratio }, color, p.code ? mono : sans)
     .when(Boolean(p.italic), el => el.italic())
     .when(Boolean(p.strike) || d.checked, el => el.line_through())

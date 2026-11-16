@@ -3138,14 +3138,17 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
     assert.deepEqual(actions(key), [action], key);
   }
   assert.deepEqual(table.filter(x => /^cmd-shift-(up|down)$/.test(x.keystroke)), [], "the keys that moved a block before are not bound");
-  for (const [key, action] of [["cmd-b", "mdb-bold"], ["cmd-i", "mdb-italic"], ["cmd-shift-x", "mdb-strike"], ["cmd-shift-c", "mdb-code"], ["cmd-k", "mdb-link"]]) {
+  for (const [key, action] of [
+    ["cmd-b", "mdb-bold"], ["cmd-i", "mdb-italic"], ["cmd-u", "mdb-underline"], ["cmd-shift-x", "mdb-strike"], ["cmd-shift-c", "mdb-code"],
+    ["cmd-shift-h", "mdb-highlight"], ["cmd-k", "mdb-link"],
+  ]) {
     assert.deepEqual(contexts(key), [`${TEXT} > Input`], `${key}: formats the selection in a text block only`);
     assert.deepEqual(actions(key), [action], key);
   }
   assert.deepEqual(contexts("cmd-alt-m"), [`${TEXT} > Input`], "a comment on the selection, in a text block only");
   assert.deepEqual(actions("cmd-alt-m"), ["mdb-comment"]);
-  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText5", "MdRaw5", "MdSource5", "MdNote5"], "the table changed, so its contexts are new ones and the old ones stay inert");
-  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-4]\b/.test(x.context)), [], "no context of an older table");
+  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText6", "MdRaw6", "MdSource6", "MdNote6"], "the table changed, so its contexts are new ones and the old ones stay inert");
+  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-5]\b/.test(x.context)), [], "no context of an older table");
   for (const key of ["backspace", "left", "right"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
   assert.deepEqual(contexts("escape"), [`${NOTE} > Input`, RAW, TEXT], "the comment box takes Escape whatever its field holds; the block fields only give it away");
   assert.deepEqual(actions("escape"), ["mdb-note-cancel", "mdb-escape"]);
@@ -6770,7 +6773,7 @@ test("the pane header's Markdown toggle switches this pane's copy at every press
   assert.deepEqual(state.shared["herdr-inline-markdown.heads"]?.pa, { name: "note.md", mode: "markdown" });
 });
 
-const FORMAT_ACTIONS = ["mdb-bold", "mdb-italic", "mdb-strike", "mdb-code", "mdb-link"];
+const FORMAT_ACTIONS = ["mdb-bold", "mdb-italic", "mdb-underline", "mdb-strike", "mdb-code", "mdb-highlight", "mdb-link"];
 
 test("Cmd+B, Cmd+I, Cmd+Shift+X and Cmd+Shift+C put marks around the selection the field holds, which stays selected with its hidden marks; the key again takes them off", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
@@ -6836,6 +6839,59 @@ test("one Cmd+Z takes back one format key and puts back the text and the selecti
   act(m, "mdb-code");
   act(m, "mdb-undo");
   assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world**.\n\nEnd\n", { start: 9, end: 9 }], "a caret in a word comes back where it was");
+});
+
+test("Cmd+U and Cmd+Shift+H underline and highlight the selection, one undo step each, the selection staying on the same letters", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const field = m.view.field;
+  field.select(6, 11);
+  act(m, "mdb-underline");
+  assert.deepEqual([m.view.text, field.selection], ["Hello <u>world</u>.\n\nEnd\n", { start: 6, end: 18 }]);
+  act(m, "mdb-highlight");
+  assert.deepEqual([m.view.text, field.selection], ["Hello <mark><u>world</u></mark>.\n\nEnd\n", { start: 6, end: 31 }]);
+  const letters = field.tokens().map(t => [t.token.label, t.token.id]);
+  assert.deepEqual(letters, [...[..."world"].map(ch => [ch, "uh:1"]), [".", ":1"]], "drawn underlined and highlighted, letter by letter at the selection, the tags hidden");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, field.selection], ["Hello <u>world</u>.\n\nEnd\n", { start: 6, end: 18 }]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }]);
+  act(m, "mdb-redo");
+  act(m, "mdb-underline");
+  assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 6, end: 11 }], "the key again takes it off");
+  field.select(8);
+  act(m, "mdb-highlight");
+  assert.deepEqual([m.view.text, field.selection], ["Hello <mark>world</mark>.\n\nEnd\n", { start: 14, end: 14 }], "a caret in a word: the word, the caret kept in it");
+});
+
+test("setColor gives the selection a text colour as one undo step; default takes it off; a colour is no format key", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  const field = m.view.field;
+  field.select(6, 11);
+  m.view.setColor("red", m.cx);
+  assert.equal(m.view.text, 'Hello <span style="color: red">world</span>.\n\nEnd\n');
+  assert.deepEqual(field.tokens().map(t => [t.token.label, t.token.id]), [...[..."world"].map(ch => [ch, "@red:1"]), [".", ":1"]], "drawn in its colour");
+  m.view.setColor("teal", m.cx);
+  assert.equal(m.view.text, 'Hello <span style="color: teal">world</span>.\n\nEnd\n', "a new colour replaces the old one");
+  m.view.setColor("default", m.cx);
+  assert.equal(m.view.text, "Hello world.\n\nEnd\n");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, 'Hello <span style="color: teal">world</span>.\n\nEnd\n');
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, 'Hello <span style="color: red">world</span>.\n\nEnd\n');
+  const log = field.log.length;
+  m.view.setColor("blue", m.cx);
+  assert.deepEqual([m.view.text, replaces(field, log)], ['Hello <span style="color: red">world</span>.\n\nEnd\n', []], "not one of the editor's colours: nothing");
+  const lit = 'Hello <span style="color: red"><mark>world</mark></span>.\n\nEnd\n';
+  m.view.setMark("highlight", true, m.cx);
+  assert.equal(m.view.text, lit, "the menu's Highlight, inside the colour");
+  m.view.setMark("highlight", true, m.cx);
+  assert.equal(m.view.text, lit, "again: it stays");
+  m.view.setMark("highlight", false, m.cx);
+  assert.equal(m.view.text, 'Hello <span style="color: red">world</span>.\n\nEnd\n', "No highlight");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, lit, "one undo step");
 });
 
 test("Cmd+K links the selection with the caret in the parentheses, or with the web address the clipboard holds and the caret after it", async () => {
@@ -7263,6 +7319,26 @@ test("a button shows pressed while its mark is on the selection, by the test its
   }
 });
 
+test("a format key over a partly bold selection makes all of it bold, the bar's button then pressed; again, all of it plain", async () => {
+  const m = await page("Plain text and **bold words** here.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await caretTo(m, 18);
+  await selectByMouse(m, 6, 19);
+  assert.deepEqual(pressedMarks(m), [], "partly bold: not pressed");
+  act(m, "mdb-bold");
+  assert.equal(m.view.text, "Plain **text and bold words** here.\n\nEnd\n");
+  const v = m.view.field.value(), sel = m.view.field.selection;
+  assert.equal(v.slice(sel.start, sel.end).replaceAll("*", ""), "text and bo", "the same letters selected");
+  assert.deepEqual(pressedMarks(m), ["bold"], "all bold: pressed");
+  act(m, "mdb-bold");
+  assert.equal(m.view.text, "Plain text and bo**ld words** here.\n\nEnd\n");
+  assert.deepEqual(pressedMarks(m), []);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Plain **text and bold words** here.\n\nEnd\n", "one undo step per key");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Plain text and **bold words** here.\n\nEnd\n");
+});
+
 test("Link on the bar closes it, the caret left in the parentheses or after the clipboard's address; inside a link it shows pressed and changes nothing", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
@@ -7389,18 +7465,18 @@ test("a selection that would cut through a comment's marks, or reach into code, 
   assert.equal(m.view.text, "Hello {==world==}{>>n<<} here, `code` too.\n\nEnd\n");
 });
 
-test("Reading draws marked text highlighted in the theme's yellow, the marks and the comment left out and a point comment a marker; the field holds them as written", async () => {
-  state.theme = { ...theme(), ansi3: "#E5C07B" };
-  const m = await page("Hello {==big **world**==}{>>note<<}, again{>>p<<}.\n\nEnd\n", { 0: 24, 1: 38 });
+test("Reading draws marked text in the muted highlight, the marks and the comment left out and a point comment a marker; the field holds them as written", async () => {
+  state.theme = { ...theme(), background: "#191919" };
+  const m = await page("Hello {==big **world**==}{>>note<<}, again{>>p<<} <mark>lit</mark>.\n\nEnd\n", { 0: 24, 1: 38 });
   const field = ownField(m, 0), draw = x => inputOf(m, 0).token({ token: x.token, range: x.range, selected: false, line_height: 24, available_width: 700 }, m.cx);
   const marked = () => field.tokens().map(x => all(draw(x), n => n.style.bg !== undefined).map(n => n.style.bg));
-  assert.deepEqual(field.tokens().map(x => x.token.label), ["big ", "world,", POINT], "what shows of the marked words and the point comment");
-  assert.deepEqual(marked(), [["#e5c07b55"], ["#e5c07b55"], ["#e5c07b55"]]);
-  state.theme = { ...theme(), ansi3: "#c18401" };
+  assert.deepEqual(field.tokens().map(x => x.token.label), ["big ", "world,", POINT, "lit."], "what shows of the marked words, the point comment and the highlight");
+  assert.deepEqual(marked(), [["#4a3b20"], ["#4a3b20"], ["#4a3b20"], ["#4a3b20"]], "an opaque ochre, quiet on a dark page");
+  state.theme = { ...theme(), background: "#ffffff" };
   m.tree();
   await fire_timers(m.cx, { ms: 0 });
-  assert.deepEqual(marked(), [["#c1840155"], ["#c1840155"], ["#c1840155"]], "a new theme, its yellow");
-  assert.equal(field.value(), "Hello {==big **world**==}{>>note<<}, again{>>p<<}.");
+  assert.deepEqual(marked(), [["#f6e8cd"], ["#f6e8cd"], ["#f6e8cd"], ["#f6e8cd"]], "a light theme: a soft beige");
+  assert.equal(field.value(), "Hello {==big **world**==}{>>note<<}, again{>>p<<} <mark>lit</mark>.");
 });
 
 test("a block with comments shows their count right of its first row; a click on it opens a card of its comments: the marked text, the comment, Edit and Resolve", async () => {

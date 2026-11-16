@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { graphemeEnd, parseInline, visibleMap } from "../mods/herdr-inline-markdown/inline.js";
+import { graphemeEnd, parseInline, parsedInline, visibleMap } from "../mods/herdr-inline-markdown/inline.js";
 import { parse, field, isText } from "../mods/herdr-inline-markdown/blocks.js";
 import { commentsIn } from "../mods/herdr-inline-markdown/comments.js";
 import { commonmark, gfm, docs, originals } from "./markdown-corpus.mjs";
@@ -220,7 +220,7 @@ test("inline tags: the styled ones drawn with their style, every tag hidden", ()
   assert.deepEqual(hidden(v), ["<u>", "</u>", '<mark color="#f5c54255">', "</mark>", "<span>", "</span>", "<b>", "</b>", "<!-- x -->", "<s>"]);
   assert.equal(spanOf(v, "html").tag, "u");
   assert.equal(parseInline(v).spans.find(s => s.tag === "mark").color, "#f5c54255");
-  assert.equal(spanOf("<mark>x</mark>", "html").color, "#fef08a", "Reading's default");
+  assert.equal(spanOf("<mark>x</mark>", "html").color, null, "no colour of its own: drawn in the editor's highlight colour");
   assert.equal(spanOf('<mark style="background-color: yellow">x</mark>', "html").color, "#facc15");
   for (const tag of ["strong", "em", "i", "del", "strike"]) assert.equal(look(`<${tag}>x</${tag}>`), `{<${tag}>|x}`);
   assert.equal(look("<b>a <i>b</i></b>"), "{<b>|a }{<b>><i>|b}");
@@ -232,6 +232,33 @@ test("inline tags: the styled ones drawn with their style, every tag hidden", ()
   assert.equal(look(img), "{image:p.png|x & y} z");
   assert.equal(spanOf(img, "image").alt, "x & y");
   assert.equal(look("<img alt=a> b"), " b", "no source: no picture");
+});
+
+test("a span with a text colour pairs with its closing tag and gives its text that colour; any other span draws nothing", () => {
+  const v = 'a <span style="color: red">b <span>c</span></span> d';
+  assert.equal(look(v), "a {<span>|b c} d");
+  assert.deepEqual(hidden(v), ['<span style="color: red">', "<span>", "</span></span>"]);
+  const sp = spanOf(v, "html");
+  assert.deepEqual([sp.tag, sp.color, v.slice(sp.from, sp.to)], ["span", "red", "b <span>c</span>"]);
+  for (const name of ["red", "yellow", "green", "teal", "purple"]) assert.equal(spanOf(`<span style="color: ${name}">x</span>`, "html").color, name);
+  assert.equal(spanOf("<span style='font-weight: bold; Color: TEAL'>x</span>", "html").color, "teal", "among other declarations, in any case");
+  assert.equal(spanOf('<span style="color: #FF0000">x</span>', "html").color, "#ff0000");
+  for (const other of ['<span style="color: blue">x</span>', '<span style="color: nope">x</span>', "<span>x</span>", '<span class="red">x</span>']) {
+    assert.equal(look(other), "x", other);
+    assert.ok(parseInline(other).spans.every(s => s.from === s.to), `${other}: its tags draw nothing`);
+  }
+  assert.equal(look('**a <span style="color: green">b** c</span>'), "{strong|a b} c", "tags pair inside the emphasis that holds them");
+});
+
+test("parsedInline keeps the last few reads: the same value with the same definitions is read once", () => {
+  const defs = new Map([["r", "[r]: https://x.org"]]);
+  const a = parsedInline("a **b** [r]", defs);
+  assert.equal(parsedInline("a **b** [r]", defs), a, "read again: the same answer");
+  assert.notEqual(parsedInline("a **b** [r]", new Map(defs)), a, "other definitions: read again");
+  assert.deepEqual(parsedInline("a **b** [r]", defs).spans.map(s => s.kind), parseInline("a **b** [r]", { defs }).spans.map(s => s.kind));
+  for (const v of ["1", "2", "3", "4", "5", "6", "7", "8"]) parsedInline(v);
+  assert.notEqual(parsedInline("a **b** [r]", defs), a, "a handful of other values later it is read again");
+  assert.equal(parsedInline("x"), parsedInline("x", null), "no definitions: null");
 });
 
 test("characters are graphemes: combining marks, emoji with modifiers and joiners, flags, keycaps, Hangul", () => {

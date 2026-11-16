@@ -1,6 +1,6 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { reset } from "./mocks/herdr.mjs";
+import { reset, state } from "./mocks/herdr.mjs";
 import { all, find, fire, nodeOf, textOf } from "./mocks/element.mjs";
 import { div } from "./mocks/gpui-kit.mjs";
 import { makeCx, must } from "./helpers.mjs";
@@ -107,6 +107,16 @@ test("TextView text: comments are drawn as highlights, their marks and text left
   const [linked] = blocksOf("see [x] {==y==}\n\n[x]: https://e.com\n");
   assert.equal(displayText(linked, color), `see [x] ${lit("y")}\n\n[x]: https://e.com`, "the definitions after it untouched");
   assert.equal(displayText(blocksOf("plain\n")[0], color), "plain");
+});
+
+test("TextView text: a highlight with no colour of its own gets the editor's; one with a colour, code and a coloured span are left alone", () => {
+  const color = "#4a3b20", lit = inner => `<mark color="${color}">${inner}</mark>`;
+  const [para] = blocksOf("a <mark>b **c**</mark> d <MARK >e</mark> `<mark>f</mark>`\n");
+  assert.equal(displayText(para, color), `a ${lit("b **c**")} d ${lit("e")} \`<mark>f</mark>\``);
+  const kept = 'a <mark color="#336699">b</mark> <mark style="background-color: yellow">c</mark> <span style="color: red">d</span>';
+  assert.equal(displayText(blocksOf(`${kept}\n`)[0], color), kept);
+  assert.equal(displayText(blocksOf("a <mark>b\n")[0], color), "a <mark>b", "a tag with no closing tag draws nothing either way");
+  assert.equal(displayText(blocksOf("{==a==}{>>n<<} <mark>b</mark>\n")[0], color), `${lit("a")} ${lit("b")}`);
 });
 
 test("a rendered block with comments shows their count right of its first row, in a box the editor places and hit-tests", () => {
@@ -295,6 +305,15 @@ test("each piece of a token is formatted as Reading draws it", () => {
   assert.deepEqual(pick(one("c:1", "x")[0], "font_family", "bg"), { font_family: "Mono", bg: "surface" });
   assert.equal(one("h:1", "x")[0].bg, HIGHLIGHT, "a comment's text in the comment highlight");
   assert.equal(one("m#fef08a:1", "x")[0].bg, "#fef08a", "a mark tag in its colour");
+  assert.equal(one("u:1", "x")[0].underline, true, "underline");
+  const themed = { ...Object.fromEntries(["foreground", "accent", "muted"].map(c => [c, c])), ansi1: "#e06c75", ansi2: "#98c379", ansi3: "#e5c07b", ansi5: "#c678dd", ansi6: "#56b6c2" };
+  state.theme = themed;
+  for (const [name, color] of [["red", "#e06c75"], ["green", "#98c379"], ["yellow", "#e5c07b"], ["purple", "#c678dd"], ["teal", "#56b6c2"]]) {
+    assert.equal(one(`@${name}:1`, "x")[0].text_color, color, `a ${name} text colour from the theme`);
+  }
+  assert.equal(one("b@#123456:1", "x")[0].text_color, "#123456", "a colour written in the file");
+  assert.equal(one("l@red:1", "x")[0].text_color, "accent", "a link keeps the link colour");
+  state.theme = null;
   assert.deepEqual(pick(one(`N:${POINT.length}`, POINT)[0], "text", "bg"), { text: POINT, bg: HIGHLIGHT }, "a point comment's marker");
   assert.deepEqual(one("P:0,p:3", "cat").map(p => p.text), ["icon", "cat"], "a picture's icon before its alt text");
   assert.deepEqual(one("E:0", "\u{200b}"), [], "hidden marks alone draw nothing");
