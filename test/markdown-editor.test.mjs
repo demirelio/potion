@@ -17,7 +17,7 @@ const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, NOTE, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 
@@ -3068,6 +3068,18 @@ const X = 92;
 const topOf = (m, i) => 28 + m.view.sums[i] - m.view.offset;
 // The column's left edge wherever the page is drawn: a wide pane, or the margin layout of a file with comments.
 const leftOf = m => columnLeft(m.view.viewport?.width ?? 900, m.view.margin);
+// Where block `key`'s field is in the window, at zoom 1: the pane is at the window's top-left here.
+const originOf = (m, key) => {
+  const d = m.view.data.get(key);
+  return { x: leftOf(m) + m.view.chromeOf(d, true).x, y: 28 + m.view.sums[m.view.at.get(key)] - m.view.offset + d.space };
+};
+const fieldOrigin = (m, i) => originOf(m, keyAt(m, i));
+// A press on block `key`'s field at `local`, from the field's top-left, as its wrapper hears it: in window pixels, the
+// page's scaled by Herdr's zoom `z`.
+const fieldPress = (m, key, local, more = {}, z = 1) => {
+  const o = originOf(m, key);
+  return press({ x: (o.x + local.x) * z, y: (o.y + local.y) * z }, { local_position: { x: local.x * z, y: local.y * z }, ...more });
+};
 async function page(disk, sizes, viewH = 600, viewW = 900) {
   const m = await mount({ disk });
   viewportOf(m, viewW, viewH);
@@ -7034,11 +7046,20 @@ const rowPress = (m, id) => fire(must(m.tree(), `md-bar-row-${id}`), "on_mouse_d
 const fieldKeyUp = (m, keystroke, key, modifiers) => fire(must(m.tree(), `md-field-${m.view.activeKey}`), "on_key_up", { key, keystroke, modifiers: { ...NO_MODS, ...modifiers } }, m.cx);
 // A press in the field being edited that leaves [start, end) selected (a drag, or a double-click on a word), read out
 // 30 ms after its mouse-up.
+// Where the edited field draws offset `at` when none of its lines wraps: { x, y } from its top-left, mid-row.
+function fieldPoint(m, at) {
+  const state = m.view.field, d = m.view.data.get(m.view.activeKey), value = state.value(), lineStart = value.lastIndexOf("\n", at - 1) + 1;
+  const line = value.slice(0, lineStart).split("\n").length - 1;
+  return { x: (drawnBefore(state, at) - drawnBefore(state, lineStart)) * m.view.calOf(d.style).advance, y: (line + 0.5) * d.row };
+}
+// A drag in the edited field from offset `start` to `end`, or a double-click at `start` (clicks 2), the field selecting
+// [start, end).
 async function selectByMouse(m, start, end, clicks = 1) {
-  const p = { x: X + 20, y: topOf(m, m.view.at.get(m.view.activeKey)) + 10 }, wrap = () => must(m.tree(), `md-field-${m.view.activeKey}`);
-  fire(wrap(), "on_mouse_down:left", press(p, { click_count: clicks }), m.cx);
+  const key = m.view.activeKey, wrap = () => must(m.tree(), `md-field-${key}`);
+  const from = fieldPoint(m, start), to = clicks > 1 ? from : fieldPoint(m, end);
+  fire(wrap(), "on_mouse_down:left", fieldPress(m, key, from, { click_count: clicks }), m.cx);
   m.view.field.select(start, end);
-  fire(wrap(), "on_mouse_up:left", press(p, { click_count: clicks }), m.cx);
+  fire(wrap(), "on_mouse_up:left", fieldPress(m, key, to, { click_count: clicks }), m.cx);
   await flush();
   await fire_timers(m.cx, { ms: 30 });
 }
@@ -7269,7 +7290,7 @@ test("the format bar sits over the selection's first row at its start column, un
   reset();
   const n = await page("Para one\nline two\n\nEnd\n", { 0: 48, 1: 38 });
   await openBlock(n, 0);
-  await selectByMouse(n, 5, 13);
+  await dragInField(n, 0, { x: 5 * advance, y: 12 }, { x: 4 * advance, y: 36 }, { start: 5, end: 13 });
   assert.deepEqual([barOf(n).style.top, barOf(n).style.left], [topOf(n, 0) + 2 * 24 + BAR.gap, X + 5 * advance], "under the last of two rows, at the start's column");
 });
 
@@ -8489,16 +8510,30 @@ test("a drag inside a block selects in its field and shows the bar; one that rea
   assert.deepEqual([m.view.activeKey, other.selection.start === other.selection.end], [null, true], "a field that lost the keyboard shows no selection");
 });
 
+// The length of what the field draws for its value before offset `at`, the tokens before it by their labels.
+function drawnBefore(state, at) {
+  let n = 0, from = 0;
+  for (const t of state.tokens()) {
+    if (t.range.start >= at) break;
+    n += t.range.start - from + t.token.label.length;
+    from = t.range.end;
+  }
+  return n + Math.max(0, at - from);
+}
 // A click on token `t` of block i's field, `share` of the way across it: the wrapper's mouse-down, the field taking the
-// keyboard, Herdr selecting the token and reporting the click, the mouse-up, and the readout 30 ms after it.
-async function clickToken(m, i, t, { modifiers = NO_MODS, share = 0.5 } = {}) {
-  const key = keyAt(m, i), state = m.view.blockField(key), wrap = () => must(m.tree(), `md-field-${key}`);
-  const bounds = { x: 100, y: 0, width: 100, height: 24 }, p = { x: bounds.x + share * bounds.width, y: 10 };
-  fire(wrap(), "on_mouse_down:left", press(p, { modifiers }), m.cx);
+// keyboard, Herdr selecting the token and reporting the click with its bounds in the window, the mouse-up, and the
+// readout 30 ms after it. The token is where `at` ({ x, row } in the field) says, else on the first row where the
+// calibrated advance puts it; window pixels are the page's scaled by Herdr's zoom `zoom`.
+async function clickToken(m, i, t, { modifiers = NO_MODS, share = 0.5, at = null, advance = STYLES.p.size * 0.47, zoom = 1 } = {}) {
+  const key = keyAt(m, i), state = m.view.blockField(key), wrap = () => must(m.tree(), `md-field-${key}`), row = m.view.data.get(key).row;
+  const place = at ?? { x: drawnBefore(state, t.range.start) * advance, row: 0 }, o = fieldOrigin(m, i), width = t.token.label.length * advance;
+  const bounds = { x: (o.x + place.x) * zoom, y: (o.y + place.row * row) * zoom, width: width * zoom, height: row * zoom };
+  const local = { x: place.x + share * width, y: (place.row + 0.5) * row };
+  fire(wrap(), "on_mouse_down:left", fieldPress(m, key, local, { modifiers }, zoom), m.cx);
   if (key !== m.view.activeKey) state.handlers.focus({}, m.cx);
   state.select(t.range.start, t.range.end);
   fire(inputOf(m, i), "on_token_click", { ...t, bounds, modifiers }, m.cx);
-  fire(wrap(), "on_mouse_up:left", press(p, { modifiers }), m.cx);
+  fire(wrap(), "on_mouse_up:left", fieldPress(m, key, local, { modifiers }, zoom), m.cx);
   await flush();
   await fire_timers(m.cx, { ms: 30 });
 }
@@ -8820,6 +8855,178 @@ test("an autolink or a bare address: Edit changes its text with its address, the
   assert.equal(addressOf(m), "http://www.b.org");
   linkPress(m, "remove");
   assert.equal(m.view.text, "Go https\\://c.org or www\\.b.org now\n\nEnd\n");
+});
+
+// The paragraph of the owner's report, in a 640 px pane (a 576 px field): its rows end well short of the field's edge,
+// so a link near the start of its fourth row is far from where an average advance across the line puts it.
+const OWNER = "Herdr draws each paragraph with a field of its own, and its rows break incomprehensibilities where that field decides, not where an average letter counterproductively guesses: long words leave room at each row's end, internationalization [sfa sadfa s](https://e.com/x) and the popover of that link went far to its right.";
+const OWNER_PANE = 640, OWNER_FIELD = 576;
+// The field draws its letters 6.5 px apart on average, where the calibration says 7.05: its rows are its own.
+const DRAWN_ADVANCE = 6.5;
+async function ownerPage(rows = 4, viewH = 600) {
+  const m = await mount({ disk: `Intro\n\n${OWNER}\n\nEnd\n` });
+  fire(must(m.tree(), "md-root"), "on_size_change", { width: OWNER_PANE, height: viewH + 60 }, m.cx);
+  viewportOf(m, OWNER_PANE, viewH);
+  await heights(m, { 0: 24, 1: 14 + rows * 24, 2: 38 });
+  assert.equal(m.view.chromeOf(m.view.data.get(keyAt(m, 1)), true).w, OWNER_FIELD);
+  return m;
+}
+// A reference wrap of words shorter than a row, one space apart: a word goes to the next row when it and the space after
+// it would pass the row's edge. -> the offset each row starts at.
+function referenceRows(text, perRow) {
+  const rows = [0];
+  let used = 0;
+  for (const m of text.matchAll(/(\S+)( *)/g)) {
+    const need = m[1].length + m[2].length;
+    if (used > 0 && used + need > perRow) { rows.push(m.index); used = 0; }
+    used += need;
+  }
+  return rows;
+}
+// Where block i's field draws value offset `at` with its letters `advance` apart: { x, row }.
+function drawnPlace(m, i, at, advance = DRAWN_ADVANCE) {
+  const state = ownField(m, i), rows = referenceRows(drawnText(state), OWNER_FIELD / advance), d = drawnBefore(state, at);
+  const row = rows.findLastIndex(start => start <= d);
+  return { x: (d - rows[row]) * advance, row };
+}
+// A drag in block i's field from `from` to `to` ({ x, y } from its top-left), the field selecting `range`; with clicks 2
+// a double-click at `from`.
+async function dragInField(m, i, from, to, range, clicks = 1) {
+  const key = keyAt(m, i), wrap = () => must(m.tree(), `md-field-${key}`);
+  fire(wrap(), "on_mouse_down:left", fieldPress(m, key, from, { click_count: clicks }), m.cx);
+  m.view.field.select(range.start, range.end);
+  fire(wrap(), "on_mouse_up:left", fieldPress(m, key, to, { click_count: clicks }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+}
+
+test("a press on a link near the start of a paragraph's fourth row opens its popover over that row, its left edge at the link's start, from where the field drew the token pressed", async () => {
+  const m = await ownerPage();
+  const value = ownField(m, 1).value(), t = tokenAt(m, 1, value.indexOf("sfa")), at = drawnPlace(m, 1, t.range.start);
+  assert.equal(at.row, 3, "the link is on the fourth row");
+  await clickToken(m, 1, t, { at });
+  const pop = popoverOf(m).style, o = fieldOrigin(m, 1), advance = STYLES.p.size * 0.47;
+  assert.equal(pop.top, o.y + 3 * 24 - BAR.gap - pop.h, "over the fourth row");
+  assert.ok(Math.abs(pop.left - (o.x + at.x)) < 1, `at the link's start: ${pop.left} for ${o.x + at.x}`);
+  const modulo = o.x + ((drawnBefore(ownField(m, 1), t.range.start) * advance) % OWNER_FIELD);
+  assert.ok(Math.abs(pop.left - modulo) > 300, `nowhere near the average advance across the line: ${modulo}`);
+});
+
+test("at 125 % zoom the popover goes by the token's bounds in the window, scaled back to the page", async () => {
+  const z = 1.25;
+  state.settings = { ...state.settings, zoom: z };
+  const m = await mount({ disk: `Intro\n\n${OWNER}\n\nEnd\n` });
+  fire(must(m.tree(), "md-root"), "on_size_change", { width: OWNER_PANE * z, height: 660 * z }, m.cx);
+  viewportOf(m, OWNER_PANE * z, 600 * z);
+  await heights(m, { 0: 24 * z, 1: (14 + 4 * 24) * z, 2: 38 * z });
+  const value = ownField(m, 1).value(), t = tokenAt(m, 1, value.indexOf("sfa")), at = drawnPlace(m, 1, t.range.start);
+  await clickToken(m, 1, t, { at, zoom: z });
+  const pop = popoverOf(m).style, o = fieldOrigin(m, 1);
+  assert.equal(pop.top, o.y + 3 * 24 - BAR.gap - pop.h, "over the fourth row");
+  assert.ok(Math.abs(pop.left - (o.x + at.x)) < 1e-6, `${pop.left} for ${o.x + at.x}`);
+});
+
+test("a press on a link's second word puts the popover's left edge at its first word, never left of the field", async () => {
+  const m = await ownerPage();
+  const value = ownField(m, 1).value(), first = drawnPlace(m, 1, tokenAt(m, 1, value.indexOf("sfa")).range.start), t = tokenAt(m, 1, value.indexOf("sadfa"));
+  await clickToken(m, 1, t, { at: drawnPlace(m, 1, t.range.start) });
+  const o = fieldOrigin(m, 1);
+  assert.equal(popoverOf(m).style.top, o.y + 3 * 24 - BAR.gap - popoverOf(m).style.h, "over the row pressed");
+  assert.ok(Math.abs(popoverOf(m).style.left - (o.x + first.x)) < 4, `${popoverOf(m).style.left} for ${o.x + first.x}`);
+  escape(m);
+  escape(m);
+  await clickToken(m, 1, tokenAt(m, 1, value.indexOf("sadfa")), { at: { x: 5, row: 3 } });
+  assert.equal(popoverOf(m).style.left, o.x, "the link went on from the row above: the field's left edge");
+});
+
+test("a link's popover follows the row it was pressed on as the page scrolls, and goes under the row when there is no room over it", async () => {
+  const m = await ownerPage(4, 200);
+  const value = ownField(m, 1).value(), t = tokenAt(m, 1, value.indexOf("sfa")), at = drawnPlace(m, 1, t.range.start);
+  await clickToken(m, 1, t, { at });
+  const row = () => fieldOrigin(m, 1).y + 3 * 24, { left, h } = popoverOf(m).style;
+  assert.equal(popoverOf(m).style.top, row() - BAR.gap - h);
+  wheel(m, -30);
+  assert.deepEqual([m.view.offset, popoverOf(m).style.top, popoverOf(m).style.left], [30, row() - BAR.gap - h, left], "up with the page");
+  wheel(m, -80);
+  assert.ok(row() - BAR.gap - h < BAR.margin, "no room over the row now");
+  assert.deepEqual([popoverOf(m).style.top, popoverOf(m).style.left], [row() + 24 + BAR.gap, left], "under the row");
+});
+
+test("the bar after a drag on a later row of a wrapped paragraph sits over the row the selection starts on, at its x: the press's going forward, the release's going back", async () => {
+  const m = await ownerPage();
+  await openBlock(m, 1);
+  const h = BAR.button + 2 * (BAR.pad + 1), o = fieldOrigin(m, 1), value = m.view.field.value();
+  await dragInField(m, 1, { x: 40, y: 3 * 24 + 10 }, { x: 300, y: 3 * 24 + 12 }, { start: value.indexOf("national"), end: value.indexOf(" and the") });
+  assert.deepEqual([barOf(m).style.top, barOf(m).style.left], [o.y + 3 * 24 - BAR.gap - h, o.x + 40], "forward: where it was pressed");
+  await dragInField(m, 1, { x: 300, y: 3 * 24 + 10 }, { x: 60, y: 2 * 24 + 5 }, { start: value.indexOf("words leave"), end: value.indexOf(" and the") });
+  assert.deepEqual([barOf(m).style.top, barOf(m).style.left], [o.y + 2 * 24 - BAR.gap - h, o.x + 60], "back: where it was let go, a row up");
+});
+
+test("the bar after a double-click on a word of a later row sits over the row pressed, its left edge between the press and the word's width left of it", async () => {
+  const m = await ownerPage();
+  await openBlock(m, 1);
+  const h = BAR.button + 2 * (BAR.pad + 1), o = fieldOrigin(m, 1), advance = STYLES.p.size * 0.47, at = m.view.field.value().indexOf("long");
+  const word = drawnPlace(m, 1, at), p = { x: word.x + 12, y: word.row * 24 + 10 };
+  assert.equal(word.row, 2);
+  await dragInField(m, 1, p, p, { start: at, end: at + 4 }, 2);
+  const bar = barOf(m).style;
+  assert.equal(bar.top, o.y + 2 * 24 - BAR.gap - h, "over the row pressed");
+  assert.ok(bar.left >= o.x + p.x - 4 * advance && bar.left <= o.x + p.x, `${bar.left} for a press at ${o.x + p.x}`);
+});
+
+test("without a press to go by, a float's row and x come from wrapping the text as the field does: a keyboard selection's bar and caret row, then Cmd+K's box over the same row", async () => {
+  const m = await ownerPage(5);
+  await openBlock(m, 1);
+  const advance = STYLES.p.size * 0.47, h = BAR.button + 2 * (BAR.pad + 1), o = fieldOrigin(m, 1), value = m.view.field.value();
+  const select = async word => {
+    const start = value.indexOf(word);
+    m.view.field.select(start, start + word.length);
+    keyUp(m, "right", { shift: true });
+    await flush();
+    return { start, ...drawnPlace(m, 1, start, advance) };
+  };
+  const late = await select("popover");
+  assert.equal(late.row, 3);
+  assert.equal(barOf(m).style.top, o.y + 3 * 24 - BAR.gap - h, "over the fourth row");
+  assert.equal(m.view.caretTop(1, late.start), m.view.sums[1] + 14 + 3 * 24, "the caret's row");
+  const word = await select("long");
+  assert.equal(word.row, 2);
+  assert.equal(barOf(m).style.top, o.y + 2 * 24 - BAR.gap - h, "over the third row");
+  assert.ok(Math.abs(barOf(m).style.left - (o.x + word.x)) < 1e-6, `${barOf(m).style.left} for ${o.x + word.x}`);
+  act(m, "mdb-link");
+  const box = must(m.tree(), "md-link-box").style;
+  assert.equal(box.top, o.y + 2 * 24 - BAR.gap - LINK_BOX.h, "the address box over the same row");
+  assert.ok(Math.abs(box.left - (o.x + word.x)) < 1e-6, `${box.left} for ${o.x + word.x}`);
+});
+
+test("a field measured on no more rows than it has lines wraps none of them, however long the estimate takes a line to be", async () => {
+  const line = "word ".repeat(30).trim();
+  const m = await page(`Intro\n\n${line}\\\n${line}\n\nEnd\n`, { 0: 24, 1: 14 + 2 * 24, 2: 38 });
+  await openBlock(m, 1);
+  const h = BAR.button + 2 * (BAR.pad + 1), o = fieldOrigin(m, 1), advance = STYLES.p.size * 0.47;
+  m.view.field.select(120, 124);
+  keyUp(m, "right", { shift: true });
+  await flush();
+  assert.deepEqual([barOf(m).style.top, barOf(m).style.left], [o.y - BAR.gap - h, Math.min(o.x + 120 * advance, 900 - BAR.margin - BAR_W)], "the first line's row");
+  m.view.field.select(line.length + 1 + 120, line.length + 1 + 124);
+  keyUp(m, "right", { shift: true });
+  await flush();
+  assert.equal(barOf(m).style.top, o.y + 24 - BAR.gap - h, "the second line's");
+});
+
+test("in a narrow pane a press on commented text below other blocks shows its card over the text, at its start", async () => {
+  await atTime(NOW, async () => {
+    const m = await page("Intro\n\nMore\n\nA {==marked==}{>>2026-11-16 20:51 | first<<} c.\n\nEnd\n", { 0: 24, 1: 38, 2: 38, 3: 38 }, 600, NARROW_PANE);
+    await clickToken(m, 2, tokenShowing(m, 2, "marked"));
+    const float = must(m.tree(), "md-card-float").style, o = fieldOrigin(m, 2), advance = STYLES.p.size * 0.47;
+    assert.deepEqual([float.top, float.left], [o.y - BAR.gap - lookOfCard("first", true, { full: true }).h, o.x + 2 * advance]);
+  });
+});
+
+test("a margin card sits level with the row the field wraps its text onto, where sharing rows out by length would put it a row higher", async () => {
+  const text = "A first row that stops well short of the right edge of the page's text column, {==counterrevolutionaries==}{>>note<<} is a word too long to fit there, so the second row starts with it; sharing rows out by their length would put it on the first row, as the field does not.";
+  const m = await widePage(`${text}\n`, { 0: 3 * 24 });
+  assert.equal(cardAt(m, 0).style.top, wantTop(m, 0, 1));
 });
 
 test("a checked task's words are all tokens, so the line through it is drawn", async () => {

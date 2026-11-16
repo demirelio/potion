@@ -9,6 +9,7 @@ export const PAGE_KEEP = 40;
 const MONO = new Set(["code", "mermaid", "frontmatter", "html", "definition", "hr"]);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const WORD = /[\p{L}\p{N}_]/u;
+const NEWLINE = 10, SPACE = 32;
 
 // (x, y) is relative to the block's content box. `target` is { kind, value, fenced, closed, rows, width, height }:
 // `fenced` when the field's first line is a fence or front matter dashes that Reading does not draw, `rows` the
@@ -138,21 +139,66 @@ export function nextCell(value, caret, dir) {
   return next ? { start: next.start, end: next.end } : null;
 }
 
-// The line index when no line wraps (`rows`, the measured row count, is at most the line count); otherwise the
-// measured extra rows are shared out over the lines by length.
-export function caretRow(value, caret, rows) {
-  const lines = value.split("\n");
-  let line = 0, col = clamp(caret, 0, value.length);
-  while (line < lines.length - 1 && col > lines[line].length) col -= lines[line++].length + 1;
-  if (!(rows > lines.length)) return line;
-  const extra = rows - lines.length, total = lines.reduce((n, l) => n + l.length, 0) || 1;
-  const share = lines.map(l => (extra * l.length) / total), whole = share.map(Math.floor);
-  const left = extra - whole.reduce((a, b) => a + b, 0);
-  for (const k of share.map((_, i) => i).sort((a, b) => share[b] - whole[b] - (share[a] - whole[a])).slice(0, left)) whole[k]++;
-  let before = 0;
-  for (let k = 0; k < line; k++) before += 1 + whole[k];
-  const own = 1 + whole[line], len = lines[line].length;
-  return before + Math.min(own - 1, len ? Math.floor((col / len) * own) : 0);
+// The offset each row of `text` starts at in a field `width` px wide, every character `advance` px, wrapped as the field
+// wraps (gpui's LineWrapper): a row breaks before the word that would pass its edge, the spaces after a word counting,
+// or inside a word too wide for a row where it overflows; a line break always starts one. A word that fits is taken
+// whole with the space after it: a call per letter costs too much in Herdr's runtime. Counts are in characters, and
+// `room` is how many fit.
+export function wrapRows(text, width, advance) {
+  const rows = [0], room = Math.max(1, width / advance);
+  let used = 0, wordAt = -1, usedBefore = 0, rowAt = 0, prev = NEWLINE, seen = false, lineEnd = lineEndFrom(text, 0);
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === NEWLINE) {
+      rows.push(i + 1);
+      used = 0; wordAt = -1; rowAt = i + 1; prev = c; seen = false; lineEnd = lineEndFrom(text, i + 1);
+      continue;
+    }
+    if (c !== SPACE && prev === SPACE && seen) { wordAt = i; usedBefore = used; }
+    if (c !== SPACE) {
+      seen = true;
+      const space = text.indexOf(" ", i), end = space < 0 || space > lineEnd ? lineEnd : space, word = end - i;
+      if (used + word <= room) {
+        const spaced = end === space && used + word + 1 <= room;
+        used += spaced ? word + 1 : word;
+        prev = spaced ? SPACE : c;
+        i = spaced ? end : end - 1;
+        continue;
+      }
+    }
+    prev = c;
+    used++;
+    if (used <= room || i <= rowAt) continue;
+    if (wordAt > rowAt && used - usedBefore <= room) { rowAt = wordAt; used -= usedBefore; }
+    else { rowAt = i; used = 1; }
+    wordAt = -1;
+    rows.push(rowAt);
+  }
+  return rows;
+}
+
+function lineEndFrom(text, from) {
+  const end = text.indexOf("\n", from);
+  return end < 0 ? text.length : end;
+}
+
+// The offset each line of `text` starts at.
+export function lineOffsets(text) {
+  const starts = [0];
+  for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
+  return starts;
+}
+
+// The row of `rows` (wrapRows) holding offset `at` and its x from the row's left. `end` takes an offset where a row
+// starts as the end of the row before, as the end of a range is.
+export function wrapPlace(rows, at, advance, end = false) {
+  let lo = 0, hi = rows.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (rows[mid] <= at) lo = mid; else hi = mid - 1;
+  }
+  if (end && lo > 0 && rows[lo] === at) lo--;
+  return { row: lo, x: (at - rows[lo]) * advance };
 }
 
 // The `rows=one` key context. The width estimate drops it as a line is about to wrap, before on_size_change reports
@@ -341,12 +387,9 @@ export function menuPlace({ rowTop, rowH, viewH, n, side = null }) {
   return { side: s, top: s === "below" ? rowTop + rowH + MENU.gap : rowTop - MENU.gap - h, h, visible };
 }
 
-// The pane x of field column `col`, estimated from the average advance, inside the row a wrapped line put it on.
-const columnAt = ({ col, advance, fieldW, fieldX, viewW, margin = null }) => columnLeft(viewW, margin) + fieldX + (col * advance) % Math.max(1, fieldW);
-
-// The pane wins over the column when it is too narrow for both.
-export function slashX(at) {
-  return Math.max(0, Math.min(at.viewW - MENU.w - MENU.margin, Math.max(columnLeft(at.viewW, at.margin), columnAt(at))));
+// The menu's left edge for a slash at pane x `x`. The pane wins over the column when it is too narrow for both.
+export function slashX({ x, viewW, margin = null }) {
+  return Math.max(0, Math.min(viewW - MENU.w - MENU.margin, Math.max(columnLeft(viewW, margin), x)));
 }
 
 // The format bar: square buttons, a menu's button wider by its chevron, groups parted by a rule `sep` wide, rows
@@ -376,16 +419,16 @@ export function barLayout(groups, maxW = Infinity) {
 
 export const NOTE_BOX = { w: 320, h: 44, pad: 6 };
 
-// Over the first selected row at the selection's start column, else under the last when there is no room above (row
+// Over the first selected row with its left edge at pane x `x`, else under the last when there is no room above (row
 // tops in pane y), for a float of `size` { w, h }. -> { side, top, left, w, h }, or null while that row is out of the
 // pane.
-export function barPlace({ firstTop, lastTop, rowH, size, viewW, viewH, ...at }) {
+export function barPlace({ firstTop, lastTop, rowH, size, viewW, viewH, x }) {
   const { w, h } = size, above = firstTop - BAR.gap - h;
   let side, top;
   if (above >= BAR.margin && firstTop < viewH) [side, top] = ["above", above];
   else if (lastTop + rowH > 0 && lastTop < viewH) [side, top] = ["below", Math.min(lastTop + rowH + BAR.gap, viewH - BAR.margin - h)];
   else return null;
-  return { side, top, left: clamp(columnAt({ ...at, viewW }), BAR.margin, viewW - BAR.margin - w), w, h };
+  return { side, top, left: clamp(x, BAR.margin, viewW - BAR.margin - w), w, h };
 }
 
 // A link's popover: its address, at most `addressChars` long and about `charW` px a character, in `addressPad` each
@@ -398,15 +441,14 @@ export function linkPopoverSize(chars) {
   return { w: Math.ceil(address + BAR.sep + LINK_POP.buttons * BAR.button + 2 * edge), h: BAR.button + 2 * edge };
 }
 
-// Under the last row of a range (row tops in pane y) at its start column, else over its first row when there is no room
-// under it, else as low as the pane keeps it, for a float of `size` { w, h } narrowed to the pane. -> { side, top, left,
-// w, h }, or null while the range is out of the pane.
-export function popoverPlace({ firstTop, lastTop, rowH, size, viewW, viewH, ...at }) {
-  const w = Math.min(size.w, viewW - 2 * BAR.margin), h = size.h, under = lastTop + rowH + BAR.gap, over = firstTop - BAR.gap - h;
+// Over the first row of a range (row tops in pane y) with its left edge at pane x `x`, else under its last row when
+// there is no room above, as low as the pane keeps it, for a float of `size` { w, h } narrowed to the pane. -> { side,
+// top, left, w, h }, or null while the range is out of the pane.
+export function popoverPlace({ firstTop, lastTop, rowH, size, viewW, viewH, x }) {
+  const w = Math.min(size.w, viewW - 2 * BAR.margin), h = size.h, over = firstTop - BAR.gap - h;
   if (lastTop + rowH <= 0 || firstTop >= viewH) return null;
-  let side = "below", top = Math.min(under, viewH - BAR.margin - h);
-  if (under + h > viewH - BAR.margin && over >= BAR.margin) [side, top] = ["above", over];
-  return { side, top, left: clamp(columnAt({ ...at, viewW }), BAR.margin, viewW - BAR.margin - w), w, h };
+  const [side, top] = over >= BAR.margin ? ["above", over] : ["below", Math.min(lastTop + rowH + BAR.gap, viewH - BAR.margin - h)];
+  return { side, top, left: clamp(x, BAR.margin, viewW - BAR.margin - w), w, h };
 }
 
 // The bar's menus: rows `rowH` tall and section titles `titleH`, in `pad` and a 1 px border, `gap` under their button.

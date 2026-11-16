@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  pressToField, snapToWord, tableCells, nextCell, caretRow, isOneRow, columnX, maxOffset, clampOffset, prefixSums, blockAt,
+  pressToField, snapToWord, tableCells, nextCell, wrapRows, wrapPlace, lineOffsets, isOneRow, columnX, maxOffset, clampOffset, prefixSums, blockAt,
   estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
@@ -124,20 +124,59 @@ test("prose that wraps finds the row the press is on", () => {
   assert.equal(at, 40, "the second row starts at visible column 40");
 });
 
-test("caretRow is exact for unwrapped fields and shares out the extra rows of wrapped ones", () => {
-  const value = "one\ntwo two\n\nfour";
-  const lines = value.split("\n");
-  let caret = 0;
-  lines.forEach((l, i) => {
-    for (let c = 0; c <= l.length; c++) assert.equal(caretRow(value, caret + c, lines.length), i, `line ${i} col ${c}`);
-    caret += l.length + 1;
-  });
-  assert.equal(caretRow(value, 5, undefined), 1);
-  const wrapped = `${"a".repeat(300)}\nb`;
-  const rows = [0, 100, 200, 299, 301].map(c => caretRow(wrapped, c, 4));
-  assert.deepEqual(rows, [...rows].sort((x, y) => x - y), "monotonic");
-  assert.ok(rows.every(r => r >= 0 && r <= 3));
-  assert.equal(rows.at(-1), 3);
+// A reference wrap of words shorter than a row, one space apart: a word goes to the next row when it and the space after
+// it would pass the row's edge. -> the offset each row starts at.
+function referenceRows(text, perRow) {
+  const rows = [0];
+  let used = 0;
+  for (const m of text.matchAll(/(\S+)( *)/g)) {
+    const need = m[1].length + m[2].length;
+    if (used > 0 && used + need > perRow) { rows.push(m.index); used = 0; }
+    used += need;
+  }
+  return rows;
+}
+const referenceRow = (rows, at) => rows.findLastIndex(start => start <= at);
+
+test("the wrap estimate puts the offsets of a long paragraph of mixed word lengths on the rows a reference wrap does, where the average-advance modulo drifts", () => {
+  const lengths = [3, 11, 1, 7, 14, 2, 9, 5, 12, 4, 6, 15, 8, 13, 2, 10];
+  const words = Array.from({ length: 90 }, (_, k) => String.fromCharCode(97 + (k % 26)).repeat(lengths[k % lengths.length]));
+  const text = words.join(" "), width = 500, advance = 7, ref = referenceRows(text, width / advance);
+  assert.ok(ref.length > 7, `${ref.length} rows`);
+  const rows = wrapRows(text, width, advance);
+  let drifted = 0;
+  for (let at = ref[1]; at < ref[7]; at++) {
+    const row = referenceRow(ref, at), place = wrapPlace(rows, at, advance);
+    assert.deepEqual(place, { row, x: (at - ref[row]) * advance }, `offset ${at}`);
+    if (Math.floor((at * advance) / width) !== row) drifted++;
+  }
+  assert.ok(drifted > 0, "the modulo estimate puts some of them on another row");
+});
+
+test("the wrap estimate starts a row at each line break, keeps a word wider than a row whole until it overflows, and cuts it there", () => {
+  assert.deepEqual(wrapRows("", 100, 10), [0]);
+  assert.deepEqual(wrapRows("ab cd\nef", 100, 10), [0, 6]);
+  assert.deepEqual(wrapRows("abcd efgh", 80, 10), [0, 5], "the word that would pass the edge starts the next row");
+  assert.deepEqual(wrapRows("abcd efg", 80, 10), [0], "one that reaches the edge stays");
+  assert.deepEqual(wrapRows("abcdefghijkl", 50, 10), [0, 5, 10], "a word wider than a row");
+  assert.deepEqual(wrapRows("ab abcdefghijkl", 50, 10), [0, 3, 8, 13], "it starts its own row first");
+});
+
+test("lineOffsets: where each line starts, an empty one too", () => {
+  assert.deepEqual(lineOffsets(""), [0]);
+  assert.deepEqual(lineOffsets("ab\ncd\n\ne"), [0, 3, 6, 7]);
+  assert.deepEqual(lineOffsets("ab\n"), [0, 3]);
+  assert.deepEqual(lineOffsets("ab\ncd"), wrapRows("ab\ncd", Infinity, 7), "the rows of a field too wide to wrap");
+});
+
+test("wrapPlace: an offset where a row starts is on that row, and at the end of the row before as the end of a range", () => {
+  const rows = wrapRows("abcd efgh ij", 60, 10);
+  assert.deepEqual(rows, [0, 5, 10]);
+  assert.deepEqual(wrapPlace(rows, 5, 10), { row: 1, x: 0 });
+  assert.deepEqual(wrapPlace(rows, 5, 10, true), { row: 0, x: 50 });
+  assert.deepEqual(wrapPlace(rows, 7, 10, true), { row: 1, x: 20 }, "inside a row, either way");
+  assert.deepEqual(wrapPlace(rows, 0, 10, true), { row: 0, x: 0 }, "the first row has none before it");
+  assert.deepEqual(wrapPlace(rows, 12, 10), { row: 2, x: 20 }, "the end of the text");
 });
 
 test("a one-row field: no break, under 1.5 rows, and its estimated width under 90% of the field", () => {
@@ -362,15 +401,13 @@ test("the slash menu keeps the side it opened on while the list shrinks; above, 
   assert.equal(below.top, 130, "below, the top stays under the row");
 });
 
-test("the slash menu's left edge is the field's left at offset 0, follows the slash's estimated column mid-line, and stays inside the column", () => {
-  const left = columnLeft(900), base = { advance: 7, fieldW: 500, fieldX: 24, viewW: 900 };
+test("the slash menu's left edge is at the x of the slash, kept inside the column and the pane", () => {
+  const left = columnLeft(900);
   assert.equal(left, 92);
-  assert.equal(slashX({ ...base, col: 0 }), 92 + 24, "at offset 0: the field's left");
-  assert.equal(slashX({ ...base, col: 10 }), 92 + 24 + 70, "ten characters in");
-  assert.equal(slashX({ ...base, col: 100 }), 92 + 24 + 200, "past a wrap: the column inside the row");
-  assert.equal(slashX({ ...base, col: 80, fieldW: 700 }), 900 - MENU.w - 8, "kept inside the pane on the right");
-  assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 1600 }), columnLeft(1600), "the column's left in a wide pane");
-  assert.equal(slashX({ ...base, col: 0, fieldX: 0, viewW: 290 }), 290 - MENU.w - 8, "a pane narrower than column and menu: the menu stays in the pane");
+  assert.equal(slashX({ x: 92 + 24 + 70, viewW: 900 }), 92 + 24 + 70, "where the slash is");
+  assert.equal(slashX({ x: 92 + 600, viewW: 900 }), 900 - MENU.w - 8, "kept inside the pane on the right");
+  assert.equal(slashX({ x: 10, viewW: 1600 }), columnLeft(1600), "never left of the column");
+  assert.equal(slashX({ x: 32, viewW: 290 }), 290 - MENU.w - 8, "a pane narrower than column and menu: the menu stays in the pane");
 });
 
 const B = BAR.button, WITH_CHEVRON = BAR.button + BAR.chevron, EDGE = BAR.pad + 1;
@@ -382,7 +419,7 @@ const GROUPS = [
 ];
 const rowsOf = layout => layout.rows.map(row => row.map(e => (e.sep ? "|" : e.name)).join(" "));
 const BAR_SIZE = barLayout(GROUPS);
-const BAR_AT = { rowH: 24, col: 0, advance: 7, fieldW: 500, fieldX: 24, viewW: 900, viewH: 600, size: BAR_SIZE };
+const BAR_AT = { rowH: 24, x: 92 + 24, viewW: 900, viewH: 600, size: BAR_SIZE };
 
 test("the format bar is as wide as its buttons, a menu's button wider by its chevron, with a thin rule between groups", () => {
   assert.deepEqual(rowsOf(BAR_SIZE), ["comment | style | bold italic underline strike code | color | list | link"]);
@@ -404,11 +441,10 @@ test("in a pane too narrow for it the format bar wraps between groups, splitting
   for (let maxW = 3 * B + 2 * EDGE; maxW <= BAR_SIZE.w + 40; maxW += 7) assert.ok(barLayout(GROUPS, maxW).w <= maxW, `${maxW}`);
 });
 
-test("the format bar goes over the selection's first row, its left edge at the selection's start column", () => {
+test("the format bar goes over the selection's first row, its left edge at the x of the selection's start", () => {
   const { w, h } = BAR_SIZE;
   assert.deepEqual(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 248 }), { side: "above", top: 200 - BAR.gap - h, left: 92 + 24, w, h });
-  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 10 }).left, 92 + 24 + 70, "ten characters in");
-  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 100 }).left, 92 + 24 + 200, "past a wrap: the column inside the row");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, x: 92 + 24 + 70 }).left, 92 + 24 + 70, "ten characters in");
   const tight = BAR.margin + BAR.gap + h;
   assert.equal(barPlace({ ...BAR_AT, firstTop: tight, lastTop: tight }).side, "above", "just room above, 8 px from the pane's top");
 });
@@ -423,8 +459,8 @@ test("the format bar goes under the selection's last row when there is no room a
 
 test("the format bar stays inside the pane at both sides", () => {
   const { w } = BAR_SIZE;
-  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 95, fieldW: 700 }).left, 900 - BAR.margin - w, "on the right");
-  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, fieldX: 0, viewW: 1600 }).left, columnLeft(1600), "the column's left in a wide pane");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, x: 92 + 24 + 665 }).left, 900 - BAR.margin - w, "on the right");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, x: 2 }).left, BAR.margin, "on the left");
   assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, viewW: w + 10 }).left, BAR.margin, "a pane narrower than the bar and its margins: on the left");
 });
 
@@ -438,18 +474,18 @@ test("the format bar is hidden while the row it goes by is out of the pane", () 
 test("the comment box goes where the bar goes, at its own size", () => {
   const size = { w: NOTE_BOX.w, h: NOTE_BOX.h };
   assert.deepEqual(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, size }), { side: "above", top: 200 - BAR.gap - size.h, left: 92 + 24, w: size.w, h: size.h });
-  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, col: 95, fieldW: 700, size }).left, 900 - BAR.margin - size.w, "kept inside the pane");
+  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, x: 92 + 24 + 665, size }).left, 900 - BAR.margin - size.w, "kept inside the pane");
 });
 
-test("a link's popover goes under the link's last row at its start column, over its first row when there is no room under it, and stays inside the pane", () => {
+test("a link's popover goes over the link's first row at the x given, under its last row when there is no room above, and stays inside the pane", () => {
   const size = { w: 300, h: 36 }, at = { ...BAR_AT, size };
-  assert.deepEqual(popoverPlace({ ...at, firstTop: 200, lastTop: 224 }), { side: "below", top: 224 + 24 + BAR.gap, left: 92 + 24, w: 300, h: 36 });
-  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, col: 10 }).left, 92 + 24 + 70, "ten characters in");
-  const low = 600 - BAR.margin - 36 - BAR.gap - 24;
-  assert.equal(popoverPlace({ ...at, firstTop: low, lastTop: low }).side, "below", "just room under it");
-  assert.deepEqual(popoverPlace({ ...at, firstTop: low + 1, lastTop: low + 1 }), { side: "above", top: low + 1 - BAR.gap - 36, left: 92 + 24, w: 300, h: 36 });
+  assert.deepEqual(popoverPlace({ ...at, firstTop: 200, lastTop: 224 }), { side: "above", top: 200 - BAR.gap - 36, left: 92 + 24, w: 300, h: 36 });
+  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, x: 92 + 24 + 70 }).left, 92 + 24 + 70, "ten characters in");
+  const tight = BAR.margin + BAR.gap + 36;
+  assert.equal(popoverPlace({ ...at, firstTop: tight, lastTop: tight }).side, "above", "just room above");
+  assert.deepEqual(popoverPlace({ ...at, firstTop: tight - 1, lastTop: tight + 23 }), { side: "below", top: tight + 23 + 24 + BAR.gap, left: 92 + 24, w: 300, h: 36 });
   assert.equal(popoverPlace({ ...at, firstTop: 20, lastTop: 570 }).top, 600 - BAR.margin - 36, "no room on either side: as low as the pane keeps it");
-  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, col: 95, fieldW: 700 }).left, 900 - BAR.margin - 300, "kept inside the pane");
+  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, x: 92 + 24 + 665 }).left, 900 - BAR.margin - 300, "kept inside the pane");
   assert.deepEqual(popoverPlace({ ...at, firstTop: 200, lastTop: 200, viewW: 250 }).w, 250 - 2 * BAR.margin, "never wider than the pane");
   assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, viewW: 250 }).left, BAR.margin);
   assert.equal(popoverPlace({ ...at, firstTop: 600, lastTop: 600 }), null, "the link below the pane");
@@ -523,15 +559,12 @@ test("the margin layout: a page column of at least 520 px and a card column besi
   assert.ok(m.cardLeft + m.cardW <= 1401 - MARGIN.edge);
 });
 
-test("the column's left edge follows the margin layout, and so do the floats placed by the column", () => {
+test("the column's left edge follows the margin layout, and the slash menu keeps to it", () => {
   const margin = marginLayout(1400);
   assert.equal(columnLeft(1400), (1400 - 780) / 2 + COLUMN.padX);
   assert.equal(columnLeft(1400, margin), 168 + COLUMN.padX);
   assert.equal(columnX(300, 1400, margin), 300 - 200);
-  const at = { col: 0, advance: 7, fieldW: 500, fieldX: 0, viewW: 1400, margin };
-  assert.equal(slashX(at), 200);
-  assert.equal(barPlace({ ...at, firstTop: 200, lastTop: 200, rowH: 24, size: { w: 300, h: 38 }, viewH: 600 }).left, 200);
-  assert.equal(popoverPlace({ ...at, firstTop: 200, lastTop: 200, rowH: 24, size: { w: 300, h: 38 }, viewH: 600 }).left, 200);
+  assert.equal(slashX({ x: 0, viewW: 1400, margin }), 200);
 });
 
 test("a card: its time on a row of its own, its text wrapped and clipped to a few lines with an ellipsis unless it shows in full", () => {

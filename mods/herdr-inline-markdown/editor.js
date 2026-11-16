@@ -5,7 +5,7 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, sameDefs, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, CARD, CARDS, COLUMN, FRAME, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, caretRow, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, BAR_MENU, CARD, CARDS, COLUMN, FRAME, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -45,6 +45,7 @@ const REFOCUS_MS = 80;
 // The field places its caret a moment after a mouse-up: it is read only then.
 const READ_AFTER_UP_MS = 30;
 const PIECES_KEPT = 2000;
+const WRAPS_KEPT = 256;
 // Herdr reports no change for a token set; one that did would come within a frame or two. Until this has passed, a
 // change that leaves the text as it was is taken as that report, not as a forward Delete.
 const ECHO_MS = 100;
@@ -157,6 +158,7 @@ const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // Sizes and pointer positions come in screen pixels; the layout works in the pixels the zoom setting scales.
 const zoom = () => Number(settings()?.zoom) || 1;
 const windowPoint = e => (e?.position ? { x: e.position.x / zoom(), y: e.position.y / zoom() } : null);
+const elementOrigin = e => (e?.position && e.local_position ? { x: e.position.x - e.local_position.x, y: e.position.y - e.local_position.y } : null);
 const monoFont = () => settings()?.font_family || "JetBrains Mono";
 const sansFont = cx => {
   try { return cx.theme?.()?.typography?.sans || SANS; } catch { return SANS; }
@@ -409,12 +411,15 @@ export class Editor {
     // Delete at the end of the field.
     this.owed = new Map();
     // Inline tokens of the active field: `rich` the layout of its value (tokens.js), kept with what it was made from;
-    // `pieces` what each token draws; `pressX` the x of the last press in the field, which a token click lacks;
-    // `tokensHeld` while the editor's own edits run; `tokensOff` when the field took none; `echoes`, per field state,
-    // the numbers of the token sets made in the last ECHO_MS, oldest first.
+    // `pieces` what each token draws; `tokensHeld` while the editor's own edits run; `tokensOff` when the field took none;
+    // `echoes`, per field state, the numbers of the token sets made in the last ECHO_MS, oldest first.
     // `tinted` what tintNow last gave, with what it was worked out from.
-    this.rich = null; this.tinted = null; this.pieces = new Map(); this.pressX = null; this.tokensHeld = false; this.tokensOff = false;
+    this.rich = null; this.tinted = null; this.pieces = new Map(); this.tokensHeld = false; this.tokensOff = false;
     this.echoes = new Map(); this.tokenSets = 0;
+    // Floats: `pressed` the last press in a field (its window x, which a token click lacks, the field's window origin,
+    // the press in the field) and `released` where it ended; `pin` where a press or a drag put the floats of a range,
+    // while the field draws it there; `wraps` the wrap estimates last asked for.
+    this.pressed = null; this.released = null; this.pin = null; this.wraps = new Map();
     // `sel` names the selected blocks' two ends by key, `selKeys` the blocks it covers, `gens` each block's TextView
     // generation, raised to drop the TextView's own text selection when the block is selected.
     this.sel = null; this.selKeys = new Set(); this.gens = new Map();
@@ -1941,7 +1946,10 @@ export class Editor {
     this.press = null; this.linked = false; this.fieldHeld = null;
     if (panned) return this.keepKeyboard();
     if (this.tookPress(e, "up")) return;
-    if (held) this.fieldReleased(held, cx);
+    if (held) {
+      this.released = { key: held, at: this.paneToField(held, p) };
+      this.fieldReleased(held, cx);
+    }
     const pressed = down && !linked ? down : null;
     if (pressed && p && e.click_count >= 1 && Math.hypot(p.x - pressed.x, p.y - pressed.y) <= CLICK_SLOP) this.clickAt(p, cx, e.click_count);
     else if (pressed?.key && this.activeKey && pressed.key !== this.activeKey && !this.sel) return cx.stop_propagation();
@@ -2431,23 +2439,27 @@ export class Editor {
   // A click on a token gives its bounds, not where it was: the x of the press across them picks the letter edge, and
   // the word holding it splits into letters there. With Cmd a click on a link opens it.
   tokenClick(key, ev) {
-    const x = this.pressX;
-    this.post(cx => this.pressToken(key, ev, x, cx));
+    const press = this.pressed;
+    this.post(cx => this.pressToken(key, ev, press, cx));
   }
 
   // A press on an element picks it: all of it is selected and its float shows. A press on the element already picked
   // places the caret, so its text can be edited.
-  pressToken(key, ev, x, cx) {
+  pressToken(key, ev, press, cx) {
     if (!this.editable()) return;
     if (ev?.modifiers?.platform && this.openLinkIn(key, ev.range, cx)) return;
     if (key !== this.activeKey) this.takeField(key, cx);
     if (key !== this.activeKey) return;
     this.syncField(cx);
-    const r = this.richNow(), box = ev?.bounds, range = ev?.range;
+    const r = this.richNow(), box = ev?.bounds, range = ev?.range, x = press?.x;
     if (!r || !range) return;
     const at = pressedAt(r, range, typeof x === "number" && box?.width > 0 ? (x - box.x) / box.width : 1);
     const span = this.elementPressed(range, at);
-    if (span && !this.wasPicked(span)) return this.pickElement(span, cx);
+    if (span && !this.wasPicked(span)) {
+      this.pickElement(span, cx);
+      this.pinToken(r, span, range, box, press);
+      return;
+    }
     this.placeCaret(at, cx);
     if (span) this.element = { act: this.act, kind: span.kind, start: span.start };
     if (span && COMMENT_KINDS.has(span.kind)) this.retoken();
@@ -2792,9 +2804,88 @@ export class Editor {
   caretTop(i, at = caretOf(this.field)?.end ?? 0) {
     const d = this.data.get(this.blocks[i]?.key);
     if (!d) return null;
-    const c = this.chromeOf(d, true);
-    const row = caretRow(this.drawnNow(), this.drawnAt(at), this.rowsOf(d, true));
-    return this.sums[i] + c.y + row * d.row;
+    return this.sums[i] + this.chromeOf(d, true).y + this.wrapAt(at).row * d.row;
+  }
+
+  // Where the edited field draws offset `at`: { row, x }, x from the field's left. `end` takes an offset where a row
+  // starts as the end of the row before.
+  wrapAt(at, end = false) {
+    const d = this.data.get(this.activeKey);
+    return this.estimateIn(d, this.drawnNow(), this.drawnAt(at), this.chromeOf(d, true).w, true, end);
+  }
+
+  // Where a field of block data `d`, `width` px wide, draws offset `at` of `drawn`: wrapped at the calibrated advance,
+  // and not at all while the field measures no more rows than it has lines. The measured rows cap it, unless lines were
+  // typed since they were measured.
+  estimateIn(d, drawn, at, width, asField, end = false) {
+    const advance = this.calOf(d.style).advance, wrap = this.wrapOf(drawn, width, advance), rows = this.rowsOf(d, asField);
+    const unwrapped = rows !== undefined && rows <= wrap.lines.length, place = wrapPlace(unwrapped ? wrap.lines : wrap.rows, at, advance, end);
+    return { row: rows ? Math.min(place.row, Math.max(rows, wrap.lines.length) - 1) : place.row, x: Math.min(place.x, width) };
+  }
+
+  wrapOf(text, width, advance) {
+    const kept = this.wraps.get(text);
+    if (kept && kept.width === width && kept.advance === advance) return kept;
+    if (this.wraps.size >= WRAPS_KEPT) this.wraps.clear();
+    const wrap = { width, advance, rows: wrapRows(text, width, advance), lines: lineOffsets(text) };
+    this.wraps.set(text, wrap);
+    return wrap;
+  }
+
+  fieldInPane(i) {
+    const d = this.data.get(this.blocks[i]?.key), c = this.chromeOf(d, true);
+    return { x: columnLeft(this.paneW(), this.margin) + c.x, y: COLUMN.padTop + this.sums[i] + c.y - this.offset };
+  }
+
+  paneToField(key, p) {
+    const i = this.at.get(key);
+    if (!p || i === undefined || !this.data.get(key) || this.sums.length !== this.blocks.length + 1) return null;
+    const o = this.fieldInPane(i);
+    return { x: p.x - o.x, y: p.y - o.y };
+  }
+
+  // `first` and `last` are rows of the field, `x` from its left.
+  setPin(k, first, last, x) {
+    const d = this.data.get(this.activeKey);
+    this.pin = { key: this.activeKey, act: this.act, value: this.seen, width: this.chromeOf(d, true).w, cal: this.cal, start: k.start, end: k.end, first, last, x };
+  }
+
+  pinFor(k, width) {
+    const p = this.pin;
+    const holds = p && p.key === this.activeKey && p.act === this.act && p.value === this.seen && p.width === width && p.cal === this.cal;
+    return holds && p.start === k.start && p.end === k.end ? p : null;
+  }
+
+  // The float of an element picked on a token: over the token's row, at the element's start there (the token's left less
+  // the estimated width of the element's text before it). The token's bounds are window pixels; the press that led to
+  // the click says where the field is in the window.
+  pinToken(r, span, range, box, press) {
+    const key = this.activeKey, d = this.data.get(key);
+    if (press?.key !== key || !press.origin || !box || !d) return;
+    const z = zoom(), extent = extentOf(r, span), advance = this.calOf(d.style).advance;
+    const before = (drawnOffset(r, range.start) - drawnOffset(r, extent.start)) * advance;
+    const row = this.rowAtY(d, (box.y - press.origin.y) / z + d.row / 2);
+    this.setPin(extent, row, row, Math.max(0, (box.x - press.origin.x) / z - before));
+  }
+
+  // A drag's selection starts at the press going forward, at the release going back. A double-click's word starts left
+  // of the press by at most the word's width, which bounds the estimate. A click picks no range here (see pinToken).
+  pinSelection(c) {
+    const p = this.pressed, r = this.released, key = this.activeKey, d = this.data.get(key);
+    if (!c || c.start === c.end || !d || p?.key !== key || r?.key !== key || !p.at || !r.at) return;
+    const from = { row: this.rowAtY(d, p.at.y), x: p.at.x }, to = { row: this.rowAtY(d, r.at.y), x: r.at.x };
+    if (p.clicks === 2) {
+      const width = (this.drawnAt(c.end) - this.drawnAt(c.start)) * this.calOf(d.style).advance;
+      return this.setPin(c, from.row, from.row, clamp(this.wrapAt(c.start).x, from.x - width, from.x));
+    }
+    if (Math.hypot(r.at.x - p.at.x, r.at.y - p.at.y) <= CLICK_SLOP) return;
+    const back = to.row < from.row || (to.row === from.row && to.x < from.x), [a, b] = back ? [to, from] : [from, to];
+    this.setPin(c, a.row, b.row, clamp(a.x, 0, this.chromeOf(d, true).w));
+  }
+
+  rowAtY(d, y) {
+    const rows = this.rowsOf(d, true), row = Math.max(0, Math.floor(y / d.row));
+    return rows ? Math.min(row, rows - 1) : row;
   }
 
   revealCaret(cx) {
@@ -2941,6 +3032,7 @@ export class Editor {
       if (this.closed || this.act !== act || !this.activeKey || !this.editable()) return;
       this.syncField(cx);
       const c = this.caretNow();
+      this.pinSelection(c);
       this.retoken();
       this.slashCaret(c, cx);
       this.openBar(cx);
@@ -2954,7 +3046,9 @@ export class Editor {
   // element picked is let go: only a click on a token picks one (pressToken), so a drag shows the bar.
   fieldDown(key, e) {
     this.fieldPress = { kind: "down", x: e?.position?.x, y: e?.position?.y };
-    this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e); this.pressX = e?.position?.x ?? null;
+    this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e);
+    this.pressed = { key, x: e?.position?.x ?? null, origin: elementOrigin(e), at: this.point(e), clicks: e?.click_count ?? 1 };
+    this.released = null;
     this.cmdPress = e?.modifiers?.platform ? { key, opened: false } : null;
     const picked = key === this.activeKey ? this.elementNow() : null;
     this.pressedOn = picked && { key, value: this.seen, kind: picked.kind, start: picked.span.start };
@@ -2976,6 +3070,7 @@ export class Editor {
 
   fieldUp(key, e) {
     this.fieldPress = { kind: "up", x: e?.position?.x, y: e?.position?.y };
+    this.released = { key, at: this.point(e) };
     const began = this.fieldHeld === key;
     this.fieldHeld = null;
     this.post(cx => {
@@ -3693,8 +3788,7 @@ export class Editor {
     const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
     const place = menuPlace({ rowTop: COLUMN.padTop + top - this.offset, rowH: d.row, viewH, n: s.items.length, side: s.side });
     s.side = place.side;
-    const c = this.chromeOf(d, true), col = this.columnOf(s.at);
-    return { ...place, left: slashX({ col, advance: this.calOf(d.style).advance, fieldW: c.w, fieldX: c.x, viewW, margin: this.margin }) };
+    return { ...place, left: slashX({ x: this.fieldInPane(i).x + this.wrapAt(s.at).x, viewW, margin: this.margin }) };
   }
 
   // Drawn by the root over the page; its rows take presses and the pointer before anything under them.
@@ -3804,16 +3898,16 @@ export class Editor {
     this.openBar(cx);
   }
 
-  // Over the first row of field range `k` or under its last (`place` says which first), its left edge at the range's
-  // start; the bar, or a float of `size`. Null while that row is off the page.
+  // Over the first row of field range `k`, else under its last, its left edge at the range's start, as pinned by a press
+  // or a drag, else as estimated; the bar, or a float of `size`. Null while that row is off the page.
   placeBar(k = this.known, size = this.barLayout(), place = barPlace) {
     const key = this.activeKey, i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
-    const c = this.chromeOf(d, true), onPane = at => COLUMN.padTop + this.caretTop(i, at) - this.offset;
+    const o = this.fieldInPane(i), pin = this.pinFor(k, this.chromeOf(d, true).w);
+    const first = pin ? { row: pin.first, x: pin.x } : this.wrapAt(k.start), last = pin ? pin.last : this.wrapAt(k.end, k.end > k.start).row;
     return place({
-      firstTop: onPane(k.start), lastTop: onPane(k.end), rowH: d.row, size,
-      col: this.columnOf(k.start), advance: this.calOf(d.style).advance, fieldW: c.w, fieldX: c.x,
-      viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H, margin: this.margin,
+      firstTop: o.y + first.row * d.row, lastTop: o.y + last * d.row, rowH: d.row, size, x: o.x + first.x,
+      viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H,
     });
   }
 
@@ -4305,14 +4399,14 @@ export class Editor {
   }
 
   // The column y of the row holding field offset `at` of block b (index i): the edited block's from its field, another
-  // one's from its own field's token layout, rows estimated where its field has not measured them. A block more than
-  // a screen away has no field: its value as written stands in for what it draws, as making a token layout for every
-  // commented block would cost milliseconds each in Herdr.
+  // one's from its own field's token layout, the rows wrapped as the field wraps them. A block more than a screen away
+  // has no field: its value as written stands in for what it draws, as making a token layout for every commented block
+  // would cost milliseconds each in Herdr.
   rowTop(i, b, memo, at) {
     if (b.key === this.activeKey) return this.caretTop(i, at);
     const d = this.data.get(b.key), asField = d.mode === "field", c = this.chromeOf(d, asField), own = this.blockFields.get(b.key);
     const r = own?.rich && own.value === memo.value ? own.rich : null, drawn = r ? r.drawn : memo.value;
-    return this.sums[i] + c.y + caretRow(drawn, r ? drawnOffset(r, at) : at, this.rowsOf(d, asField)) * d.row;
+    return this.sums[i] + c.y + this.estimateIn(d, drawn, r ? drawnOffset(r, at) : at, c.w, asField).row * d.row;
   }
 
   // What a commented block's cards are read from, kept while its content stays the same: its field value and cards.

@@ -167,7 +167,7 @@ so it wraps as it did on the page, and keeps them in the file.
 | Key or click | What it does |
 |---|---|
 | Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, in a table at the start of the clicked cell (there the second click is exact) |
-| Click a link | Selects the whole link and shows its [popover](#links) under it; a second click puts the caret in its text |
+| Click a link | Selects the whole link and shows its [popover](#links) over it; a second click puts the caret in its text |
 | Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
 | Double-click a diagram or a picture | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
@@ -236,8 +236,9 @@ keyboard throughout. In a pane too narrow for the bar it wraps onto more rows.
 ### Links
 
 A link shows only its text, in the link colour; its brackets and address stay in the file. A click on a link selects
-all of it and shows a popover under it (over it at the bottom of the pane), in place of the format bar: the address,
-shortened in the middle when long (the whole one in its tooltip), then four buttons.
+all of it and shows a popover over the row you clicked, its left edge at the link's start (under the row at the top of
+the pane), in place of the format bar: the address, shortened in the middle when long (the whole one in its tooltip),
+then four buttons. It stays with its row as the page scrolls.
 
 | Button | What it does |
 |---|---|
@@ -304,7 +305,7 @@ as written.
   selection, with the time too. A count at the right of a block's first row says how many comments it holds, also
   while the block is being edited; a click on it opens a card listing them: the marked text, the time, the comment, and
   **Edit** (the block opens with the marked text selected and the box holds the comment) and **Resolve**. A click on
-  commented text shows that comment's card under it, with Resolve; a click on the card's text opens the box to edit
+  commented text shows that comment's card over it, with Resolve; a click on the card's text opens the box to edit
   it. A file that can't be edited shows its cards without Resolve or Edit. The footer counts the file's comments.
 - **Reading** highlights the marked text in a muted ochre as light as the page (dark brown on a dark theme, whatever
   its tint, soft beige on a light one), the colour `<mark>` highlights get too, its formatting still drawn, and leaves out the marks
