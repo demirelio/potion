@@ -286,6 +286,10 @@ export function modelOf(value, defs, boxes = false) {
   return model;
 }
 
+// A model of `value` read as `inline` ({ spans, runs } as parseInline gives them) says, which need not be how the value
+// reads: the parts of a value as each read alone.
+export const modelFrom = (value, inline, boxes = false) => new Model(value, inline, boxes);
+
 // The characters of the selection [start, end) of `value` that take formatting (not line breaks), as pieces, with the
 // selection [a, b) taken out to whole characters and units and in from the spaces that show at its ends; null when it
 // holds none.
@@ -549,7 +553,7 @@ class Writer {
       while (k < stack.length && want.includes(stack[k].key)) k++;
       while (stack.length > k) this.close(stack);
       if (held.length) {
-        for (const h of held) this.kept(h);
+        for (const h of held) this.kept(h, outer, stack);
         held.length = 0;
       }
       if (stack.length < want.length) {
@@ -560,11 +564,13 @@ class Writer {
       this.emit(items[i], outer, stack);
     }
     while (stack.length) this.close(stack);
-    for (const h of held) this.kept(h);
+    for (const h of held) this.kept(h, outer, stack);
   }
 
-  // A line break, a point comment or a tag that draws nothing, as written; the caret may stand before or after it.
-  kept(it) {
+  // A line break, a point comment or a tag that draws nothing, as written; the caret may stand before or after it. A
+  // link or comment showing no character of its own is written as it is.
+  kept(it, outer, stack) {
+    if (it.type === ITEM_BOX) return this.emit(it, outer, stack);
     if (it.pieces.includes(this.caret)) this.point("caret");
     this.text(it.src);
     if (it.pieces.includes(this.last)) this.point("end");

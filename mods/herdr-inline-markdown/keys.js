@@ -3,7 +3,7 @@
 // handler for as long as any build shipped it.
 // A binding at `X > Input` takes the key from the field entirely; one at `X` fires only for the keys the field gives
 // away there (Backspace and Left at offset 0, Right at the end, Tab, Escape).
-const VERSION = 7;
+const VERSION = 8;
 // NOTE is the field of a box over the page, the comment box's or the link's address box's: Enter there saves it, and
 // Escape cancels it.
 export const TEXT = `MdText${VERSION}`, RAW = `MdRaw${VERSION}`, SOURCE = `MdSource${VERSION}`, NOTE = `MdNote${VERSION}`;
@@ -29,6 +29,8 @@ export const BINDINGS = [
   ...bind("alt-up", "mdb-move-up", BLOCKS),
   ...bind("alt-down", "mdb-move-down", BLOCKS),
   ...bind("cmd-v", "mdb-paste", BLOCKS),
+  ...bind("cmd-c", "mdb-copy", [deep(TEXT)]),
+  ...bind("cmd-x", "mdb-cut", [deep(TEXT)]),
   ...bind("cmd-b", "mdb-bold", [deep(TEXT)]),
   ...bind("cmd-i", "mdb-italic", [deep(TEXT)]),
   ...bind("cmd-u", "mdb-underline", [deep(TEXT)]),

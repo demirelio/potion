@@ -1639,17 +1639,17 @@ function reheading(doc, b, level, at) {
   return guardBlock(doc, b, { start: m, end: body, insert: marker, caret: at + marker.length - (body - m) });
 }
 
-// An item's marker (and task box) becomes another, padded to the old content column. A wider one moves the item's
-// other lines and sub-blocks right with it, so they stay in it. A number follows a numbered item before it.
+// An item's marker (and task box) becomes another, one space after it. The item's other lines and sub-blocks move by
+// the columns its content moves, so they keep their place in it. A number follows a numbered item before it.
 function relist(doc, b, list, at) {
   const text = doc.text, l0 = absLine(b, 0), m = b.start + b.markAt, sib = prevSibling(doc, b);
   const head = list === "ordered" ? `${sib?.kind === "item" && sib.ordered && sib.delim === "." ? sib.number + 1 : 1}.` : b.bullet || "-";
-  const width = b.contentCol - b.markerCol, grow = Math.max(0, head.length + 1 - width);
-  const marker = `${head}${" ".repeat(Math.max(1, width - head.length))}${list === "task" ? "[ ] " : ""}`, body = m + marker.length;
-  if (!grow) return guardBlock(doc, b, { start: m, end: l0.body, insert: marker, caret: at + marker.length - (l0.body - m) });
-  const right = line => " ".repeat(grow) + line;
-  const insert = marker + text.slice(l0.body, l0.next) + rewriteLines(text, l0.next, b.subtreeEnd, right);
-  const caret = at < l0.next ? body + (at - l0.body) : body + (l0.next - l0.body) + rewrittenAt(text, l0.next, right, at);
+  const shift = head.length + 1 - (b.contentCol - b.markerCol);
+  const marker = `${head} ${list === "task" ? "[ ] " : ""}`, body = m + marker.length;
+  if (!shift || l0.next >= b.subtreeEnd) return guardBlock(doc, b, { start: m, end: l0.body, insert: marker, caret: at + marker.length - (l0.body - m) });
+  const moved = shift > 0 ? line => " ".repeat(shift) + line : line => removeColumns(line, -shift);
+  const insert = marker + text.slice(l0.body, l0.next) + rewriteLines(text, l0.next, b.subtreeEnd, moved);
+  const caret = at < l0.next ? body + (at - l0.body) : body + (l0.next - l0.body) + rewrittenAt(text, l0.next, moved, at);
   return guardBlock(doc, b, { start: m, end: b.subtreeEnd, insert, caret });
 }
 
@@ -1741,8 +1741,17 @@ export function paste(doc, b, s, e, clip) {
   const t = String(clip ?? "").replace(/\r\n/g, "\n"), f = field(doc, b);
   if (!isText(b) || !t.includes("\n")) return type(f, f.value.slice(0, s) + t + f.value.slice(e), s);
   const lines = t.split("\n");
-  if (BLOCK_MARKER.test(lines[0])) return insertLines(doc, b, s, e, lines);
-  const sp = type(f, f.value.slice(0, s) + t + f.value.slice(e), s, linesPrefix(b));
+  if (opensBlock(lines[0])) return insertLines(doc, b, s, e, lines);
+  return pasteLines(doc, b, f.value.slice(0, s) + t + f.value.slice(e), s);
+}
+
+export const opensBlock = line => BLOCK_MARKER.test(line);
+
+// Text block b's field set to `value`, its line breaks written as pasted lines are (after a blank line they make
+// blocks). `at`: the field offset the paste went in at; `caret`, when given, the field offset the caret goes to.
+export function pasteLines(doc, b, value, at, caret) {
+  const f = field(doc, b), sp = type(f, value, at, linesPrefix(b));
+  if (sp && caret !== undefined) sp.caret = fieldToDoc(f, caret);
   return guardedLines(doc, b, sp, -1, sp && seamAt(doc, sp, doc.blocks[b.index + 1]));
 }
 

@@ -4,7 +4,7 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
-import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, outdent, parse, parseInSteps, paste, remove, removeRange, reparse, retype, sameDefs, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
+import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, remove, removeRange, reparse, retype, sameDefs, separators, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
 import { BAR, BAR_MENU, CARD, CARDS, COLUMN, FRAME, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
@@ -16,6 +16,7 @@ import { ACTIONS, KEYS_SETTLE_MS, NOTE, SOURCE, claimRebind, installKeys } from 
 import { actedOn, colorOf, hasMark, highlightOf, setColor, setMark, toggleMark, wordAround } from "./format.js";
 import { editOf, formatAt, mend } from "./mend.js";
 import { MARK_BITS } from "./restyle.js";
+import { copyOf, holdsBlocks, joinRuns, pasteInto, pasteParagraphs, splitRuns } from "./seams.js";
 import { addLink, clipboardAddress, linkAddress, setAddress, unlink } from "./links.js";
 import { addComment, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, timeLabel } from "./comments.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
@@ -151,6 +152,24 @@ const LINK_REFUSED = "A link can't hold another link";
 const ANY_ADDRESS = "#";
 const SOURCE_TYPING = "source";
 const spliceOf = d => ({ start: d.at, end: d.at + d.removed, insert: d.inserted });
+const HARD_BREAK = "\\\n", SPACE_OR_TAB = " \t";
+// Field range [start, end) of `value` out over the spaces beside it, which a split drops.
+function spacedOut(value, start, end) {
+  let a = start, z = end;
+  while (a > 0 && SPACE_OR_TAB.includes(value[a - 1])) a--;
+  while (z < value.length && SPACE_OR_TAB.includes(value[z])) z++;
+  return { start: a, end: z };
+}
+// The value of field `f` with the soft line breaks it shows as spaces written as line breaks again, at the same offsets.
+function softBreaksIn(f) {
+  let out = "", at = 0;
+  for (const sep of separators(f)) {
+    if (sep.shown !== " ") continue;
+    out += `${f.value.slice(at, sep.at)}\n`;
+    at = sep.at + 1;
+  }
+  return out + f.value.slice(at);
+}
 
 const ICON = name => `mods/herdr-inline-markdown/${name}.svg`;
 const why = e => String(e?.message ?? e);
@@ -1046,6 +1065,7 @@ export class Editor {
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
     this.syncField(cx);
     if (name === "mdb-escape") this.typingStyle = null;
+    if (name === "mdb-copy" || name === "mdb-cut") return this.copyText(name === "mdb-cut", cx);
     if (this.slashOpen()) {
       if (this.slashAction(name, cx)) return;
     } else if ((name === "mdb-up" || name === "mdb-down") && this.rows === "many") {
@@ -3257,7 +3277,7 @@ export class Editor {
   }
 
   // Enter in a text block (a raw block keeps the field's own newline). A selection that reaches an end of the field
-  // is deleted first, as typing.
+  // is deleted first, as a key deletes it.
   enter(cx) {
     this.typingStyle = null;
     if (this.pending) return this.pendingKey("enter", cx);
@@ -3268,7 +3288,7 @@ export class Editor {
     const r = this.caretNow();
     if (!r) return;
     if (r.start !== r.end && (r.start === 0 || r.end === value.length)) {
-      if (this.typeText("", cx)) this.enter(cx);
+      if (this.deleteSelection(r, cx)) this.enter(cx);
       return;
     }
     this.commit(cx);
@@ -3279,7 +3299,45 @@ export class Editor {
       if (r.end === value.length && value.endsWith("\n")) return this.leaveQuote(now, cx);
     } else if (r.end === 0) return this.openPendingWith({ base: beforeKey(now.key, kind), origin }, cx);
     else if (r.start === value.length) return this.openPendingWith({ base: afterKey(now.key, kind), origin }, cx);
-    this.op(split(this.doc, now, r.start, r.end), cx);
+    const selected = r.start < r.end ? docRange(fieldOf(this.doc, now), r) : null;
+    if (this.op(this.splitAt(now, r), cx) && selected) this.history.select(this.text, selected);
+  }
+
+  // Whether the edited field draws its block formatted, its marks hidden: there the editor's own edits keep the
+  // formatting of what they leave (mend.js, seams.js). A field that shows its source is edited as it shows.
+  formatted() {
+    return this.mode === "reading" && this.takesMarks() && !this.tokensOff && this.richNow() !== null;
+  }
+
+  // The field range `r` deleted as a key deletes a selection: in a field drawn formatted what is left keeps its
+  // formatting. One entry of the history, whose undo selects it again. -> false when the field stopped showing what was
+  // typed.
+  deleteSelection(r, cx) {
+    const left = this.formatted() ? mend(this.seen, { at: r.start, removed: r.end - r.start, inserted: "" }, { defs: this.defsNow().map })
+      : { value: this.seen.slice(0, r.start) + this.seen.slice(r.end), caret: r.start };
+    return this.typeChange(this.seen, r, { value: left.value, start: left.caret, end: left.caret }, cx);
+  }
+
+  // The splice Enter makes at field range `r` of text block b, formatting kept on both sides (splitWith).
+  splitAt(b, r) {
+    const plain = () => split(this.doc, b, r.start, r.end);
+    return this.formatted() ? this.splitWith(b, r, (d, nb, at) => split(d, nb, at.start, at.end)) ?? plain() : plain();
+  }
+
+  // Text block b split at field range `r` by `step(doc, block, { start, end })` as one splice: a selection deleted first
+  // as a key deletes it, the spaces beside the caret dropped, and the runs open there closed at the end of the first half
+  // and opened again at the start of the second (seams.js). Null when the step does not apply.
+  splitWith(b, r, step) {
+    const f = fieldOf(this.doc, b), defs = this.defsNow().map;
+    let value = f.value, at = r;
+    if (r.start < r.end) {
+      const left = mend(value, { at: r.start, removed: r.end - r.start, inserted: "" }, { defs });
+      value = left.value;
+      at = { start: left.caret, end: left.caret };
+    }
+    const { start, end } = spacedOut(value, at.start, at.end), next = splitRuns(value, start, end, { defs }) ?? { value, start, end };
+    if (next.value === f.value) return step(this.doc, b, next);
+    return chain(this.doc, type(f, next.value), [(d, nb) => step(d, nb, next)])?.splice ?? null;
   }
 
   // An empty item moves out a level, or out of its list at the top as an empty paragraph. A heading the file already
@@ -3353,7 +3411,18 @@ export class Editor {
   shiftEnter(cx) {
     if (this.pending) return;
     if (this.blockByKey(this.activeKey)?.kind === "heading") return this.enter(cx);
-    this.typeOwn("\\\n", cx);
+    if (!this.breakCode(cx)) this.typeOwn("\\\n", cx);
+  }
+
+  // Shift+Enter in inline code: code can't hold a line break, so the runs open at the caret close before the break and
+  // open again after it. One entry of the history. -> false when the caret is not in code.
+  breakCode(cx) {
+    const r = this.caretNow(), defs = this.defsNow().map;
+    if (!r || r.start !== r.end || !this.formatted() || !(formatAt(this.seen, r.start, { defs }).bits & MARK_BITS.code)) return false;
+    const { start, end } = spacedOut(this.seen, r.start, r.end), halves = splitRuns(this.seen, start, end, { defs });
+    if (!halves) return false;
+    const value = `${halves.value.slice(0, halves.start)}${HARD_BREAK}${halves.value.slice(halves.end)}`, at = halves.start + HARD_BREAK.length;
+    return this.typeChange(this.seen, r, { value, start: at, end: at }, cx);
   }
 
   cmdEnter(cx) {
@@ -3389,7 +3458,19 @@ export class Editor {
       return this.op(s, cx, { at: s && s.start + s.insert.length, caret: 0 });
     }
     if (isRaw(p.kind)) return this.cross(-1, cx);
-    this.op(mergeIntoPrevious(this.doc, p, now), cx);
+    this.op(this.joined(mergeIntoPrevious(this.doc, p, now)), cx);
+  }
+
+  // A join's splice `s` with the joined block's text written so that each block's characters show as they did, runs of
+  // the same formatting that meet made one (seams.js), and its caret at the join, as one splice.
+  joined(s) {
+    if (!s) return s;
+    const defs = this.defsNow().map;
+    const runs = (d, b, at) => {
+      const f = fieldOf(d, b), r = joinRuns(f.value, docToField(f, at), { defs }), t = r && type(f, r.value);
+      return t ? { ...t, caret: fieldToDoc(f, r.at) } : { start: at, end: at, insert: "", caret: at };
+    };
+    return chain(this.doc, s, [runs])?.splice ?? s;
   }
 
   // Backspace at the start of an empty raw block removes it. A block emptied by typing goes as the caret leaves it: a
@@ -3423,7 +3504,7 @@ export class Editor {
     const n = next && byKey(this.doc, next.key);
     if (!n) return;
     if (n.kind === "hr") return this.op(remove(this.doc, n), cx, { at: this.caretDoc(), caret: end });
-    if (isText(b) && isText(n)) this.op(mergeNext(this.doc, b, n), cx, { caret: end });
+    if (isText(b) && isText(n)) this.op(this.joined(mergeNext(this.doc, b, n)), cx);
   }
 
   tab(dir, cx) {
@@ -3482,8 +3563,21 @@ export class Editor {
     if (b) this.op(move(this.doc, b, dir), cx, { caret: r ? { start: r.start, end: r.end } : 0 });
   }
 
+  // Cmd+C and Cmd+X in a text block: the selection as markdown that stands alone (seams.js), each character with its
+  // formatting; a field that shows its source copies that. Soft line breaks, which the field shows as spaces, are copied
+  // as line breaks. Cut then deletes the selection as a key does, one entry whose undo selects it again. A caret copies
+  // nothing.
+  copyText(cut, cx) {
+    const r = this.caretNow();
+    if (!r || r.start === r.end) return;
+    const value = this.f && !this.pending && this.f.value === this.seen ? softBreaksIn(this.f) : this.seen;
+    cx.write_to_clipboard(this.formatted() ? copyOf(value, r, { defs: this.defsNow().map }) : value.slice(r.start, r.end));
+    if (cut) this.deleteSelection(r, cx);
+  }
+
   // The line breaks that end the clipboard's text are left out of a text block, so that the text after the caret stays
-  // on the last pasted line; a raw block takes the text exactly.
+  // on the last pasted line; a raw block takes the text exactly. In a field drawn formatted the clipboard is read as
+  // markdown on its own and takes the formatting of where it lands (pasteFormatted).
   pasteText(cx) {
     const clip = cx.read_from_clipboard?.();
     if (typeof clip !== "string" || !clip) return;
@@ -3491,6 +3585,7 @@ export class Editor {
     if (!b && !this.pending) return;
     const text = lf.replace(/\n+$/, "");
     if ((b && !isText(b)) || !text) return this.typeText(lf, cx);
+    if (this.pasteFormatted(text, cx)) return;
     const r = text.includes("\n") ? this.caretNow() : null;
     if (!r) return this.typeText(text, cx);
     if (this.pending) {
@@ -3510,6 +3605,44 @@ export class Editor {
     const s = isText(now) && c ? paste(this.doc, now, c.start, c.end, text) : null;
     if (s) this.pasted(s, cx);
     else this.typeText(text, cx);
+  }
+
+  // Clipboard text pasted where the field draws its block formatted (seams.js), read as markdown on its own and given
+  // what text typed there gets: one paragraph stays in the block; text that makes more blocks splits it there as Enter
+  // does, its first and last paragraphs joining the halves and its other lines between them as it writes them. One entry
+  // of the history, whose undo selects a selection pasted over again. -> false to paste the text as it is.
+  pasteFormatted(text, cx) {
+    const r = this.caretNow(), defs = this.defsNow().map, lines = text.split("\n");
+    if (!r) return false;
+    const style = r.start === r.end ? this.styleFor({ at: r.start, removed: 0 }) : null;
+    if (this.pending || !this.seen.trim()) return this.pasteAlone(text, r, style, cx);
+    if (!this.formatted()) return false;
+    this.commit(cx);
+    const b = this.blockByKey(this.activeKey);
+    if (!b || !isText(b) || this.mode !== "reading") return false;
+    const f = fieldOf(this.doc, b), before = docRange(f, r), into = out => out && pasteLines(this.doc, b, out.value, r.start, out.caret);
+    const s = lines.length > 1 && opensBlock(lines[0]) ? this.splitWith(b, r, (d, nb, at) => insertLines(d, nb, at.start, at.end, lines))
+      : holdsBlocks(text) ? into(pasteParagraphs(f.value, r, text, { defs, style }))
+        : into(pasteInto(f.value, r, text, { defs, style }));
+    if (!s) return false;
+    this.pasted(s, cx);
+    if (r.start < r.end) this.history.select(this.text, before);
+    return true;
+  }
+
+  // A paste into a block that holds no text: text on one line, or lines on their own in a block not written yet, read as
+  // markdown alone with the typing style. Lines that make blocks, and lines in a written block emptied by typing, which
+  // take its place, are pasted as they are. -> false to paste the text as it is.
+  pasteAlone(text, r, style, cx) {
+    const lines = text.split("\n");
+    if (opensBlock(lines[0]) || holdsBlocks(text) || (lines.length > 1 && !this.pending)) return false;
+    const out = pasteInto(this.seen, r, text, { defs: this.defsNow().map, style });
+    if (!out) return false;
+    if (lines.length === 1) return this.selectField({ start: 0, end: this.seen.length }) && this.typeText(out.value, cx);
+    const p = this.pending, w = chain(this.doc, p.base(this.doc, PLACEHOLDER), [...p.steps, (d, b) => paste(d, b, 0, PLACEHOLDER.length, out.value)]);
+    if (!w) return false;
+    this.pasted({ ...w.splice, caret: w.splice.caret - (out.value.length - out.caret) }, cx);
+    return true;
   }
 
   typeText(text, cx) {

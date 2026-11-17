@@ -901,11 +901,29 @@ test("retype between bullet, numbered and task rewrites only the marker; '- ' to
   const after = parse("1. one\n- two\n"), as = retype(after, after.blocks[1], ORDERED, after.text.indexOf("two"));
   assert.equal(run(after.text, as), "1. one\n2. two\n", "numbered after a numbered item: its number + 1");
   const back = parse("1. one\n2. two\n3. three\n"), bs = retype(back, back.blocks[1], BULLET, back.text.indexOf("two")), bn = run(back.text, bs);
-  assert.equal(bn, "1. one\n-  two\n3. three\n", "padded to the old content column");
+  assert.equal(bn, "1. one\n- two\n3. three\n", "one space after the marker");
   assert.deepEqual(parse(bn).blocks.map(x => [x.kind, field(parse(bn), x).value]), [["item", "one"], ["item", "two"], ["item", "three"]]);
   const done = parse("- [x] done\n"), ds = retype(done, done.blocks[0], BULLET, done.text.length - 1);
   assert.equal(run(done.text, ds), "- done\n", "a task to a bullet loses its box");
   assert.deepEqual(retype(done, done.blocks[0], TASK, 6), { start: 6, end: 6, insert: "", caret: 6 }, "a task to a task: nothing");
+});
+
+test("a numbered item retyped as a to-do or a bullet gets one space after its marker; its other lines and sub-blocks move left with it (B18, B19)", () => {
+  const to = (text, target) => {
+    const d = parse(text), b = d.blocks[0], f = field(d, b), s = retype(d, b, target, fieldToDoc(f, 2)), next = run(text, s), nd = parse(next);
+    return { next, blocks: nd.blocks.map(x => [x.kind, x.depth, field(nd, x).value]), caret: docToField(field(nd, holdingAt(nd, s.caret)), s.caret) };
+  };
+  assert.equal(to("1. first\n", TASK).next, "- [ ] first\n");
+  assert.equal(to("1. first\n", BULLET).next, "- first\n");
+  assert.equal(to("10. ten\n", TASK).next, "- [ ] ten\n");
+  assert.equal(to("10. ten\n", BULLET).next, "- ten\n");
+  const nested = to("1. first\n   more\n   - sub\n", TASK);
+  assert.equal(nested.next, "- [ ] first\n  more\n  - sub\n");
+  assert.deepEqual(nested.blocks, [["item", 0, "first more"], ["item", 1, "sub"]], "the line and the sub-item stay in the item");
+  assert.equal(nested.caret, 2, "the caret where it was in the text");
+  const loose = to("1. first\n\n   para\n", BULLET);
+  assert.deepEqual([loose.next, loose.blocks], ["- first\n\n  para\n", [["item", 0, "first"], ["paragraph", 1, "para"]]]);
+  assert.equal(to("- [ ] a\n  - sub\n", ORDERED).next, "1. a\n   - sub\n", "a wider marker moves them right, as before");
 });
 
 test("retype from a paragraph, heading, setext heading, item or quote to every other kind refuses none of the documents' text blocks and fewer than 5% of all, which are skipped; on every other one the result has the target kind and the neighbours keep their kinds and fields", () => {

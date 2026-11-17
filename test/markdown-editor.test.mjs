@@ -3163,12 +3163,16 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   }
   assert.deepEqual(contexts("cmd-alt-m"), [`${TEXT} > Input`], "a comment on the selection, in a text block only");
   assert.deepEqual(actions("cmd-alt-m"), ["mdb-comment"]);
-  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText7", "MdRaw7", "MdSource7", "MdNote7"], "the table changed, so its contexts are new ones and the old ones stay inert");
-  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-6]\b/.test(x.context)), [], "no context of an older table");
+  for (const [key, action] of [["cmd-c", "mdb-copy"], ["cmd-x", "mdb-cut"]]) {
+    assert.deepEqual(contexts(key), [`${TEXT} > Input`], `${key}: markdown that keeps its formatting, in a text block only; raw blocks keep the field's own`);
+    assert.deepEqual(actions(key), [action], key);
+  }
+  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText8", "MdRaw8", "MdSource8", "MdNote8"], "the table changed, so its contexts are new ones and the old ones stay inert");
+  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-7]\b/.test(x.context)), [], "no context of an older table");
   for (const key of ["backspace", "left", "right"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
   assert.deepEqual(contexts("escape"), [`${NOTE} > Input`, RAW, TEXT], "the comment box takes Escape whatever its field holds; the block fields only give it away");
   assert.deepEqual(actions("escape"), ["mdb-note-cancel", "mdb-escape"]);
-  for (const key of ["delete", "cmd-a", "cmd-c", "cmd-x", "home", "end", "shift-up", "alt-left", "cmd-s", "cmd-e", "a"]) assert.deepEqual(contexts(key), [], key);
+  for (const key of ["delete", "cmd-a", "home", "end", "shift-up", "alt-left", "cmd-s", "cmd-e", "a"]) assert.deepEqual(contexts(key), [], key);
   const root = must(a.tree(), "md-root");
   for (const name of new Set(table.map(x => x.action))) assert.equal(typeof root.handlers[`on_action:${name}`], "function", name);
 });
@@ -7531,8 +7535,8 @@ test("the List menu holds Bulleted, Numbered and To-do list; a pick makes the bl
   barPress(m, "list");
   assert.deepEqual(checkedRows(m), ["ol"]);
   rowPress(m, "todo");
-  const task = "-  [ ] Hello world.\n\nEnd\n";
-  assert.deepEqual([m.view.text, selectedText(m), iconOf(listButton()).path], [task, "world", icon("list-todo")], "its text stays in its column, as /todo does");
+  const task = "- [ ] Hello world.\n\nEnd\n";
+  assert.deepEqual([m.view.text, selectedText(m), iconOf(listButton()).path], [task, "world", icon("list-todo")], "one space after the marker, as /todo writes it");
   barPress(m, "list");
   const entries = m.view.history.entries.length;
   rowPress(m, "todo");
@@ -9471,7 +9475,7 @@ test("the typing style ends on Enter, undo, leaving the block and the editor's o
   m.cx.write_to_clipboard("f");
   act(m, "mdb-paste");
   hit(m, "g");
-  assert.equal(m.view.text, "Hello cdefg\n\na\n\nEnd\n", "a paste");
+  assert.equal(m.view.text, "Hello cde**f**g\n\na\n\nEnd\n", "a paste, which takes the style and ends it");
 });
 
 test("a styled phrase typed after Cmd+B is one entry of the history, and so are Backspaces after a repair that moved a run's marks", async () => {
@@ -9507,4 +9511,298 @@ test("in a field that took no tokens a format key at a caret still formats what 
   hit(m, "x");
   hit(m, "y");
   assert.deepEqual([m.view.field.value(), m.view.text], ["Hello **world**, **xy**", "Hello **world**, **xy**\n\nEnd\n"]);
+});
+
+// A block's line with its caret written as `|`: the line, and the caret in its field (after the block's marker).
+const caretIn = line => ({ value: line.replace("|", ""), at: line.indexOf("|") - (/^(?:#+|-|>) /.exec(line)?.[0].length ?? 0) });
+
+const ENTER_SPLITS = [
+  ["B1 bold, the caret after a space", "Hello **big |world** there", "Hello **big**\n\n**world** there"],
+  ["B2 bold, in a word", "Hello **wo|rld** there", "Hello **wo**\n\n**rld** there"],
+  ["B2 a heading", "# Big **bold |title** here", "# Big **bold**\n\n**title** here"],
+  ["B2 an item", "- an **item |text** z", "- an **item**\n- **text** z"],
+  ["B2 a quote", "> a **quoted |text** z", "> a **quoted**\n>\n> **text** z"],
+  ["B3 a colour", 'Hello <span style="color: red">big |world</span> there', 'Hello <span style="color: red">big</span>\n\n<span style="color: red">world</span> there'],
+  ["B3 a highlight", "Hello <mark>big |world</mark> there", "Hello <mark>big</mark>\n\n<mark>world</mark> there"],
+  ["B3 underline", "Hello <u>big |world</u> there", "Hello <u>big</u>\n\n<u>world</u> there"],
+  ["B4 a link", "See [the |docs](https://e.com) now", "See [the](https://e.com)\n\n[docs](https://e.com) now"],
+  ["B5 commented text", "See {==this |text==}{>>2026-11-16 20:51 | note<<} now", "See {==this==}{>>2026-11-16 20:51 | note<<}\n\ntext now"],
+  ["B6 inline code", "Run `npm |test` now", "Run `npm`\n\n`test` now"],
+  ["B7 a web address", "Go https://exa|mple.com/path now", "Go https://example.com/path\n\nnow"],
+];
+
+for (const [name, line, after] of ENTER_SPLITS) {
+  test(`Enter inside a run keeps its formatting on both sides, ${name}: one entry, undo with the caret back, redo`, async () => {
+    const { value, at } = caretIn(line), disk = `${value}\n\nEnd\n`, m = await page(disk, { 0: 30, 1: 24 });
+    await openBlock(m, 0);
+    await placeIn(m, at);
+    const field = m.view.field.value();
+    act(m, "mdb-enter");
+    assert.equal(m.view.text, `${after}\n\nEnd\n`);
+    const { start, end } = m.view.field.selection, rest = after.slice(after.lastIndexOf("\n") + 1).replace(/^(?:- |> )/, "");
+    assert.deepEqual([start, end, m.view.field.value().slice(start)], [end, start, rest], "the caret at the start of the second block (a quote's second paragraph is in its field)");
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], [disk, field, { start: at, end: at }], "undo");
+    act(m, "mdb-redo");
+    assert.equal(m.view.text, `${after}\n\nEnd\n`, "redo");
+    const again = m.view.field.selection;
+    assert.deepEqual([again.start, again.end, m.view.field.value().slice(again.start)], [again.end, again.start, rest], "redo: the caret at the start of the second block");
+    act(m, "mdb-undo");
+    assert.equal(m.view.history.canUndo, false, "one entry");
+  });
+}
+
+test("Enter with a selection inside a run deletes it as a key does, then splits; one reaching the end leaves the first half formatted (B8)", async () => {
+  const m = await page("Hello **world** there\n\nHello **world** there\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 10, 12);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Hello **wo**\n\n**d** there\n\nHello **world** there\n");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world** there\n\nHello **world** there\n", { start: 10, end: 12 }], "one entry, the selection back");
+  await openBlock(m, 1);
+  await placeIn(m, 10, 21);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Hello **world** there\n\nHello **wo**\n");
+  assert.ok(pendingOf(m), "an empty block below it");
+});
+
+test("Enter at a run's edge is unchanged: before and after a bold word", async () => {
+  const m = await page("Hello **world** there\n", { 0: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 15);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Hello **world**\n\nthere\n");
+  act(m, "mdb-undo");
+  await placeIn(m, 6);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "Hello\n\n**world** there\n");
+});
+
+test("Shift+Enter in inline code closes the code before the break and opens it again after it (B9); in bold the break stays in the run", async () => {
+  const m = await page("Run `npm test` now\n\nHello **big world** there\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 9);
+  act(m, "mdb-shift-enter");
+  assert.equal(m.view.text, "Run `npm`\\\n`test` now\n\nHello **big world** there\n");
+  assert.deepEqual(m.view.field.selection, { start: 11, end: 11 }, "the caret after the break");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Run `npm test` now\n\nHello **big world** there\n", { start: 9, end: 9 }]);
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Run `npm`\\\n`test` now\n\nHello **big world** there\n", { start: 11, end: 11 }], "redo: the caret after the break");
+  await openBlock(m, 1);
+  await placeIn(m, 12);
+  act(m, "mdb-shift-enter");
+  assert.equal(m.view.text, "Run `npm`\\\n`test` now\n\nHello **big \\\nworld** there\n");
+});
+
+const JOINS = [
+  ["B10 bold meeting bold", "Hello **big**", "**world** there", "Hello **bigworld** there", 11],
+  ["B11 italic meeting italic", "Hello *big*", "*world* there", "Hello *bigworld* there", 10],
+  ["B11 code meeting code", "Run `a`", "`b` now", "Run `ab` now", 6],
+  ["B12 a star that showed", "Use a *", "star* here", "Use a \\*star* here", 8],
+];
+
+for (const [name, first, second, joined, seam] of JOINS) {
+  test(`a join keeps every character's formatting, ${name}: by Backspace and by Delete, the caret at the seam, one entry each`, async () => {
+    const disk = `${first}\n\n${second}\n`, m = await page(disk, { 0: 24, 1: 24 });
+    await openBlock(m, 1, 0);
+    act(m, "mdb-backspace-start");
+    assert.deepEqual([m.view.text, ...editing(m)], [`${joined}\n`, keyAt(m, 0), joined, { start: seam, end: seam }], "Backspace");
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, ...editing(m)], [disk, keyAt(m, 1), second, { start: 0, end: 0 }], "undo: the caret at the block's start");
+    act(m, "mdb-redo");
+    assert.deepEqual([m.view.text, ...editing(m)], [`${joined}\n`, keyAt(m, 0), joined, { start: seam, end: seam }], "redo: the caret at the seam");
+    act(m, "mdb-undo");
+    await openBlock(m, 0, first.length);
+    await fire_timers(m.cx, { ms: 100 });
+    forwardDeleteAtEnd(m);
+    assert.deepEqual([m.view.text, ...editing(m)], [`${joined}\n`, keyAt(m, 0), joined, { start: seam, end: seam }], "Delete");
+    act(m, "mdb-undo");
+    assert.equal(m.view.text, disk);
+  });
+}
+
+test("a heading joined with a paragraph keeps both bold runs one", async () => {
+  const m = await page("# Big **title**\n\n**more** text\n", { 0: 31, 1: 24 });
+  await openBlock(m, 1, 0);
+  act(m, "mdb-backspace-start");
+  assert.equal(m.view.text, "# Big **titlemore** text\n");
+});
+
+test("Cmd+C copies the selection as markdown that stands alone: every mark opened and closed in it; a link part with its address; commented text without its comment; a caret copies nothing (B13)", async () => {
+  const disk = "Hello **world** there\n\nSee [the docs](https://e.com) now\n\nSee {==this text==}{>>n<<} now\n\nHello **wor\nld** there\n";
+  const m = await page(disk, { 0: 24, 1: 24, 2: 24, 3: 48 });
+  const copied = async (i, start, end) => {
+    await openBlock(m, i);
+    await placeIn(m, start, end);
+    const before = m.cx.clipboard.length;
+    act(m, "mdb-copy");
+    return m.cx.clipboard.length > before ? m.cx.clipboard.at(-1) : null;
+  };
+  assert.equal(await copied(0, 0, 10), "Hello **wo**");
+  assert.equal(await copied(0, 9, 12), "**orl**");
+  assert.equal(await copied(1, 9, 12), "[doc](https://e.com)");
+  assert.equal(await copied(2, 9, 14), "is te");
+  assert.equal(await copied(3, 9, 13), "**or\nl**", "a soft line break kept");
+  assert.equal(await copied(0, 3, 3), null, "a caret: nothing");
+  assert.equal(m.view.text, disk, "nothing changed");
+});
+
+test("Cmd+X copies as Cmd+C does and deletes the selection keeping what is left formatted, one entry whose undo selects it again (B14)", async () => {
+  const m = await page("Hello **world** there\n", { 0: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 0, 10);
+  act(m, "mdb-cut");
+  assert.deepEqual([m.cx.clipboard.at(-1), m.view.text, m.view.field.value()], ["Hello **wo**", "**rld** there\n", "**rld** there"]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world** there\n", { start: 0, end: 10 }]);
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["**rld** there\n", "**rld** there", { start: 0, end: 0 }]);
+});
+
+test("Cmd+X in a field that shows its source cuts the source, one entry whose undo selects it again", async () => {
+  const m = await page("Hello **world** there\n", { 0: 24 });
+  const field = m.view.blockField(keyAt(m, 0)), set = field.set_value.bind(field);
+  field.set_value = v => { if (v?.tokens?.length) throw new Error("token refused"); return set(v); };
+  await openBlock(m, 0);
+  await placeIn(m, 3);
+  await placeIn(m, 0, 10);
+  assert.equal(m.view.tokensOff, true);
+  act(m, "mdb-cut");
+  assert.deepEqual([m.cx.clipboard.at(-1), m.view.text], ["Hello **wo", "rld** there\n"]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world** there\n", { start: 0, end: 10 }]);
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["rld** there\n", { start: 0, end: 0 }]);
+});
+
+const pasteIn = (m, clip) => {
+  m.cx.write_to_clipboard(clip);
+  act(m, "mdb-paste");
+};
+
+test("pasted text keeps its own formatting and takes that of where it lands (B15); a mark the clipboard does not pair is pasted as the character it shows (B16)", async () => {
+  const m = await page("Hello **world** there\n\nHello  there 2**3 is 8\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 10);
+  pasteIn(m, "**b**");
+  assert.deepEqual([m.view.text.split("\n")[0], drawnField(m)], ["Hello **wobrld** there", "Hello wobrld there"]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text.split("\n")[0], m.view.field.selection], ["Hello **world** there", { start: 10, end: 10 }]);
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text.split("\n")[0], m.view.field.selection], ["Hello **wobrld** there", { start: 11, end: 11 }], "redo: the caret after the pasted text");
+  await openBlock(m, 1);
+  await placeIn(m, 6);
+  pasteIn(m, "**wo");
+  assert.deepEqual([m.view.text.split("\n")[2], drawnField(m)], ["Hello \\*\\*wo there 2**3 is 8", "Hello **wo there 2**3 is 8"]);
+});
+
+test("a paste over a selection takes the first selected character's formatting, one entry whose undo selects it again", async () => {
+  const m = await page("Hello **world** there\n", { 0: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 6, 15);
+  pasteIn(m, "abc");
+  const left = m.view.field.selection;
+  assert.deepEqual([m.view.text, m.view.field.value().slice(0, left.end)], ["Hello **abc** there\n", "Hello **abc**"], "the caret after the pasted text");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world** there\n", { start: 6, end: 15 }]);
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **abc** there\n", left], "redo: the caret where the paste left it");
+});
+
+test("one line pasted inside a written paragraph stays in it, even when it starts like a block (a list item, a quote, a heading)", async () => {
+  const m = await page("Hello world there\n\nEnd\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 6);
+  pasteIn(m, "- b ");
+  assert.equal(m.view.text, "Hello - b world there\n\nEnd\n");
+  act(m, "mdb-undo");
+  await openBlock(m, 0);
+  await placeIn(m, 12);
+  pasteIn(m, "> 2");
+  assert.equal(m.view.text, "Hello world > 2there\n\nEnd\n");
+});
+
+test("a two-paragraph paste in a bold word splits it as Enter does, each half keeping its bold (B17)", async () => {
+  const m = await page("Hello **big world** there\n\nEnd\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 12);
+  pasteIn(m, "one\n\ntwo");
+  assert.equal(m.view.text, "Hello **big one**\n\n**twoworld** there\n\nEnd\n");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Hello **big world** there\n\nEnd\n", "one entry");
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, ...editing(m)], ["Hello **big one**\n\n**twoworld** there\n\nEnd\n", keyAt(m, 1), "**twoworld** there", { start: 5, end: 5 }], "redo: the caret after the last pasted paragraph");
+  act(m, "mdb-undo");
+  await openBlock(m, 0);
+  await placeIn(m, 12);
+  pasteIn(m, "- a\n- b");
+  assert.equal(m.view.text, "Hello **big**\n\n- a\n- b\n\n**world** there\n\nEnd\n", "lines that make blocks go between the halves");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Hello **big world** there\n\nEnd\n", "one entry");
+});
+
+test("pasted lines that make blocks after a paragraph arrive as the blocks they write: a list, a rule, a fence with a blank line in it", async () => {
+  const disk = "Hello **big world** there\n\nEnd\n", m = await page(disk, { 0: 24, 1: 24 });
+  const pastedAt = async (i, at, clip) => {
+    await openBlock(m, i);
+    await placeIn(m, at);
+    pasteIn(m, clip);
+    const out = [m.view.text, parse(m.view.text).blocks.map(b => b.kind)];
+    act(m, "mdb-undo");
+    assert.equal(m.view.text, disk, `${JSON.stringify(clip)}: one entry`);
+    return out;
+  };
+  assert.deepEqual(await pastedAt(0, 12, "Intro\n\n* a\n* b"), ["Hello **big Intro**\n\n* a\n* b**world** there\n\nEnd\n", ["paragraph", "item", "item", "paragraph"]]);
+  assert.deepEqual(await pastedAt(0, 12, "Intro\n* a\n* b"), ["Hello **big Intro**\n* a\n* b**world** there\n\nEnd\n", ["paragraph", "item", "item", "paragraph"]]);
+  assert.deepEqual(await pastedAt(0, 12, "Intro\n\n***"), ["Hello **big Intro**\n\n***\n\n**world** there\n\nEnd\n", ["paragraph", "hr", "paragraph", "paragraph"]]);
+  assert.deepEqual(await pastedAt(1, 3, " Intro\n\n```\na*b\n\nc\n```"), ["Hello **big world** there\n\nEnd Intro\n\n```\na*b\n\nc\n```\n", ["paragraph", "paragraph", "code"]], "the last block of the file: the fence closes");
+});
+
+test("paragraphs pasted inside a web address: the first where typed text goes, the split after the address", async () => {
+  const m = await page("Go https://example.com/path now\n\nEnd\n", { 0: 30, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 14);
+  pasteIn(m, "one\n\ntwo");
+  assert.equal(m.view.text, "Go https://exaonemple.com/path\n\ntwo now\n\nEnd\n");
+});
+
+test("a paste into a block not written yet reads the clipboard alone; a copy from the editor pastes back as it showed", async () => {
+  const m = await page("Intro\n", { 0: 24 });
+  await clickAt(m, { x: X + 50, y: 28 + m.view.sums[1] + 40 });
+  assert.ok(pendingOf(m));
+  pasteIn(m, "**wo");
+  assert.equal(m.view.text, "Intro\n\n\\*\\*wo\n");
+  const n = await page("Hello **world** there\n\nEnd\n", { 0: 24, 1: 24 });
+  await openBlock(n, 0);
+  await placeIn(n, 0, 10);
+  act(n, "mdb-copy");
+  await openBlock(n, 1);
+  await placeIn(n, 3);
+  pasteIn(n, n.cx.clipboard.at(-1));
+  assert.equal(n.view.text, "Hello **world** there\n\nEndHello **wo**\n");
+  const s = await page("Hello **wor\nld** there\n\nEnd\n", { 0: 48, 1: 24 });
+  await openBlock(s, 0);
+  await placeIn(s, 9, 13);
+  act(s, "mdb-copy");
+  await openBlock(s, 1);
+  await placeIn(s, 3);
+  pasteIn(s, s.cx.clipboard.at(-1));
+  assert.equal(s.view.text, "Hello **wor\nld** there\n\nEnd**or\nl**\n", "a soft line break copied and pasted back");
+});
+
+test("the List menu and /todo from a numbered item write one space after the marker, its sub-item moving left with it (B18, B19)", async () => {
+  const m = await page("1. first\n   - sub\n\n10. ten\n    more\n", { 0: 24, 1: 24, 2: 24 });
+  await openBlock(m, 0, 5);
+  typed(m, " /todo");
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "- [ ] first \n  - sub\n\n10. ten\n    more\n");
+  await openBlock(m, 2);
+  await selectByMouse(m, 0, 3);
+  barPress(m, "list");
+  rowPress(m, "ul");
+  assert.equal(m.view.text, "- [ ] first \n  - sub\n\n- ten\n  more\n");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "- [ ] first \n  - sub\n\n10. ten\n    more\n");
 });
