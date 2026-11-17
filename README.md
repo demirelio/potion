@@ -207,7 +207,7 @@ fences.
 | Cmd+Shift+C | The same for inline code: other formatting goes around the code (`` **`x`** ``), and making formatted text code keeps its formatting, splitting the code where it changes |
 | Cmd+Shift+H | The same for a highlight |
 | Cmd+K | Opens the [address box](#links) under the selection, offering the web or mail address the clipboard holds; Enter makes the selection a link to what you typed. On a caret in a word it links the word; elsewhere Enter writes the address as a link. In a link the box holds its address, to change it |
-| Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret |
+| Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret. In a code block, diagram source or table you are editing, or with one of them selected as a block, a comment on the whole block |
 | Select text in a paragraph, heading, item or quote | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
@@ -235,7 +235,8 @@ formatted words, while direct typing in any script is fine. **Left out on purpos
 inside text, HTML `<img>` and reference-style images as the picture (they show as an icon and their alt text; only a
 paragraph made of pictures is drawn), footnotes (a reference stays text, a definition shows as a dim source line),
 jumping to `#anchor` links, and any button besides the one toggle, a diagram's zoom, the format bar, a link's popover,
-a picture's menu, a code block's language chip and the comments' cards.
+a picture's menu, a code block's language chip, the Comment button of code blocks, diagrams and tables, and the
+comments' cards.
 
 ### Code languages
 
@@ -349,15 +350,24 @@ before the editor stored times are like that). Only the comment's text is ever s
 - **Resolve** takes the comment and its marks off; the marked text stays, selected. It is one undo step, whose undo
   brings the comment back with its time.
 - **Narrower panes**, and a file with no comment yet, have no margin. A new comment is written in a small box over the
-  selection, with the time too. A count at the right of a block's first row says how many comments it holds, also
-  while the block is being edited; a click on it opens a card listing them: the marked text, the time, the comment, and
-  **Edit** (the block opens with the marked text selected and the box holds the comment) and **Resolve**. A click on
+  selection (over a code block, diagram or table, its top edge), with the time too. A count at the right of a block's
+  first row says how many comments it holds, also while the block is being edited; a click on it opens a card listing
+  them: the marked text, the time, the comment, and **Edit** (the block opens with the marked text selected and the
+  box holds the comment) and **Resolve**. A click on
   commented text shows that comment's card over it, with Edit and Resolve; Edit, or a click on the card's text, opens
   the box to edit it. A file that can't be edited shows its cards without Resolve or Edit. The footer counts the file's comments.
-- **On code blocks, diagrams and tables.** A code block, a diagram or a whole table carries its comments in a
-  paragraph of their own right after it: point comments and nothing else, one per line, a blank line between the block
-  and them (a table needs it: a line right under a table is another row). A person or an agent adds one by writing it
-  in that form:
+- **On code blocks, diagrams and tables.** With the pointer over a code block or a table, a Comment button shows:
+  left of a code block's language chip, and at the top right of a table's box (also while you edit the block, and on a
+  diagram's source). A diagram drawn as a frame has its own, left of its zoom buttons. Press it, or press Cmd+Alt+M
+  while you edit the block or with it selected as a block: a new card opens beside the block, after its comments, and
+  the block gets a 2 px frame in the highlight colour while you write. Enter writes the comment with the time; Escape,
+  a click elsewhere or Enter with nothing typed writes nothing; either way the keyboard goes back where it was (the
+  block you were editing keeps its caret). Undo takes the comment out again and opens nothing. Without a margin the
+  comment is written in the small box over the block's top edge, and a file's first comment makes room for the margin
+  afterwards. When the block's top is off the pane, the page scrolls to show the card or box, and back to the caret of
+  the block you were editing after. The comments are kept in a paragraph of their own right after the block: point
+  comments and nothing else, one per line, a blank line between the block and them (a table needs it: a line right
+  under a table is another row). A person or an agent adds one by writing it in that form:
 
   ````
   ```js
@@ -372,15 +382,15 @@ before the editor stored times are like that). Only the comment's text is ever s
   block's top, in the order they are written, stacked with the cards around them, and the arrows, a click or Backspace
   go from the block straight to the block after them. A click on such a card makes its comment active: the card stands
   out as above and the block gets a 2 px frame in the deeper ochre. Nothing opens; a block being edited elsewhere stops
-  being edited, the block itself stays edited. Escape or a click elsewhere ends it. Edit, or a click on the active
-  card's text, edits the comment in place (Enter saves it with its time, Escape leaves it); Resolve takes its line out,
+  being edited, the block itself stays edited. Escape or a click elsewhere ends it. Edit, or a click on a card's text,
+  edits the comment in place (Enter saves it with its time, Escape leaves it); Resolve takes its line out,
   and the last one takes the paragraph with it. Each is one undo step, and undo opens no block. The block and its
   comments go together: a block written after it goes after them, Option+Up and Down move them with it, and a block
   selection, a cut or Backspace in an empty code block that removes the block removes them too. A paragraph holding
   anything besides point comments (a word, a highlight) is ordinary text, with its 💬. A block turned into another kind leaves
   the paragraph where it is, as ordinary text; a code block given the Mermaid language keeps its comments. In a narrow
-  pane the block shows their count at its top (left of a code block's language chip), and its card's Edit opens the
-  comment box over the block.
+  pane the block shows their count at its top (left of a code block's language chip, its Comment button left of the
+  count), and its card's Edit opens the comment box over the block; the frame goes when the box closes.
 - **Reading** highlights the marked text in a muted ochre as light as the page (dark brown on a dark theme, whatever
   its tint, soft beige on a light one), the colour `<mark>` highlights get too, its formatting still drawn, and leaves out the marks
   and the comment; a comment at a point shows as a highlighted 💬. A highlight with no comment (`{==text==}`) is
@@ -428,7 +438,7 @@ never under 75 % or over 100 % (mermaid's own size).
   through it: the page brings the frame fully into view, the picture scrolls to its end, then the page goes on.
 - **Zoom:** Cmd+scroll (or Ctrl+scroll) over it zooms around the pointer, from the whole diagram up to 200 %. With
   the pointer over the frame, `− % +` shows at its top right: − and + step the zoom, and the percentage takes the
-  frame back to where it opened.
+  frame back to where it opened. Left of it a Comment button writes a [comment](#comments) on the diagram.
 - **Edit it:** double-click it to open its source.
 - Each frame keeps its view while you edit elsewhere, switch the theme or open its source.
 

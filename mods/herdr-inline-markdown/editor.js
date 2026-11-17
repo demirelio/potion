@@ -5,7 +5,7 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -20,9 +20,9 @@ import { MARK_BITS } from "./restyle.js";
 import { copyOf, holdsBlocks, joinRuns, pasteInto, pasteParagraphs, splitRuns } from "./seams.js";
 import { addLink, clipboardAddress, linkAddress, pictureCut, pictureForm, setAddress, setPicture, unlink } from "./links.js";
 import { addComment, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, timeLabel } from "./comments.js";
-import { blockUnit, editBlockNote, notesAfter, ownerOf, pairNotes, removeWithNotes, resolveBlockNote } from "./blocknotes.js";
+import { addBlockNote, blockUnit, editBlockNote, notesAfter, ownerOf, ownsNotes, pairNotes, removeWithNotes, resolveBlockNote } from "./blocknotes.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
-import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
+import { Block, CALIBRATED, Column, FRAMED, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, parsedInline, visibleMap } from "./inline.js";
 import { drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
 
@@ -182,6 +182,7 @@ const stripped = (b, active) => b.kind === "code" || (b.kind === "mermaid" && ac
 const NO_STRIP = { strip: false, chip: "", chipW: 0, chipLive: false, chipOpen: false };
 const codeStartIn = (doc, b) => fieldToDoc(fieldOf(doc, b), 0);
 const inBox = (box, x, y) => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h;
+const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 const LINK_REFUSED = "A link can't hold another link";
 // Whether a link can go somewhere does not depend on its address: this one stands in before one is typed.
 const ANY_ADDRESS = "#";
@@ -509,9 +510,10 @@ export class Editor {
     this.pictures = new Map();
     // Diagram frames: `frames` the view ({ z, x, y }) of each frame panned or zoomed (none: its starting view), `pan` a
     // press on a frame ({ key, from, x0, y0, moved }), `hoverTop` where the hovered frame's − % + group sits, `gesture`
-    // the wheel gesture going on, `zoomed` the frames zoomed since the zoom last rested.
+    // the wheel gesture going on, `zoomed` the frames zoomed since the zoom last rested. `hoverBox` is the code block or
+    // table under the pointer, which shows its Comment button.
     this.frames = new Map(); this.pan = null; this.hoverFrame = null; this.hoverTop = null; this.gesture = null;
-    this.zoomed = new Set(); this.settleTimer = null;
+    this.zoomed = new Set(); this.settleTimer = null; this.hoverBox = null;
 
     // Every text block near the viewport is drawn by a field of its own (`blockFields`: key -> { state, and what its
     // value and tokens were made from }; `fieldKeys` the other way), edited or not, so a press lands in it natively and
@@ -558,11 +560,12 @@ export class Editor {
     this.card = null; this.note = null; this.highlight = highlightColor(theme()); this.deep = deepHighlightColor(theme()); this.notesFor = null;
     this.margin = null; this.cards = null; this.cardMemo = new Map(); this.raised = null;
     // A code block's, diagram's or table's comments: `pairing` which block owns which comments paragraph in `doc`
-    // (blocknotes.js), `blockNote` the active one of them ({ key: the block's, index, editing }).
-    this.pairing = null; this.blockNote = null;
+    // (blocknotes.js), `blockNote` the active one of them ({ key: the block's, index, editing }), `blockAdd` the one
+    // being written for one activation ({ key: the block's, act, caret: the block's own when it is the edited one }).
+    this.pairing = null; this.blockNote = null; this.blockAdd = null;
     this.noteField = TextareaState.new({ placeholder: "Add a comment…" });
     this.noteField.set_auto_grow(1, NOTE_ROWS);
-    this.noteField.on("submit", (_e, cx) => (this.blockNoteEditing() ? this.saveBlockNote(cx) : this.saveNote(cx)));
+    this.noteField.on("submit", (_e, cx) => this.submitNote(cx));
     // Links: `element` the element a press picked (its popover shows while the selection stays in it), `pressedOn` the
     // one that was picked when the press began, `linkBox` what the address box (`linkField`) is open for.
     this.element = null; this.pressedOn = null; this.linkBox = null;
@@ -1102,7 +1105,9 @@ export class Editor {
     this.unpick(cx);
     this.dropLanguages(cx);
     this.endBlockNote(cx);
+    this.closeBlockAdd(cx);
     this.pointer = null;
+    this.updateHover(cx);
     let at = null;
     this.writeHeld(cx);
     if (this.activeKey && !this.pending) {
@@ -1157,7 +1162,7 @@ export class Editor {
     if (k === "escape" && this.card) { cx.stop_propagation(); this.closeCard(cx); return; }
     // Keys typed into a picture's box, the language menu or a block's comment reach this root too, and one stopped here
     // never reaches the box's field.
-    if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey || this.pictureBoxOpen() || this.langOpen() || this.blockNoteEditing()) return;
+    if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey || this.pictureBoxOpen() || this.langOpen() || this.blockNoteEditing() || this.blockAddOpen()) return;
     if (k === "escape" && this.blockNote) { cx.stop_propagation(); this.endBlockNote(cx); return; }
     if (this.sel && this.selectionKey(e, cx)) return;
     if (this.picked && this.pictureKey(k, cx)) return;
@@ -1179,13 +1184,14 @@ export class Editor {
     }
     if (name === "mdb-note-cancel") {
       this.typingStyle = null;
+      if (this.blockAddOpen()) return this.cancelBlockAdd(cx);
       if (this.blockNoteEditing()) return this.cancelBlockNote(cx);
       if (this.pictureBoxOpen()) return this.cancelPictureBox(cx);
       if (this.imageBoxOpen()) return this.cancelImageBox(cx);
       return this.linkBoxOpen() ? this.cancelLinkBox(cx) : this.cancelNote(cx);
     }
     if (name === "mdb-note-save") {
-      if (this.blockNoteEditing()) return this.saveBlockNote(cx);
+      if (this.blockAddOpen() || this.blockNoteEditing()) return this.submitNote(cx);
       if (this.pictureBoxOpen() || this.imageBoxOpen()) return this.savePictureBox(cx);
       return this.linkBoxOpen() ? this.applyLinkBox(cx) : this.saveNote(cx);
     }
@@ -1249,7 +1255,7 @@ export class Editor {
         else if (modeOf(name)) this.setMode(modeOf(name), cx);
         else if (name === "focus") {
           if (this.mode === "markdown" && !this.remote && !this.readWhenParsed) this.source.focus();
-          else if (this.noteOpen() || this.blockNoteEditing()) this.noteField.focus();
+          else if (this.noteOpen() || this.blockNoteEditing() || this.blockAddOpen()) this.noteField.focus();
           else if (this.linkBoxOpen()) this.linkField.focus();
           else if (this.pictureBoxOpen()) this.pictureField().focus();
           else if (this.imageBoxOpen()) this.pictureField(this.imageBox.kind).focus();
@@ -1417,6 +1423,8 @@ export class Editor {
     if (this.pan?.key === key) this.pan = null;
     if (this.lang?.key === key) this.letLanguagesGo();
     if (this.blockNote?.key === key) this.blockNote = null;
+    if (this.blockAdd?.key === key) this.blockAdd = null;
+    if (this.hoverBox === key) this.hoverBox = null;
   }
 
   // Only blocks with different data are redrawn, the Column only when the blocks, their order or its window moved.
@@ -1424,6 +1432,7 @@ export class Editor {
   rebuild(cx, anchor) {
     this.margin = this.marginNow();
     if (this.blockNote && !this.blockNoteNow()) this.blockNote = null;
+    if (this.blockAdd && !this.blockAddNow()) this.blockAdd = null;
     const blocks = this.pageBlocks(this.placePending(this.doc.blocks)), width = this.textWidth();
     this.blocks = blocks;
     this.at = new Map(blocks.map((b, i) => [b.key, i]));
@@ -1735,7 +1744,7 @@ export class Editor {
       mode: b.key === this.activeKey ? "active" : this.blockFields.has(b.key) ? "field" : "rendered",
       tokens: look.look === "text" && (b.key === this.activeKey || this.blockFields.has(b.key)),
       rows: b.key === this.activeKey ? this.rows : "many", menu: b.key === this.activeKey && this.slashOpen(),
-      gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key), framed: this.blockNote?.key === b.key,
+      gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key), framed: this.framedAs(b.key),
       row: cal.row, ratio: cal.ratio, padRendered: cal.padRendered, padActive: cal.padActive,
       ...(look.look === "diagram" ? this.frameData(b, width) : {}),
       ...(look.look === "picture" ? this.pictureData(b, width) : {}),
@@ -1767,6 +1776,33 @@ export class Editor {
   // Block data d's language chip from the block's top-left: at the right of the strip under the box's border and padding.
   chipIn(d) {
     return { x: this.textWidth() - 1 - BOX.px - d.chipW, y: d.space + 1 + BOX.py + (CODE_HEAD - CHIP.h) / 2, w: d.chipW, h: CHIP.h };
+  }
+
+  // Whether what changes the file is drawn: on a file that can be edited, and in the check fixture.
+  showsEdits() {
+    return !this.file || this.editable();
+  }
+
+  // A code block's or table's Comment button shows while the pointer is over the block, and on the code block, table or
+  // diagram source being edited.
+  blockButtonShown(d) {
+    if (!(d.strip || d.kind === "table") || d.key === this.pending?.key || !this.showsEdits()) return false;
+    return d.key === this.activeKey || d.key === this.hoverBox;
+  }
+
+  // Block data d's Comment button from the block's top-left while it shows, else null: left of a code block's language
+  // chip, inside a table's box at its top right, or left of the block's comment count where it would cover that.
+  blockButtonIn(d) {
+    if (!this.blockButtonShown(d)) return null;
+    const B = BLOCK_BUTTON, chip = d.chipW ? this.chipIn(d) : null;
+    const own = chip ? { x: chip.x - B.gap - B.size, y: chip.y } : { x: this.textWidth() - B.inset - B.size, y: d.space + B.inset };
+    const box = { ...own, w: B.size, h: B.size }, count = d.notes ? { x: d.notesX, y: d.notesY, w: NOTES.w, h: NOTES.h } : null;
+    return count && overlap(box, count) ? { ...box, x: count.x - B.gap - B.size, y: count.y + (NOTES.h - B.size) / 2 } : box;
+  }
+
+  framedAs(key) {
+    if (this.blockNote?.key === key) return FRAMED.active;
+    return this.blockAdd?.key === key && this.blockAddOpen() ? FRAMED.adding : "";
   }
 
   // `answer` says how one picture of the paragraph stands, as { state, path, width, height, error }: Images.get's answer.
@@ -2137,12 +2173,14 @@ export class Editor {
   // A press beside the edited block's field would take the keyboard from it: it is given back at once, and again on the
   // mouse-up if the root took it anyway. `beside` is that block's key, `key` the block pressed, from which a drag
   // selects blocks. A press anywhere but on the picked picture lets it go, one anywhere but on the chip whose language
-  // menu is open closes the menu, and any press on the page ends a block's active comment.
+  // menu is open closes the menu, and any press on the page ends a block's active comment and closes a new one, drawn
+  // or scrolled out of sight.
   viewportDown(e, cx) {
     this.closeSlash(cx);
     this.closeBar(cx);
     this.closeCard(cx);
     this.endBlockNote(cx);
+    if (this.blockAdd) this.closeBlockAddOut(cx);
     this.endThumb(cx);
     this.endPan(cx);
     this.linked = false;
@@ -2201,6 +2239,7 @@ export class Editor {
     if (hit.on === "notes") return this.openCard(hit.block.key, cx);
     if (hit.on === "picture") return this.pictureClick(hit, cx, cmd);
     if (!this.editable()) return;
+    if (hit.on === "comment") return this.commentPress(hit.block.key, cx);
     if (hit.on === "chip") return this.chipPress(hit.block, cx);
     if (hit.on === "frame") {
       if (count >= 2) this.clickBlock(hit.block.key, p, cx);
@@ -2295,7 +2334,7 @@ export class Editor {
     return {
       ...v,
       sharp: d.sharpKey && FRAME.dpr * zoom() * v.z > d.imgScale ? d.sharpKey : "",
-      tools: this.toolsShown(key) ? { top: this.toolsTopOf(key), pct: Math.round(v.z * 100), out: canZoom(v.z, -1, d.zMin), in: canZoom(v.z, 1, d.zMin) } : null,
+      tools: this.toolsShown(key) ? { top: this.toolsTopOf(key), pct: Math.round(v.z * 100), out: canZoom(v.z, -1, d.zMin), in: canZoom(v.z, 1, d.zMin), comment: this.showsEdits() } : null,
       cursor: this.pan?.moved && this.pan.key === key ? "grabbing" : "grab",
     };
   }
@@ -2309,17 +2348,29 @@ export class Editor {
     return i === undefined || !d?.frameW || this.sums.length !== this.blocks.length + 1 ? FRAME.tools.top : toolsTop(d.frameH, this.frameTop(i, d));
   }
 
-  // The page moving under a resting pointer can change which frame it is over, or where that frame's − % + group must
-  // sit to stay on the page.
+  // The page moving under a resting pointer can change which frame, code block or table it is over, or where that
+  // frame's − % + group must sit to stay on the page. The blocks whose controls come, go or move draw again.
   updateHover(cx) {
-    const key = (this.pointer && this.frameAt(this.pointer)?.block.key) ?? null, top = key ? this.toolsTopOf(key) : null;
-    if (key === this.hoverFrame && top === this.hoverTop) return;
-    const old = this.hoverFrame;
-    this.hoverFrame = key; this.hoverTop = top;
-    this.notifyFrames(old === key ? [key] : [old, key], cx);
+    const p = this.pointer, frame = (p && this.frameAt(p)?.block.key) ?? null, top = frame ? this.toolsTopOf(frame) : null;
+    const box = p && !frame ? this.boxAt(p) : null;
+    if (frame === this.hoverFrame && top === this.hoverTop && box === this.hoverBox) return;
+    const was = [this.hoverFrame, this.hoverBox];
+    this.hoverFrame = frame; this.hoverTop = top; this.hoverBox = box;
+    this.notifyBlocks([...new Set([...was, frame, box])], cx);
   }
 
-  notifyFrames(keys, cx) {
+  // The code block or table whose box holds viewport point p, a diagram's source being edited counting as code; null
+  // where no Comment button would show.
+  boxAt(p) {
+    const blocks = this.blocks, n = blocks.length, y = p.y + this.offset - COLUMN.padTop;
+    if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n] || !this.showsEdits()) return null;
+    const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
+    if (!d || !(d.strip || d.kind === "table") || y < this.sums[i] + d.space) return null;
+    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin);
+    return x >= b.depth * INDENT && x < this.textWidth() ? b.key : null;
+  }
+
+  notifyBlocks(keys, cx) {
     if (!cx || !keys.some(Boolean)) return;
     if (this.inline) return cx.notify();
     for (const key of keys) {
@@ -2334,7 +2385,7 @@ export class Editor {
     const next = clampView(boxOf(d), natOf(d), v);
     if (next.z === now.z && next.x === now.x && next.y === now.y) return false;
     this.frames.set(key, next);
-    this.notifyFrames([key], cx);
+    this.notifyBlocks([key], cx);
     if (next.z !== now.z) this.zoomedNow(key, cx);
     return true;
   }
@@ -2346,21 +2397,22 @@ export class Editor {
     if (first && Math.hypot(dx, dy) <= CLICK_SLOP) return;
     pan.moved = true;
     const v = this.viewOf(pan.key);
-    if (!(v && this.setView(pan.key, { ...v, x: pan.x0 + dx, y: pan.y0 + dy }, cx)) && first) this.notifyFrames([pan.key], cx);
+    if (!(v && this.setView(pan.key, { ...v, x: pan.x0 + dx, y: pan.y0 + dy }, cx)) && first) this.notifyBlocks([pan.key], cx);
   }
 
   endPan(cx) {
     const pan = this.pan;
     this.pan = null;
-    if (pan?.moved) this.notifyFrames([pan.key], cx);
+    if (pan?.moved) this.notifyBlocks([pan.key], cx);
     return Boolean(pan?.moved);
   }
 
   toolClick(key, tool, cx) {
+    if (tool === "comment") return this.commentPress(key, cx);
     const d = this.data.get(key), v = this.viewOf(key);
     if (!v) return;
     if (tool === "pct") {
-      if (this.frames.delete(key)) this.notifyFrames([key], cx);
+      if (this.frames.delete(key)) this.notifyBlocks([key], cx);
       return;
     }
     const z1 = zoomStep(v.z, tool === "in" ? 1 : -1, d.z0, d.zMin);
@@ -2453,8 +2505,14 @@ export class Editor {
     this.selKeys = this.keysIn(range);
   }
 
+  // Herdr writes Cmd+Alt+M `alt-cmd-m`: it is told by its key and modifiers.
   selectionKey(e, cx) {
     const k = e.keystroke, m = e.modifiers ?? {};
+    if (e.key === "m" && m.platform && m.alt && !m.control && !m.shift) {
+      cx.stop_propagation();
+      if (this.sel.from === this.sel.to) this.openBlockAdd(this.sel.from, cx);
+      return true;
+    }
     if (k === "cmd-c" || k === "cmd-x") {
       cx.stop_propagation();
       this.copySel(cx);
@@ -2490,9 +2548,10 @@ export class Editor {
   }
 
   // The block under a viewport point and what on it: a diagram's frame (also where it reaches into the margins), a cell
-  // of its − % + group, a picture block (`item` the picture under the point, or -1), a code block's language chip, a
-  // checkbox, a body, the space below the last block ("end"), or a margin outside every block ("outside"). x and y are
-  // relative to the block's root, fx and fy to the frame. A page with no blocks is all "end".
+  // of its − % + group or its Comment button, a picture block (`item` the picture under the point, or -1), a code
+  // block's or table's Comment button, a code block's language chip, a checkbox, a body, the space below the last block
+  // ("end"), or a margin outside every block ("outside"). x and y are relative to the block's root, fx and fy to the
+  // frame. A page with no blocks is all "end".
   hit(p) {
     const blocks = this.blocks, n = blocks.length;
     if (this.sums.length !== n + 1) return null;
@@ -2501,7 +2560,7 @@ export class Editor {
     if (counted) return { block: counted, on: "notes" };
     const f = this.frameAt(p);
     if (f) {
-      const tool = this.toolsShown(f.block.key) ? frameTool(f.fx, f.fy, f.d.frameW, this.toolsTopOf(f.block.key)) : null;
+      const tool = this.toolsShown(f.block.key) ? frameTool(f.fx, f.fy, f.d.frameW, this.toolsTopOf(f.block.key), this.showsEdits()) : null;
       return { block: f.block, on: tool ? "tool" : "frame", tool, fx: f.fx, fy: f.fy };
     }
     if (x < 0 || x >= this.textWidth()) return { on: "outside" };
@@ -2511,6 +2570,8 @@ export class Editor {
     const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
     const inX = x - b.depth * INDENT, inY = y - this.sums[i] - d.space;
     if (d.look === "picture" && d.mode === "rendered") return { block: b, on: "picture", item: this.pictureAt(d, inX, inY), x, y: y - this.sums[i] };
+    const button = this.blockButtonIn(d);
+    if (button && inBox(button, x, y - this.sums[i])) return { block: b, on: "comment" };
     if (d.chip && this.editable() && inBox(this.chipIn(d), x, y - this.sums[i])) return { block: b, on: "chip" };
     const on = d.marker === "task" && inX >= 0 && inX < MARKER_W && inY >= 0 && inY < d.row ? "task" : "block";
     return { block: b, on, x, y: y - this.sums[i] };
@@ -4093,7 +4154,7 @@ export class Editor {
       return;
     }
     this.release();
-    this.picked = null; this.blockNote = null;
+    this.picked = null; this.blockNote = null; this.blockAdd = null;
     this.setText(text, cx, false);
     if (u.opensNothing) this.handle.focus();
     else this.openAt(u.caret, cx, null, u.select);
@@ -4605,9 +4666,11 @@ export class Editor {
   }
 
   // Cmd+Alt+M or the bar's Comment button: a comment on the selection of a written text block, or at its caret, unless
-  // it would land where a comment can't be.
+  // it would land where a comment can't be; in a code block, diagram or table, a comment on the block.
   openNote(cx) {
-    const b = this.pending ? null : this.blockByKey(this.activeKey), r = b && isText(b) ? this.caretNow() : null;
+    const b = this.pending ? null : this.blockByKey(this.activeKey);
+    if (b && ownsNotes(b)) return this.openBlockAdd(b.key, cx);
+    const r = b && isText(b) ? this.caretNow() : null;
     if (!r) return;
     const why = commentable(this.seen, r);
     if (why) return notify({ title: COMMENT_REFUSED[why], level: "info" });
@@ -4644,6 +4707,12 @@ export class Editor {
     cx.notify();
   }
 
+  // Enter in the comment's field: a block's new comment, a block's comment being edited, or a text comment.
+  submitNote(cx) {
+    if (this.blockAddOpen()) return this.saveBlockAdd(cx);
+    return this.blockNoteEditing() ? this.saveBlockNote(cx) : this.saveNote(cx);
+  }
+
   // Escape in the box: the field gets the keyboard back with the selection it had.
   cancelNote(cx) {
     const n = this.note;
@@ -4662,35 +4731,37 @@ export class Editor {
     cx?.notify();
   }
 
-  // Drawn by the root where the bar goes, or over the top of a block whose comment it edits. Presses on it go no
-  // further, so the field under it keeps its selection.
+  // Drawn by the root where the bar goes, or over the top of a block whose comment it writes or edits. Presses on it go
+  // no further, so the field under it keeps its selection.
   noteBox(t) {
-    const block = this.blockNoteEditing() && !this.margin ? this.blockBoxPlace() : null;
+    const adding = this.blockAddNow(), blockKey = this.margin ? null : adding?.key ?? (this.blockNoteEditing() ? this.blockNote.key : null);
+    const block = blockKey ? this.blockBoxPlace(blockKey) : null;
     const place = block ?? (this.noteOpen() && !this.margin ? this.placeBar(this.note.range, NOTE_BOX) : null);
     if (!place) return null;
+    const out = cx => (adding ? this.closeBlockAddOut(cx) : block ? this.closeBlockEdit(cx) : this.closeNote(cx));
     return div().id("md-note").absolute().left(place.left).top(place.top).w(place.w).min_h(place.h).p(NOTE_BOX.pad).flex()
       .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().key_context(NOTE)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_move((_e, cx) => cx.stop_propagation())
-      .on_mouse_down_out((_e, cx) => (block ? this.closeBlockEdit(cx) : this.closeNote(cx)))
+      .on_mouse_down_out((_e, cx) => out(cx))
       .child(Textarea.new(this.noteField).flex_1().text_size(13).text_color(t.foreground));
   }
 
-  // The box editing a block's comment where no margin shows its card: over the block's top edge, under it when there is
-  // no room above, at the block's left; null while that edge is out of the pane.
-  blockBoxPlace() {
-    const key = this.blockNote.key, i = this.at.get(key), d = this.data.get(key);
+  // The box writing or editing block `key`'s comment where no margin shows its card: over the block's top edge, under
+  // it when there is no room above, at the block's left; null while that edge is out of the pane.
+  blockBoxPlace(key) {
+    const i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
     const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
     const top = COLUMN.padTop + this.sums[i] + d.space - this.offset;
     return popoverPlace({ firstTop: top, lastTop: top, rowH: 0, size: NOTE_BOX, viewW, viewH, x: columnLeft(viewW, this.margin) + d.depth * INDENT });
   }
 
-  // A box over the page that holds the keyboard: the comment box (a block's comment being edited included), the link's
-  // address box, a picture's box or the language menu's search box.
+  // A box over the page that holds the keyboard: the comment box (a block's comment being written or edited included),
+  // the link's address box, a picture's box or the language menu's search box.
   boxOpen() {
-    return this.noteOpen() || this.blockNoteEditing() || this.linkBoxOpen() || this.pictureBoxOpen() || this.imageBoxOpen() || this.langOpen();
+    return this.noteOpen() || this.blockNoteEditing() || this.blockAddOpen() || this.linkBoxOpen() || this.pictureBoxOpen() || this.imageBoxOpen() || this.langOpen();
   }
 
   // A float at `place` in the link popover's look. Presses on it go no further, so what is under it keeps the keyboard
@@ -5551,9 +5622,11 @@ export class Editor {
   }
 
   // The comment that is active in the edited block: picked by a press on its text or its card, or being edited; a
-  // comment being written is `adding`. Else a code block's, diagram's or table's active comment (`block`, its `index`).
-  // -> { key, start, editing, adding, id } or null.
+  // comment being written is `adding`. Else a code block's, diagram's or table's comment being written, or its active
+  // comment (`block`, its `index`). -> { key, start, editing, adding, id } or null.
   activeComment() {
+    const a = this.blockAddNow();
+    if (a) return { key: a.key, index: -1, block: true, editing: true, adding: true, id: `add:${a.key}` };
     const n = this.blockNoteNow();
     if (n) return { key: n.key, index: n.index, block: true, editing: n.editing, adding: false, id: `block:${n.key}:${n.index}:${n.editing}` };
     if (!this.activeKey || this.pending) return null;
@@ -5580,7 +5653,8 @@ export class Editor {
     this.commentCount();
     const list = [];
     for (const key of this.mountedKeys()) this.blockCards(key, focus, list);
-    if (focus?.adding) list.push(this.newCard());
+    const written = !focus?.adding ? null : focus.block ? this.newBlockCard(focus.key) : this.newCard();
+    if (written) list.push(written);
     list.sort((a, b) => a.i - b.i || a.at - b.at);
     const tops = stackCards(list);
     for (let k = 0; k < list.length; k++) list[k].top = tops[k];
@@ -5625,6 +5699,14 @@ export class Editor {
     return { id, key: this.activeKey, index: -1, c: null, when: null, text: "", i, at, want: this.rowTop(i, this.blocks[i], null, at), h: this.raisedH(id, look.h), active: true, editing: true };
   }
 
+  // The card of a comment being written on code block, diagram or table `key`: level with its top, after its cards.
+  newBlockCard(key) {
+    const i = this.at.get(key), d = this.data.get(key);
+    if (i === undefined || !d) return null;
+    const look = cardLook({ text: this.noteField.value(), header: true, full: true }), at = this.shownNotes(key)?.points.length ?? 0;
+    return { id: NEW_CARD, key, index: -1, c: null, when: null, text: "", i, at, want: this.sums[i] + d.space, h: this.raisedH(NEW_CARD, look.h), active: true, editing: true, block: true, adding: true };
+  }
+
   raisedH(id, estimate) {
     return this.raised?.id === id ? this.raised.h : estimate;
   }
@@ -5666,7 +5748,7 @@ export class Editor {
       .rounded(8).border_1().bg(t.raised).border_color(e.active ? deepHighlightColor(t) : t.border).cursor_pointer()
       .when(e.active, el => el.shadow_lg().on_size_change((size, cx) => this.cardSized(e.id, size, cx)))
       .when(!e.active, el => el.h(e.h).overflow_hidden())
-      .when(e.editing, el => el.on_mouse_down_out((_e, cx) => (e.block ? this.closeBlockEdit(cx) : this.closeNote(cx))))
+      .when(e.editing, el => el.on_mouse_down_out((_e, cx) => this.cardOut(e, cx)))
       .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.cardDown(e, false, cx); })
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .children(this.cardBody(e, writable, now, t));
@@ -5706,12 +5788,21 @@ export class Editor {
     cx.notify();
   }
 
-  // A press on a card makes its comment active, as a press on its text does; one on the card's text edits it there. A
-  // block's card edits on a press on its text once it is active.
+  // A press on a card makes its comment active, as a press on its text does; one on the card's text edits it there.
   cardDown(e, onText, cx) {
     if (!this.editable() || !e.c || this.activeComment()?.editing) return;
-    if (e.block) return onText && e.active ? this.startBlockEdit(cx) : this.pickBlockNote(e.key, e.index, cx);
+    if (e.block) {
+      if (!e.active) this.pickBlockNote(e.key, e.index, cx);
+      if (onText) this.startBlockEdit(cx);
+      return;
+    }
     if (this.pickComment(e.key, e.index, cx) && onText) this.editPicked(cx);
+  }
+
+  // A press outside a card being written or edited closes it, writing nothing.
+  cardOut(e, cx) {
+    if (e.adding && e.block) return this.closeBlockAddOut(cx);
+    return e.block ? this.closeBlockEdit(cx) : this.closeNote(cx);
   }
 
   // Comment `index` of block `key` picked: the block is the edited one, all of the comment selected in its field, which
@@ -5806,7 +5897,7 @@ export class Editor {
     if (!oneLine(text)) return this.resolveBlockNoteAt(n.key, n.index, cx);
     this.commit(cx);
     const b = this.blockByKey(n.key), s = b && editBlockNote(this.doc, b, n.index, text);
-    this.setBlockNote({ ...n, editing: false }, cx);
+    this.setBlockNote(this.editedBlockNote(n), cx);
     if (s) this.change(s, cx, { opensNothing: true });
     this.giveBackKeyboard();
   }
@@ -5818,7 +5909,109 @@ export class Editor {
 
   closeBlockEdit(cx) {
     const n = this.blockNote;
-    if (n?.editing) this.setBlockNote({ ...n, editing: false }, cx);
+    if (n?.editing) this.setBlockNote(this.editedBlockNote(n), cx);
+  }
+
+  // A block's comment once its edit is closed: active again on its card, or ended with the floating box that a pane
+  // without a margin edits it in, as no card would say which comment the frame marks.
+  editedBlockNote(n) {
+    return this.margin ? { ...n, editing: false } : null;
+  }
+
+  // A press on block `key`'s Comment button, which goes no further: as a press on the page does, it lets a block
+  // selection go.
+  commentPress(key, cx) {
+    this.setSel(null, cx);
+    this.openBlockAdd(key, cx);
+  }
+
+  // A new comment on code block, diagram or table `key`: written in a card level with the block, or in the box over it
+  // where there is no margin, the block framed in the highlight colour. Every other comment box, card and menu closes,
+  // writing nothing; the editing of another block ends, the block's own goes on.
+  openBlockAdd(key, cx) {
+    const target = this.blockByKey(key);
+    if (!this.editable() || !target || !ownsNotes(target)) return;
+    const edited = key === this.activeKey;
+    if (edited) this.commit(cx);
+    else if (this.activeKey) this.deactivate(cx);
+    const b = this.blockByKey(edited ? this.activeKey : key);
+    if (!b || !ownsNotes(b)) return;
+    const was = this.blockAdd?.key;
+    this.closeCard(cx);
+    this.endBlockNote(cx);
+    this.unpick(cx);
+    this.dropLanguages(cx);
+    this.blockAdd = { key: b.key, act: this.act, caret: edited ? this.caretNow() : null };
+    this.guard(() => {
+      this.noteField.set_value("");
+      this.noteField.set_selected_range({ start: 0, end: 0 });
+    });
+    this.noteField.focus();
+    this.revealBlockAdd(cx);
+    this.redraw([...new Set([was, b.key])].filter(Boolean), cx);
+    cx.notify();
+  }
+
+  // The page scrolls the least that shows where the new comment is written: its card, else the block's top edge,
+  // as the box is not drawn while that edge is off the pane.
+  revealBlockAdd(cx) {
+    const a = this.blockAddNow(), i = a ? this.at.get(a.key) : undefined, d = a && this.data.get(a.key);
+    if (i === undefined || !d || !this.viewport || this.sums.length !== this.blocks.length + 1) return;
+    const card = this.margin ? this.cardList().find(e => e.id === NEW_CARD) : null;
+    const y = COLUMN.padTop + (card ? card.top : this.sums[i] + d.space), rowPx = card ? Math.min(card.h, this.viewH() / 2) : 0;
+    const next = keepInView({ offset: this.offset, viewportH: this.viewH(), y, rowPx, contentH: this.contentH() });
+    if (next !== this.offset) this.scrollTo(next, cx);
+  }
+
+  blockAddNow() {
+    const a = this.blockAdd;
+    return a && a.act === this.act && this.editable() && this.blockByKey(a.key) ? a : null;
+  }
+
+  blockAddOpen() {
+    return Boolean(this.blockAddNow());
+  }
+
+  // Enter in the new comment's card or box: the comment stamped with the time, under its block, as one entry of the
+  // history whose undo opens nothing; an empty one writes nothing.
+  saveBlockAdd(cx) {
+    const a = this.blockAddNow(), text = this.noteField.value();
+    if (!a) return this.cancelBlockAdd(cx);
+    this.commit(cx);
+    const b = this.blockByKey(a.key), s = b && addBlockNote(this.doc, b, text, new Date());
+    this.closeBlockAdd(cx);
+    if (s) this.change(s, cx, { opensNothing: true });
+    this.checkMargin(cx);
+    this.backFromBlockAdd(a, cx);
+  }
+
+  cancelBlockAdd(cx) {
+    const a = this.blockAdd;
+    this.closeBlockAdd(cx);
+    if (a) this.backFromBlockAdd(a, cx);
+  }
+
+  closeBlockAdd(cx) {
+    const a = this.blockAdd;
+    if (!a) return;
+    this.blockAdd = null;
+    this.redraw([a.key], cx);
+    cx?.notify();
+  }
+
+  // A press outside the new comment's card or box: what it lands on may take the keyboard after.
+  closeBlockAddOut(cx) {
+    this.closeBlockAdd(cx);
+    this.giveBackKeyboard();
+  }
+
+  // The keyboard goes back where the new comment took it from: the edited block's field with its caret, which the page
+  // scrolls back to when showing the comment took it off the pane, else the page.
+  backFromBlockAdd(a, cx) {
+    if (!a.caret || a.key !== this.activeKey) return this.giveBackKeyboard();
+    this.selectField(a.caret);
+    this.focusField(cx);
+    this.revealCaret(cx);
   }
 
   resolveBlockNoteAt(key, index, cx) {

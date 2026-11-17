@@ -5,7 +5,7 @@ import { v_flex, h_flex, TextView } from "gpui-base";
 import { home, appHome, readTextFile, exec, theme } from "herdr";
 import * as fs from "fs/promises";
 import { mermaidConfig, diagramKey, sharpName, hash, DIAGRAM_COLORS as Z } from "./lib.js";
-import { FRAME } from "./geometry.js";
+import { FRAME, TOOLS_W } from "./geometry.js";
 
 const WAIT = 400; // ms: diagrams that show up together go out together
 const SHARP_BACKGROUND = "transparent";
@@ -264,8 +264,9 @@ const fence = text => "`".repeat((text.match(/`+/g) ?? []).reduce((n, run) => Ma
 const ICON = name => `mods/herdr-inline-markdown/${name}.svg`;
 
 // `d` is what get() answered; `frame` is what its frame draws, or null when it draws none:
-// { key, w, h, ml, natW, natH, image, dim, selected, view: { z, x, y, sharp, tools, cursor } }. `image` is the picture
-// that is ready, or the last one (`dim`) while an edited diagram is drawn again or when it cannot be drawn.
+// { key, w, h, ml, natW, natH, image, dim, selected, view: { z, x, y, sharp, tools, cursor }, comment }. `image` is the
+// picture that is ready, or the last one (`dim`) while an edited diagram is drawn again or when it cannot be drawn.
+// `comment` ({ tip, press }), when given, is the Comment button drawn beside the − % + group.
 export function diagramBlock({ id, source, d, frame, t, mono }) {
   const box = () => v_flex().w_full().gap(6).p(12).rounded(8).bg(t.surface).border_1().border_color(t.border);
   const title = (text, color) => div().text_size(12.5).font_medium().text_color(color).child(text);
@@ -320,5 +321,17 @@ function frameElement(f, t) {
       .overflow_hidden().rounded(7).border_1().border_color(Z.edge).bg(Z.node).text_size(12).text_color(Z.text)
       .child(cell("out", T.out, v.tools.out, svg(ICON("minus")).size(13)))
       .child(cell("pct", T.pct, true, `${v.tools.pct}%`))
-      .child(cell("in", T.in, v.tools.in, svg(ICON("plus")).size(13)))));
+      .child(cell("in", T.in, v.tools.in, svg(ICON("plus")).size(13)))))
+    .when(Boolean(v.tools && f.comment), el => el.child(commentTool(f, t)));
+}
+
+// In the − % + group's look, left of it. Its press goes no further, so it never pans the frame.
+function commentTool(f, t) {
+  const T = FRAME.tools;
+  return h_flex().id(`md-frame-comment-${f.key}`).absolute().top(f.view.tools.top).right(T.right + TOOLS_W + T.gap).w(T.comment).h(T.h)
+    .items_center().justify_center().rounded(7).border_1().border_color(Z.edge).bg(Z.node).text_color(Z.text)
+    .cursor_pointer().hover(s => s.bg(t.hover)).tooltip(f.comment.tip)
+    .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); f.comment.press(cx); })
+    .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+    .child(svg(ICON("message-square-plus")).size(13));
 }

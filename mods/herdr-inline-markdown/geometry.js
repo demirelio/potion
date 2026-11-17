@@ -277,7 +277,7 @@ export const pageStep = viewportH => Math.max(0, viewportH - PAGE_KEEP);
 export const FRAME = {
   margin: 32, pad: 12, minH: 120, maxShare: 0.7, edgeV: 24, readable: 0.75, zMax: 2, zoomPerPx: 0.005, settleMs: 300,
   dpr: 2, sharpBudget: 40e6, maxPx: 16000,
-  tools: { top: 8, right: 8, h: 26, out: 26, pct: 48, in: 26 },
+  tools: { top: 8, right: 8, h: 26, out: 26, pct: 48, in: 26, comment: 26, gap: 6 },
 };
 export const WHEEL = { gapMs: 150, decidePx: 8, sideways: 2 };
 const ZOOM_STEPS = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2];
@@ -354,10 +354,16 @@ export const canZoom = (z, dir, zMin) => (dir < 0 ? z > zMin + SAME_ZOOM : z < F
 // right, kept below the top of the page while the frame's top is above it.
 export const toolsTop = (h, screenTop) => clamp(Math.max(FRAME.tools.top, FRAME.edgeV - screenTop), FRAME.tools.top, h - FRAME.tools.h - FRAME.tools.top);
 
-// -> "out", "pct", "in" or null. The group's 1 px border counts with the cell beside it.
-export function frameTool(fx, fy, w, top) {
-  const T = FRAME.tools, wide = T.out + T.pct + T.in + 2, x = fx - (w - T.right - wide);
-  if (fy < top || fy >= top + T.h || x < 0 || x >= wide) return null;
+// The − % + group's width, its 1 px border included.
+export const TOOLS_W = FRAME.tools.out + FRAME.tools.pct + FRAME.tools.in + 2;
+
+// -> "out", "pct", "in", "comment" (the Comment button `gap` left of the group, while `comment` says it is drawn) or
+// null. The group's 1 px border counts with the cell beside it.
+export function frameTool(fx, fy, w, top, comment = false) {
+  const T = FRAME.tools, x = fx - (w - T.right - TOOLS_W);
+  if (fy < top || fy >= top + T.h) return null;
+  if (comment && x >= -T.gap - T.comment && x < -T.gap) return "comment";
+  if (x < 0 || x >= TOOLS_W) return null;
   return x < T.out + 1 ? "out" : x < T.out + 1 + T.pct ? "pct" : "in";
 }
 
@@ -468,6 +474,10 @@ export function barMenuPlace({ bar, button, h, viewW, viewH }) {
 export const CODE_HEAD = 28;
 export const CHIP = { h: 22, padX: 7, charW: 6.4, gap: 3, chevron: 12 };
 export const chipW = (name, chevron) => Math.ceil(2 * CHIP.padX + [...name].length * CHIP.charW + (chevron ? CHIP.gap + CHIP.chevron : 0));
+
+// A code block's or table's Comment button: a square as tall as the chip, `gap` left of the chip (or of the comment
+// count beside it), `inset` from a table box's top right corner.
+export const BLOCK_BUTTON = { size: CHIP.h, gap: 4, inset: 6 };
 
 // The language menu: a search box `searchH` tall over rows in the bar menus' look, `gap` from its chip.
 export const LANG_MENU = { searchH: 32, gap: 4 };

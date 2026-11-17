@@ -6,7 +6,7 @@ import { diagramBlock } from "./diagrams.js";
 import { pictureBlock } from "./images.js";
 import { RAW, TEXT } from "./keys.js";
 import { showComments } from "./comments.js";
-import { deepHighlightColor, textColor } from "./colors.js";
+import { deepHighlightColor, highlightColor, textColor } from "./colors.js";
 import { parseInline } from "./inline.js";
 import { CHIP, CODE_HEAD, NOTES } from "./geometry.js";
 
@@ -25,6 +25,8 @@ const CHECK = "mods/herdr-inline-markdown/check.svg";
 const COMMENTS_ICON = "mods/herdr-inline-markdown/message-square.svg";
 const PICTURE_ICON = "mods/herdr-inline-markdown/image.svg";
 const CHEVRON = "mods/herdr-inline-markdown/chevron-down.svg";
+const COMMENT_ADD_ICON = "mods/herdr-inline-markdown/message-square-plus.svg";
+const COMMENT_TIP = "Comment (Cmd+Alt+M)";
 const BOLD = 700;
 const CODE_SCALE = 0.87;
 const ICON_SCALE = 0.9;
@@ -43,6 +45,9 @@ export const STYLES = {
   cell: { size: 14, weight: 400, lh: 1.5 },
 };
 export const CALIBRATED = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "mono", "small"];
+
+// A code block's, diagram's or table's frame: while one of its comments is active, or while one is written on it.
+export const FRAMED = { active: "active", adding: "adding" };
 
 const RAW_KINDS = new Set(["code", "mermaid", "table", "html", "frontmatter", "hr", "definition"]);
 export const isRaw = kind => RAW_KINDS.has(kind);
@@ -173,7 +178,8 @@ function rendered(owner, d, t) {
   if (d.look === "front") return frontBox(t, monoLines(d.text, st, color, mono));
   if (d.look === "diagram") {
     const view = d.frameW ? owner.frameView(d.key) : null;
-    const frame = view && { key: d.key, w: d.frameW, h: d.frameH, ml: d.frameMl, natW: d.natW, natH: d.natH, image: d.imgKey, dim: d.imgDim, selected: d.selected, view };
+    const comment = view?.tools?.comment ? { tip: COMMENT_TIP, press: cx => owner.commentPress(d.key, cx) } : null;
+    const frame = view && { key: d.key, w: d.frameW, h: d.frameH, ml: d.frameMl, natW: d.natW, natH: d.natH, image: d.imgKey, dim: d.imgDim, selected: d.selected, view, comment };
     return diagramBlock({ id: `md-diagram-${d.key}`, source: d.text, d: owner.shown.get(d.key) ?? { state: "pending" }, frame, t, mono });
   }
   if (d.look === "picture") return pictureBlock({ id: `md-pictures-${d.key}`, ...owner.pictureOf(d.key, d.pictureW), selected: d.selected, picked: d.picked, t });
@@ -255,6 +261,7 @@ export function renderBlock(owner, d) {
   }
   // A diagram's frame and each picture draw their own selection tint: a picture can be opaque.
   const shown = d.mode === "rendered", diagram = shown && d.look === "diagram", picture = shown && d.look === "picture";
+  const button = owner.blockButtonIn(d);
   return div().id(`md-block-${d.key}`).w_full().pt(d.space).pl(d.depth * INDENT)
     .when(diagram, el => el.cursor_pointer())
     .when(picture, el => el.cursor_default())
@@ -262,15 +269,28 @@ export function renderBlock(owner, d) {
     .when(d.selected && !d.frameW && !picture, el => el.bg(t.selection).rounded(4))
     .on_size_change((size, cx) => owner.blockSized(d.key, size, cx))
     .child(body)
-    .when(d.framed, el => el.relative().child(commentFrame(d, t)))
+    .when(Boolean(d.framed), el => el.relative().child(commentFrame(d, t)))
+    .when(Boolean(button), el => el.relative().child(blockButton(owner, d, button, t)))
     .when(d.notes > 0, el => el.relative().child(commentCount(d, t)));
 }
 
-// The frame of a code block, diagram or table whose comment is active: an overlay on its box, or on its diagram's
-// frame, so that nothing under it moves.
+// The frame of a code block, diagram or table whose comment is active (the deeper ochre) or being written (the
+// highlight colour): an overlay on its box, or on its diagram's frame, so that nothing under it moves.
 function commentFrame(d, t) {
-  const frame = div().id(`md-comment-frame-${d.key}`).absolute().rounded(8).border_2().border_color(deepHighlightColor(t));
+  const color = d.framed === FRAMED.adding ? highlightColor(t) : deepHighlightColor(t);
+  const frame = div().id(`md-comment-frame-${d.key}`).absolute().rounded(8).border_2().border_color(color);
   return d.frameW ? frame.left(d.depth * INDENT + d.frameMl).bottom(0).w(d.frameW).h(d.frameH) : frame.left(d.depth * INDENT).right(0).top(d.space).bottom(0);
+}
+
+// A code block's or table's Comment button at `box` (the editor's blockButtonIn). It takes its own press, which goes
+// no further: a table's lies over its source's field while that is edited.
+function blockButton(owner, d, box, t) {
+  return h_flex().id(`md-block-comment-${d.key}`).absolute().left(box.x).top(box.y).w(box.w).h(box.h).items_center().justify_center()
+    .rounded(6).cursor_pointer().tooltip(COMMENT_TIP).hover(s => s.bg(t.hover))
+    .when(d.kind === "table", el => el.bg(t.popover).border_1().border_color(t.border).shadow_sm())
+    .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); owner.commentPress(d.key, cx); })
+    .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+    .child(svg(COMMENT_ADD_ICON).size(14).flex_none().text_color(t.dim));
 }
 
 // The editor takes a press on it from the page, as it does a task box's.

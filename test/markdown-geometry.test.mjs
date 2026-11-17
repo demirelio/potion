@@ -301,6 +301,15 @@ test("the − % + group: each cell by geometry, nothing around it; it stays on t
   assert.equal(toolsTop(952, -2000), 952 - 34, "never below the frame");
 });
 
+test("a diagram's Comment button: 26 px square, 6 px left of the − % + group at its top, a tool only where it is drawn", () => {
+  const w = 1000, top = 8, group = w - 8 - 102, left = group - 6 - 26;
+  assert.deepEqual([FRAME.tools.comment, FRAME.tools.gap], [26, 6]);
+  for (const [x, y] of [[left, top], [left + 25, top + 25], [left + 13, top + 13]]) assert.equal(frameTool(x, y, w, top, true), "comment", `${x},${y}`);
+  for (const [x, y] of [[left - 1, top + 10], [left + 26, top + 10], [group - 1, top + 10], [left + 5, top - 1], [left + 5, top + 26]]) assert.equal(frameTool(x, y, w, top, true), null, `${x},${y}`);
+  assert.equal(frameTool(left + 5, top + 10, w, top), null, "not drawn: no tool");
+  assert.equal(frameTool(group + 5, top + 10, w, top, true), "out", "the group's cells as before");
+});
+
 test("sharpScale: typical diagrams get 4x, the stress diagram 2.5x inside the 40 MP budget; a huge one nothing above its base; a bigger app zoom asks for more", () => {
   assert.equal(sharpScale({ w: 552, h: 58 }, 1), 4);
   assert.equal(sharpScale({ w: 800, h: 400 }, 1), 4);

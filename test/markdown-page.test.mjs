@@ -12,6 +12,8 @@ const { BOX, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, ne
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
 const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
 const { piecesOf } = await import("../mods/herdr-inline-markdown/tokens.js");
+const { highlightColor } = await import("../mods/herdr-inline-markdown/colors.js");
+const { theme } = await import("./mocks/herdr.mjs");
 
 beforeEach(() => reset());
 
@@ -33,6 +35,7 @@ function drawn(text, i, more = {}, also = {}) {
     remote: false, shown: new Map(), good: new Map(), links: [], sizes: [], layouts: new Map(),
     link(url) { this.links.push(url); }, blockSized(key, size) { this.sizes.push([key, size]); },
     pictureOf(key, width) { this.asked = [key, width]; return this.layouts.get(key) ?? { items: [], boxes: [], height: 0 }; },
+    blockButtonIn: () => null,
     ...also,
   };
   return { d, owner, el: renderBlock(owner, d), b };
@@ -130,6 +133,24 @@ test("a rendered block with comments shows their count right of its first row, i
   assert.ok(el.__node.style.relative, "the block places it");
   const plain = drawn("A plain one\n", 0, { notes: 0, notesX: 0, notesY: 0 });
   assert.equal(all(plain.el, n => /^md-notes-/.test(n.id ?? "")).length, 0, "no comments, no count");
+});
+
+test("a block's Comment button is drawn where the editor places it, a table's raised; its press is the editor's and goes no further", () => {
+  const presses = [], box = { x: 500, y: 19, w: 22, h: 22 };
+  const also = { blockButtonIn: () => box, commentPress(key) { presses.push(key); } };
+  for (const [text, raised] of [["```js\nx\n```\n", false], ["| a |\n|---|\n| 1 |\n", true]]) {
+    const { el, d } = drawn(text, 0, {}, also), button = must(el, `md-block-comment-${d.key}`);
+    assert.deepEqual([button.style.absolute, button.style.left, button.style.top, button.style.w, button.style.h, el.__node.style.relative], [true, 500, 19, 22, 22, true]);
+    assert.deepEqual([button.style.tooltip, all(button, n => n.kind === "svg").map(n => n.path)], ["Comment (Cmd+Alt+M)", ["mods/herdr-inline-markdown/message-square-plus.svg"]]);
+    assert.deepEqual([button.style.bg, button.style.shadow_sm], raised ? ["popover", true] : [undefined, undefined]);
+    const cx = makeCx();
+    fire(button, "on_mouse_down:left", {}, cx);
+    fire(button, "on_mouse_up:left", {}, cx);
+    assert.deepEqual([presses.at(-1), cx.stopped], [d.key, 2]);
+  }
+  const { el, d } = drawn("```js\nx\n```\n", 0, { framed: "adding" });
+  assert.equal(must(el, `md-comment-frame-${d.key}`).style.border_color, highlightColor(theme()), "the frame of a comment being written");
+  assert.equal(find(el, `md-block-comment-${d.key}`), null, "no button where the editor places none");
 });
 
 test("the nested views read their editor through `owners`; once it is gone they draw a placeholder", () => {
