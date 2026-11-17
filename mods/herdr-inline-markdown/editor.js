@@ -7,7 +7,7 @@ import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, m
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
 import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, GRID, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, gridAt, gridRowTop, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, tablePress, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { drawsGrid, gridOf } from "./grid.js";
-import { cellText, cellWritten, rowAt, tableOf, writeCell } from "./tables.js";
+import { cellText, cellWritten, insertRow, rowAt, tableOf, writeCell } from "./tables.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -284,6 +284,11 @@ function caretOf(state) {
 }
 const docRange = (f, r) => ({ start: fieldToDoc(f, r.start), end: fieldToDoc(f, r.end) });
 const asRange = caret => (typeof caret === "number" ? { start: caret, end: caret } : caret ?? { start: 0, end: 0 });
+// The next cell (dir > 0) or the previous one in table t's reading order, row by row; null past either end.
+function cellBeside(t, { r, c }, dir) {
+  const k = r * t.columns + c + dir;
+  return k < 0 || k >= t.rows.length * t.columns ? null : { r: Math.floor(k / t.columns), c: k % t.columns };
+}
 const BLANK_ENDS = /^([ \t]*)([\s\S]*?)[ \t]*$/;
 // Cell field map f (cellMap) takes `shown` as its value when that is f's text with blanks at its ends the file holds
 // there, which typing wrote and a parse trims away, or blanks alone in an empty cell.
@@ -3414,7 +3419,8 @@ export class Editor {
   }
 
   // An empty block the text does not have yet becomes the one being edited: `base` and `steps` write it (see
-  // PLACEHOLDER), `origin` ({ key, caret }) is where it was opened from by a key, which Cmd+Z goes back to.
+  // PLACEHOLDER), `origin` ({ key, caret, cell }) is where it was opened from by a key, which Cmd+Z goes back to: the
+  // caret is in the field of `cell` ({ r, c }) when that is set, else of block `key`.
   openPendingWith({ base, steps = [], origin = null, atEnd: end = false }, cx) {
     if (!this.editable()) return false;
     this.leave(cx);
@@ -3505,7 +3511,9 @@ export class Editor {
 
   originDoc(p) {
     const o = p?.origin, b = o && this.blockByKey(o.key);
-    return b ? fieldToDoc(fieldOf(this.doc, b), o.caret.end) : null;
+    if (!b) return null;
+    if (!o.cell) return fieldToDoc(fieldOf(this.doc, b), o.caret.end);
+    return b.kind === "table" && o.cell.r < tableOf(this.doc, b).rows.length ? fieldToDoc(this.cellMap(b, o.cell.r, o.cell.c), o.caret.end) : null;
   }
 
   pendingKey(key, cx) {
@@ -3880,6 +3888,20 @@ export class Editor {
     return at - (text.lastIndexOf("\n", at - 1) + 1);
   }
 
+  // The x of the edited field's offset `at`, from the page column's left edge, where the estimate draws it.
+  caretX(at) {
+    const d = this.data.get(this.activeKey);
+    if (!d) return null;
+    const box = this.editedBox(d);
+    return box.x + this.wrapAt(at, false, box).x;
+  }
+
+  // The column, in characters as drawn, at x (from the page column's left edge) on a row of block b's field.
+  columnAt(b, x) {
+    const d = this.data.get(b.key);
+    return d ? Math.max(0, Math.round((x - this.chromeOf(d, true).x) / this.calOf(d.style).advance)) : null;
+  }
+
   // The index of the block that crossing from block i lands in, rules skipped: below 0 past the first block, the
   // number of blocks past the last.
   crossedTo(i, dir) {
@@ -3889,11 +3911,27 @@ export class Editor {
     return j;
   }
 
-  // The caret leaves the edited block for the previous (dir < 0) or next block, rules skipped. Past the end of a raw
-  // block that is the last one, an empty paragraph opens below it. The caret stays in an edited cell.
-  cross(dir, cx, column = null) {
+  // From the edited field's start (dir < 0) or end to the cell beside it in reading order, else to the block beside.
+  cross(dir, cx) {
     this.syncField(cx);
-    if (this.cell) return;
+    if (!this.cell || !this.crossCell(dir, cx)) this.leaveFor(dir, cx);
+  }
+
+  // Up (dir < 0) or Down from field offset `at` (null when unknown) to the cell above or below, else to the block
+  // above or below: into or out of a table at the same x, between other blocks at the same column.
+  crossLine(dir, at, cx) {
+    this.syncField(cx);
+    const x = at === null ? null : this.caretX(at);
+    if (this.cell) {
+      if (!this.cellAcross(dir, x, cx)) this.leaveFor(dir, cx, null, x);
+      return;
+    }
+    this.leaveFor(dir, cx, at === null ? null : this.columnOf(at), x);
+  }
+
+  // To the previous (dir < 0) or next block, rules skipped. Past the end of a raw block that is the last one, an empty
+  // paragraph opens below it.
+  leaveFor(dir, cx, column = null, x = null) {
     const blocks = this.blocks, i = this.at.get(this.activeKey);
     if (i === undefined) return;
     const j = this.crossedTo(i, dir);
@@ -3902,14 +3940,62 @@ export class Editor {
       if (dir > 0 && i === blocks.length - 1 && isRaw(blocks[i].kind)) this.openPending(cx);
       return;
     }
-    const target = blocks[j];
-    this.activate(target.key, this.entry(target, this.openedValue(target), dir, column), cx);
+    this.arrive(blocks[j], dir, cx, column, x);
+  }
+
+  // Block b opens for a crossing from above (dir > 0) or below, at `column`, else at x (from the page column's left).
+  arrive(b, dir, cx, column = null, x = null) {
+    const d = this.data.get(b.key);
+    if (!d?.grid) return this.activate(b.key, this.entry(b, this.openedValue(b), dir, column ?? (x === null ? null : this.columnAt(b, x))), cx);
+    const { r, c, caret } = this.gridArrival(b, d, dir, x);
+    return this.activate(b.key, caret, cx, { cell: { r, c } });
+  }
+
+  // The cell of grid table b (data d) a crossing from above (dir > 0) or below comes into, and its caret: the header's
+  // or the last row's under x, or with x null the first or the last cell. -> { r, c, caret }
+  gridArrival(b, d, dir, x) {
+    const t = tableOf(this.doc, b), r = dir > 0 ? 0 : t.rows.length - 1;
+    const c = x === null ? (dir > 0 ? 0 : t.columns - 1) : gridAt(this.gridHeights(d), d.grid.widths, x - d.depth * INDENT, 0).column;
+    return { r, c, caret: this.cellCaret(b, d, t, r, c, dir, x) };
+  }
+
+  // The caret in cell (r, c) of grid table b (data d, model t) for a crossing from above (dir > 0) or below: at x,
+  // counted in characters as drawn, when the cell's text draws in one row, else (or with x null) at its start or end.
+  cellCaret(b, d, t, r, c, dir, x) {
+    const value = cellText(this.doc, t, r, c), box = x === null ? null : this.cellBox(d, r, c, this.cellDrawn(b.key, r, c, value));
+    if (box?.rows !== 1) return dir > 0 ? 0 : value.length;
+    const shown = visibleMap(value);
+    return shown[clamp(Math.round((x - box.x) / box.advance), 0, shown.length - 1)];
+  }
+
+  // The text the field of cell (r, c) of table `key` draws for `value`: its layout's, when that was made for it.
+  cellDrawn(key, r, c, value) {
+    const kept = this.cellFields.get(key)?.cells.get(`${r}:${c}`);
+    return kept?.rich && kept.value === value ? kept.rich.drawn : value;
+  }
+
+  // To the end of the cell before the edited one (dir < 0) or the start of the one after. -> false when there is none.
+  crossCell(dir, cx) {
+    const b = this.blockByKey(this.activeKey), t = b && tableOf(this.doc, b), next = t && cellBeside(t, this.cell, dir);
+    if (!next) return false;
+    this.activate(b.key, dir > 0 ? 0 : cellText(this.doc, t, next.r, next.c).length, cx, { cell: next });
+    return true;
+  }
+
+  // To the cell above the edited one (dir < 0) or below it, at x. -> false when there is none.
+  cellAcross(dir, x, cx) {
+    const b = this.blockByKey(this.activeKey), d = b && this.data.get(b.key);
+    if (!d?.grid) return false;
+    const t = tableOf(this.doc, b), r = this.cell.r + dir, c = this.cell.c;
+    if (r < 0 || r >= t.rows.length) return false;
+    this.activate(b.key, this.cellCaret(b, d, t, r, c, dir, x), cx, { cell: { r, c } });
+    return true;
   }
 
   // Up or Down in a one-row field, which the table takes from it: the caret crosses at once, so a held key glides.
   crossRow(dir, cx) {
     const c = caretOf(this.field);
-    this.cross(dir, cx, c ? this.columnOf(c.start) : null);
+    this.crossLine(dir, c ? c.start : null, cx);
     this.ownKeyUp = dir < 0 ? "up" : "down";
   }
 
@@ -3943,7 +4029,7 @@ export class Editor {
     this.openBar(cx);
     if (!c) return;
     const still = before.valid && before.start === before.end && c.start === c.end && c.start === before.start;
-    if (!crossed && plainVertical && this.rows === "many" && still) return this.cross(k === "up" ? -1 : 1, cx, this.columnOf(c.start));
+    if (!crossed && plainVertical && this.rows === "many" && still) return this.crossLine(k === "up" ? -1 : 1, c.start, cx);
     this.revealCaret(cx);
   }
 
@@ -4127,11 +4213,12 @@ export class Editor {
 
   // A structural op is an entry of its own in the history, parsed in at once. Then the block at document offset `at`
   // (the op's caret) is opened with field caret `caret` (null: where `at` falls in it), or `then` runs instead.
-  op(s, cx, { at = s?.caret, caret = null, then = null } = {}) {
+  // `column`: the table column the caret was in, kept with the entry for its undo (cellAtDoc).
+  op(s, cx, { at = s?.caret, caret = null, then = null, column } = {}) {
     if (!s) return false;
     const before = this.caretDoc();
     this.release();
-    this.change(s, cx, { caretBefore: before ?? s.start, caretAfter: at });
+    this.change(s, cx, { caretBefore: before ?? s.start, caretAfter: at, column });
     if (then) then();
     else this.openAt(at, cx, caret);
     return true;
@@ -4141,7 +4228,7 @@ export class Editor {
   // end of the field is deleted first, as a key deletes it.
   enter(cx) {
     this.typingStyle = null;
-    if (this.cell) return;
+    if (this.cell) return this.enterCell(cx);
     if (this.pending) return this.pendingKey("enter", cx);
     const b = this.blockByKey(this.activeKey), value = this.seen;
     if (!b) return;
@@ -4168,6 +4255,24 @@ export class Editor {
     else if (r.start === value.length) return this.openPendingWith({ base: afterKey(now.key, kind), origin }, cx);
     const selected = r.start < r.end ? docRange(fieldOf(this.doc, now), r) : null;
     if (this.op(this.splitAt(now, r), cx) && selected) this.history.select(this.text, selected);
+  }
+
+  // A cell holds one line: Enter goes to the end of the cell below's text, on the last row into a new row.
+  enterCell(cx) {
+    const b = this.blockByKey(this.activeKey);
+    if (!b) return;
+    const t = tableOf(this.doc, b), r = this.cell.r + 1, c = this.cell.c;
+    if (r >= t.rows.length) return this.addRow(c, cx);
+    this.activate(b.key, cellText(this.doc, t, r, c).length, cx, { cell: { r, c } });
+  }
+
+  // An empty row under the last one of the edited cell's table (insertRow), the caret in its cell of column c: one
+  // entry of the history, whose undo takes the row away and puts the caret back in the cell it was in.
+  addRow(c, cx) {
+    const column = this.cell.c;
+    this.commit(cx);
+    const b = this.cell ? this.blockByKey(this.activeKey) : null, s = b && insertRow(this.doc, b, tableOf(this.doc, b));
+    if (s) this.op(s, cx, { at: s.cells[c], column });
   }
 
   // Enter in a block that shows its source: in code a line break whose new line starts with the spaces and tabs of the
@@ -4318,9 +4423,9 @@ export class Editor {
     const b = this.pending ? null : this.blockByKey(this.activeKey);
     if (!b) return;
     if (b.kind === "item" && b.task) return this.tick(b, cx);
-    if (!isRaw(b.kind) || this.cell) return;
+    if (!isRaw(b.kind)) return;
     const r = this.caretNow() ?? { start: 0, end: 0 };
-    this.openPendingWith({ base: afterKey(b.key, "paragraph"), origin: { key: b.key, caret: { start: r.start, end: r.end } } }, cx);
+    this.openPendingWith({ base: afterKey(b.key, "paragraph"), origin: { key: b.key, caret: { start: r.start, end: r.end }, cell: this.cell } }, cx);
   }
 
   // The field gives Backspace away only at its start. A paragraph joins nothing into a paragraph of pictures above it:
@@ -4379,7 +4484,7 @@ export class Editor {
     this.op(now && removeWithNotes(this.doc, now), cx, {
       then: () => {
         const p = this.blockByKey(back);
-        if (p) this.activate(p.key, this.entry(p, this.openedValue(p), -1, null), cx);
+        if (p) this.arrive(p, -1, cx);
         else this.handle.focus();
       },
     });
@@ -4442,14 +4547,14 @@ export class Editor {
     this.revealCaret(cx);
   }
 
-  // Tab (dir > 0) or Shift+Tab in a cell: the next or previous cell in reading order, the header first, with its whole
-  // text selected (a cell its row lacks: the caret in it). Past the last cell or before the first, nothing.
+  // Tab (dir > 0) or Shift+Tab in a cell: the next or previous cell in reading order with its whole text selected (a
+  // cell its row lacks: the caret in it); past the last cell a new row.
   tabCell(dir, cx) {
     const b = this.blockByKey(this.activeKey);
     if (!b) return;
-    const t = tableOf(this.doc, b), at = this.cell.r * t.columns + this.cell.c + dir, next = { r: Math.floor(at / t.columns), c: at % t.columns };
-    if (at < 0 || next.r >= t.rows.length) return;
-    this.activate(b.key, { start: 0, end: cellText(this.doc, t, next.r, next.c).length }, cx, { cell: next });
+    const t = tableOf(this.doc, b), next = cellBeside(t, this.cell, dir);
+    if (next) this.activate(b.key, { start: 0, end: cellText(this.doc, t, next.r, next.c).length }, cx, { cell: next });
+    else if (dir > 0) this.addRow(0, cx);
   }
 
   selectField({ start, end }) {
@@ -4704,7 +4809,7 @@ export class Editor {
     const o = dir < 0 && this.mode === "reading" ? this.pending?.origin : null;
     if (o && this.blockByKey(o.key)) {
       this.release();
-      if (!this.activate(o.key, o.caret, cx)) this.handle.focus();
+      if (!this.activate(o.key, o.caret, cx, { cell: o.cell })) this.handle.focus();
       return;
     }
     if (!(dir < 0 ? this.history.canUndo : this.history.canRedo)) return;
@@ -5607,7 +5712,7 @@ export class Editor {
   leavePictures(p, dir, cx) {
     const target = this.blocks[this.crossedTo(this.at.get(p.key), dir)];
     if (!target) return;
-    if (!target.image) return this.activate(target.key, this.entry(target, this.openedValue(target), dir, null), cx);
+    if (!target.image) return this.arrive(target, dir, cx);
     this.pickNear(target, dir > 0 ? -Infinity : Infinity, cx);
     this.revealPicked(cx);
   }

@@ -4,7 +4,7 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { applySplice, cellCount, parse, reparse } from "../mods/herdr-inline-markdown/blocks.js";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { cellEdit, cellText, rowAt, tableOf, writeCell } from "../mods/herdr-inline-markdown/tables.js";
+import { cellEdit, cellText, insertRow, rowAt, tableOf, writeCell } from "../mods/herdr-inline-markdown/tables.js";
 import { originals } from "./markdown-corpus.mjs";
 
 const tableIn = text => {
@@ -312,4 +312,64 @@ test("writeCell on random tables and texts: what the field holds is in the new t
     cases++;
   }
   assert.ok(cases > 1000, `${cases} cases`);
+});
+
+// `text` with an empty row inserted into its table after row `after` (the last when undefined), checked: the splice
+// only inserts, the table parses again with one more row whose every cell is empty, and `cells` says where they are.
+function withRow(text, after) {
+  const { doc, b, t } = tableIn(text), s = insertRow(doc, b, t, after), next = applySplice(text, s);
+  assert.equal(s.start, s.end, `${JSON.stringify(text)}: nothing replaced`);
+  const now = tableIn(next), at = (after ?? t.rows.length - 1) + 1;
+  assert.deepEqual([now.t.rows.length, now.t.columns], [t.rows.length + 1, t.columns], `${JSON.stringify(next)}: one more row`);
+  assert.deepEqual(texts(now.doc, now.t)[at], Array(t.columns).fill(""), `${JSON.stringify(next)}: its cells empty`);
+  assert.deepEqual(s.cells, now.t.rows[at].cells.map(cell => cell.start), `${JSON.stringify(next)}: where its cells are`);
+  return next;
+}
+
+test("insertRow: an empty row under the last, a cell for each of the header's; compact (one space each side of an empty cell) in a table not aligned, every other byte the same", () => {
+  assert.equal(withRow("Intro\n\n| name | value |\n|---|---|\n| a | 1 |\n\nEnd\n"), "Intro\n\n| name | value |\n|---|---|\n| a | 1 |\n|  |  |\n\nEnd\n");
+  assert.equal(withRow("| a | b | c |\n|---|---|---|\n| x |\n"), "| a | b | c |\n|---|---|---|\n| x |\n|  |  |  |\n", "as many cells as the header, not as the row above");
+  assert.equal(withRow("| a | b |\n|--|--|\n| c | d |"), "| a | b |\n|--|--|\n| c | d |\n|  |  |", "a table ending the file without a line end");
+});
+
+test("insertRow: in an aligned table the new row's pipes go where every line has them", () => {
+  assert.equal(withRow("| name | value |\n|------|-------|\n| a    | 1     |\n"), "| name | value |\n|------|-------|\n| a    | 1     |\n|      |       |\n");
+  assert.equal(withRow(" | a | 😀 |\n |---|---|\n"), " | a | 😀 |\n |---|---|\n |   |   |\n", "columns in code points, the lines' indent kept");
+});
+
+test("insertRow: a table without outer pipes gets a row with both, or its empty first and last cells would be none", () => {
+  assert.equal(withRow("abc | def\n--- | ---\nxyz | ghi\n"), "abc | def\n--- | ---\nxyz | ghi\n|  |  |\n");
+});
+
+test("insertRow: in a list item the new row starts with the item's container prefix; a quote holds no table block to add one to", () => {
+  assert.equal(withRow("- item\n\n  | a | b |\n  |---|---|\n  | c | d |\n"), "- item\n\n  | a | b |\n  |---|---|\n  | c | d |\n  |   |   |\n");
+  assert.equal(withRow("- | a | bb |\n  |---|---|\n\nEnd\n"), "- | a | bb |\n  |---|---|\n  |  |  |\n\nEnd\n", "under the delimiter row of a table on the item's first line");
+  assert.deepEqual(parse("> | a | b |\n> |---|---|\n").blocks.map(x => x.kind), ["quote"]);
+});
+
+test("insertRow: a CRLF file's row ends in CRLF; after row 0 the row goes under the delimiter row", () => {
+  assert.equal(withRow("| a | b |\r\n|---|---|\r\n| c | d |\r\n"), "| a | b |\r\n|---|---|\r\n| c | d |\r\n|   |   |\r\n");
+  assert.equal(withRow("| a | bb |\n|---|---|\n| c | d |\n", 0), "| a | bb |\n|---|---|\n|  |  |\n| c | d |\n");
+});
+
+test("insertRow on random tables: still one table with one more row, every cell before as it was, nothing outside the table changed", () => {
+  const seed = Number(process.env.TABLE_SEED ?? 20261117) + 2, next = rng(seed);
+  let cases = 0;
+  for (let n = 0; n < 1000; n++) {
+    const text = randomTable(next), { doc, b, t } = tableIn(text);
+    if (!t || t.irregular) continue;
+    if (b.lines.length < 2) {
+      assert.equal(insertRow(doc, b, t), null, `${JSON.stringify(text)}: a table block without its delimiter row takes no row`);
+      continue;
+    }
+    const after = Math.floor(next() * t.rows.length), why = `seed ${seed}, case ${n}: ${JSON.stringify(text)} after row ${after}`;
+    const added = withRow(text, after), doc2 = parse(added), b2 = doc2.blocks[b.index], t2 = tableOf(doc2, b2);
+    assert.equal(doc2.blocks.length, doc.blocks.length, `${why}: the same blocks`);
+    assert.equal(added.slice(b2.end), text.slice(b.end), `${why}: the text after the table`);
+    const was = texts(doc, t), now = texts(doc2, t2);
+    now.splice(after + 1, 1);
+    assert.deepEqual(now, was, `${why}: the other rows`);
+    cases++;
+  }
+  assert.ok(cases > 500, `${cases} cases`);
 });

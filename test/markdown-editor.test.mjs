@@ -12751,9 +12751,9 @@ test("in a cell, Backspace at a bold run's edge keeps the bold, words copied fro
   let state = await pressCell(m, table, 1, 0, 13);
   state.backspace(m.cx);
   assert.equal(m.view.text, CELLS_DOC.replace("apple **pie**", "apple **pi**"), "the bold kept");
-  act(m, "mdb-enter");
   act(m, "mdb-shift-enter");
-  assert.deepEqual([m.view.text, m.view.cell], [CELLS_DOC.replace("apple **pie**", "apple **pi**"), { r: 1, c: 0 }], "Enter and Shift+Enter: nothing");
+  act(m, "mdb-enter");
+  assert.deepEqual([m.view.text, m.view.cell], [CELLS_DOC.replace("apple **pie**", "apple **pi**"), { r: 2, c: 0 }], "Shift+Enter: nothing; Enter: down a row");
   escape(m);
   await openBlock(m, 0);
   m.view.field.select(11, 25);
@@ -12817,7 +12817,7 @@ test("Escape leaves the cell, once the bar over its selection has gone, and Ente
   assert.ok(m.view.text.includes("| apple **pie** |  |"), "a cell typed empty stays an empty cell");
 });
 
-test("Tab and Shift+Tab select the next and the previous cell's whole text in reading order, the header first; past the last cell or before the first nothing; no other key crosses a cell's edge", async () => {
+test("Tab and Shift+Tab select the next and the previous cell's whole text in reading order, the header first; before the first nothing", async () => {
   const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
   await pressCell(m, table, 0, 0, 1);
   const at = () => [m.view.cell, m.view.field.value(), m.view.field.selection];
@@ -12827,20 +12827,8 @@ test("Tab and Shift+Tab select the next and the previous cell's whole text in re
   assert.deepEqual(at(), [{ r: 0, c: 1 }, "Size", { start: 0, end: 4 }]);
   act(m, "mdb-tab");
   assert.deepEqual(at(), [{ r: 1, c: 0 }, "apple **pie**", { start: 0, end: 13 }], "the next row");
-  act(m, "mdb-left-start");
-  act(m, "mdb-right-end");
-  act(m, "mdb-up");
-  act(m, "mdb-down");
-  act(m, "mdb-backspace-start");
-  assert.deepEqual(at().slice(0, 2), [{ r: 1, c: 0 }, "apple **pie**"], "Left, Right, Up, Down and Backspace at an edge stay in the cell");
-  m.view.field.select(13);
-  cellKeyUp(m, table, 1, 0, "down");
-  await flush();
-  assert.deepEqual([m.view.activeKey, m.view.cell], [table, { r: 1, c: 0 }], "a Down that left the caret where it was crosses nothing");
   for (let i = 0; i < 3; i++) act(m, "mdb-tab");
   assert.deepEqual(at(), [{ r: 2, c: 1 }, "`x\\|y`", { start: 0, end: 6 }]);
-  act(m, "mdb-tab");
-  assert.deepEqual(at(), [{ r: 2, c: 1 }, "`x\\|y`", { start: 0, end: 6 }], "past the last: nothing");
   act(m, "mdb-shift-tab");
   assert.deepEqual(at(), [{ r: 2, c: 0 }, "[pear](https://e.com/p)", { start: 0, end: 23 }]);
   assert.equal(m.view.text, CELLS_DOC);
@@ -12959,16 +12947,6 @@ test("undo of the letters typed into a cell its row lacks opens that cell again,
   assert.equal(m.view.activeKey, keyAt(m, 2), "left for End");
   act(m, "mdb-undo");
   assert.deepEqual([m.view.text, ...at()], [SHORT_ROW_DOC, table, { r: 1, c: 2 }, "", { start: 0, end: 0 }], "from outside the table");
-});
-
-test("Cmd+Enter in a cell does what it does in a paragraph, nothing: no paragraph opens below the table, the cell stays edited, and Cmd+Z takes back what was typed there", async () => {
-  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), field = await pressCell(m, table, 1, 1, 2);
-  field.type("3", m.cx);
-  act(m, "mdb-cmd-enter");
-  assert.deepEqual([m.view.pending, m.view.activeKey, m.view.cell, m.view.field, field.selection], [null, table, { r: 1, c: 1 }, field, { start: 3, end: 3 }], "still in the cell");
-  assert.equal(m.view.text, CELLS_DOC.replace("| 12 |", "| 123 |"));
-  act(m, "mdb-undo");
-  assert.deepEqual([m.view.text, m.view.cell, m.view.field.value(), m.view.field.selection], [CELLS_DOC, { r: 1, c: 1 }, "12", { start: 2, end: 2 }]);
 });
 
 test("Page Down past the last block from a cell of a table that ends the note goes to the end of its last cell, Page Up past the first to its first cell's start", async () => {
@@ -13343,4 +13321,278 @@ test("a drag in a cell of one row let go in the cell's padding under its text, w
   await fire_timers(m.cx, { ms: 30 });
   assert.deepEqual([m.view.cell, selectedText(m)], [{ r: 1, c: 1 }, "crisp"]);
   assert.equal(barOf(m).style.top, o.y + row + BAR.gap, "under the cell's one row");
+});
+
+// The blocks of MOVE_DOC: a paragraph (0), a table of four rows whose third row's second cell wraps to two rows in its
+// 360 px column (1), a paragraph (2).
+const LONG_CELL = "soft and sweet when ripe, best eaten within a day or two of buying it at the market";
+const MOVE_DOC = ["Above the fruit table here", "", "| Fruit | Note |", "|---|---|", "| apple | crisp |", `| pear | ${LONG_CELL} |`, "| plum | ripe |", "", "Below the fruit table here", ""].join("\n");
+const MOVE_SIZES = { 0: 24, 1: 14 + gridH(5), 2: 38 };
+const caretAt = m => [m.view.activeKey, m.view.cell, m.view.field.selection];
+const at = n => ({ start: n, end: n });
+// The x of column `n` of the edited field's one row, from the page column's left edge, and the column at x in block i.
+const xOf = (m, n) => {
+  const box = m.view.editedBox(m.view.data.get(m.view.activeKey));
+  return box.x + n * box.advance;
+};
+const columnAtX = (m, i, x) => {
+  const d = m.view.data.get(keyAt(m, i));
+  return Math.round((x - m.view.chromeOf(d, true).x) / m.view.calOf(d.style).advance);
+};
+// The column at x in cell (r, c) of table block i.
+const cellColumnAt = (m, i, r, c, x) => {
+  const box = m.view.cellBox(m.view.data.get(keyAt(m, i)), r, c);
+  return Math.round((x - box.x) / box.advance);
+};
+
+test("Up and Down in a cell of one row go to the cell above or below at the same x, and out of the table from the header and the last row; a held Down glides from the paragraph above down a column and out below; no history", async () => {
+  const m = await page(MOVE_DOC, MOVE_SIZES), table = keyAt(m, 1);
+  await pressCell(m, table, 1, 0, 3);
+  assert.equal(must(m.tree(), `md-field-${table}-1-0`).style.key_context, `${TEXT} rows=one`);
+  act(m, "mdb-down");
+  assert.deepEqual(caretAt(m), [table, { r: 2, c: 0 }, at(3)], "pea|r");
+  act(m, "mdb-down");
+  assert.deepEqual(caretAt(m), [table, { r: 3, c: 0 }, at(3)], "plu|m");
+  for (const r of [2, 1, 0]) {
+    act(m, "mdb-up");
+    assert.deepEqual(caretAt(m), [table, { r, c: 0 }, at(3)], `row ${r}`);
+  }
+  const x = xOf(m, 3);
+  act(m, "mdb-up");
+  const above = columnAtX(m, 0, x);
+  assert.ok(above > 0);
+  assert.deepEqual(caretAt(m), [keyAt(m, 0), null, at(above)], "from the header to the paragraph above, at that x");
+  const glide = cellColumnAt(m, 1, 0, 0, xOf(m, above));
+  for (const r of [0, 1, 2, 3]) {
+    act(m, "mdb-down");
+    assert.deepEqual(caretAt(m), [table, { r, c: 0 }, at(glide)], `held: row ${r}`);
+  }
+  const below = columnAtX(m, 2, xOf(m, glide));
+  act(m, "mdb-down");
+  assert.deepEqual(caretAt(m), [keyAt(m, 2), null, at(below)], "from the last row to the paragraph below, at that x");
+  assert.deepEqual([m.view.text, m.view.history.canUndo], [MOVE_DOC, false], "moves write nothing and make no entry");
+});
+
+test("a cell is one row or several by the text its field draws: Down into a cell showing a long link's short text lands at the caret's x inside that text", async () => {
+  const doc = "| Fruit | Size |\n|---|---|\n| apple | 12 |\n| [pear](https://example.com/a/rather/long/address/for/a/pear) | 7 |\n";
+  const m = await page(doc, { 0: 14 + gridH(3) }), table = keyAt(m, 0);
+  await pressCell(m, table, 1, 0, 2);
+  act(m, "mdb-down");
+  assert.deepEqual(caretAt(m), [table, { r: 2, c: 0 }, at(3)], "[pe|ar: after the link's second letter");
+});
+
+test("Down into a cell of several rows lands at its start, Up at its end; there the field moves between its rows, and the key-up that finds the caret unmoved crosses to the next cell at the caret's x", async () => {
+  const m = await page(MOVE_DOC, MOVE_SIZES), table = keyAt(m, 1);
+  await pressCell(m, table, 1, 1, 2);
+  act(m, "mdb-down");
+  assert.deepEqual([...caretAt(m), m.view.rows], [table, { r: 2, c: 1 }, at(0), "many"], "the start of the cell's text");
+  assert.equal(must(m.tree(), `md-field-${table}-2-1`).style.key_context, `${TEXT} rows=many`);
+  act(m, "mdb-down");
+  cellKeyUp(m, table, 2, 1, "down");
+  await flush();
+  assert.deepEqual(caretAt(m), [table, { r: 2, c: 1 }, at(0)], "a held key's repeats are the field's own; the key-up of the press that crossed in crosses nothing");
+  const box = m.view.editedBox(m.view.data.get(table)), second = m.view.wrapOf(LONG_CELL, box.w, box.advance).rows[1];
+  m.view.field.select(second + 2);
+  cellKeyUp(m, table, 2, 1, "down");
+  await flush();
+  assert.deepEqual(caretAt(m), [table, { r: 2, c: 1 }, at(second + 2)], "the caret moved to the second row: no edge");
+  const x = xOf(m, 2);
+  cellKeyUp(m, table, 2, 1, "down");
+  await flush();
+  assert.deepEqual(caretAt(m), [table, { r: 3, c: 1 }, at(cellColumnAt(m, 1, 3, 1, x))], "unmoved on the last row: the cell below, at the caret's x");
+  act(m, "mdb-up");
+  assert.deepEqual(caretAt(m), [table, { r: 2, c: 1 }, at(LONG_CELL.length)], "Up into it: the end of its text");
+  m.view.field.select(1);
+  cellKeyUp(m, table, 2, 1, "up");
+  await flush();
+  cellKeyUp(m, table, 2, 1, "up");
+  await flush();
+  assert.deepEqual(caretAt(m), [table, { r: 1, c: 1 }, at(1)], "unmoved on its first row: the cell above");
+});
+
+test("Left at a cell's start goes to the end of the cell before it in reading order, Right at its end to the start of the next; from the first cell to the end of the block above, from the last to the start of the block below; past a table that ends the file a new paragraph opens", async () => {
+  const m = await page(MOVE_DOC, MOVE_SIZES), table = keyAt(m, 1);
+  const texts = ["Fruit", "Note", "apple", "crisp", "pear", LONG_CELL, "plum", "ripe"];
+  await pressCell(m, table, 0, 0, 0);
+  act(m, "mdb-left-start");
+  assert.deepEqual(caretAt(m), [keyAt(m, 0), null, at(26)], "the end of the paragraph above");
+  act(m, "mdb-right-end");
+  assert.deepEqual(caretAt(m), [table, { r: 0, c: 0 }, at(0)], "back: the first cell's start");
+  for (let k = 1; k < texts.length; k++) {
+    m.view.field.select(texts[k - 1].length);
+    act(m, "mdb-right-end");
+    assert.deepEqual(caretAt(m), [table, { r: k >> 1, c: k & 1 }, at(0)], `Right to ${texts[k]}`);
+  }
+  m.view.field.select(4);
+  act(m, "mdb-right-end");
+  assert.deepEqual(caretAt(m), [keyAt(m, 2), null, at(0)], "the start of the paragraph below");
+  act(m, "mdb-left-start");
+  assert.deepEqual(caretAt(m), [table, { r: 3, c: 1 }, at(4)], "back: the end of the last cell");
+  for (let k = texts.length - 2; k >= 0; k--) {
+    m.view.field.select(0);
+    act(m, "mdb-left-start");
+    assert.deepEqual(caretAt(m), [table, { r: k >> 1, c: k & 1 }, at(texts[k].length)], `Left to ${texts[k]}`);
+  }
+  assert.deepEqual([m.view.text, m.view.history.canUndo], [MOVE_DOC, false]);
+  reset();
+  const last = await page("Intro\n\n| a | b |\n|---|---|\n| c | d |\n", { 0: 24, 1: 14 + gridH(2) }), lt = keyAt(last, 1);
+  await pressCell(last, lt, 1, 1, 1);
+  act(last, "mdb-right-end");
+  assert.ok(last.view.pending && last.view.activeKey === last.view.pending.key, "Right at the end of the file's last cell: a new paragraph");
+  await pressCell(last, lt, 1, 0, 1);
+  act(last, "mdb-down");
+  assert.ok(last.view.pending && last.view.activeKey === last.view.pending.key, "Down on its last row: a new paragraph");
+});
+
+test("into a table from outside: Down from the paragraph above to the header's cell under the caret's x and Up from below to the last row's, at that x in one row, at the start or the end of several; Right at the end above and Left at the start below to the first and the last cell; Backspace at the start below to the end of the last cell", async () => {
+  const m = await page(MOVE_DOC, MOVE_SIZES), table = keyAt(m, 1), d = () => m.view.data.get(table);
+  await openBlock(m, 0, 12);
+  const x = xOf(m, 12);
+  assert.ok(x > m.view.cellBox(d(), 0, 1).x, "the caret's x is in the second column");
+  act(m, "mdb-down");
+  assert.deepEqual(caretAt(m), [table, { r: 0, c: 1 }, at(cellColumnAt(m, 1, 0, 1, x))], "the header's second cell, at that x");
+  escape(m);
+  await openBlock(m, 2, 12);
+  const below = xOf(m, 12);
+  act(m, "mdb-up");
+  assert.deepEqual(caretAt(m), [table, { r: 3, c: 1 }, at(cellColumnAt(m, 1, 3, 1, below))], "the last row's second cell, at that x");
+  escape(m);
+  await openBlock(m, 2, 2);
+  act(m, "mdb-up");
+  assert.deepEqual(caretAt(m)[1], { r: 3, c: 0 }, "under a caret in the first column, the first cell");
+  escape(m);
+  await openBlock(m, 0, 26);
+  act(m, "mdb-right-end");
+  assert.deepEqual(caretAt(m), [table, { r: 0, c: 0 }, at(0)], "Right at the end above: the first cell's start");
+  escape(m);
+  await openBlock(m, 2, 0);
+  act(m, "mdb-left-start");
+  assert.deepEqual(caretAt(m), [table, { r: 3, c: 1 }, at(4)], "Left at the start below: the last cell's end");
+  escape(m);
+  await openBlock(m, 2, 0);
+  act(m, "mdb-backspace-start");
+  assert.deepEqual([...caretAt(m), m.view.text], [table, { r: 3, c: 1 }, at(4), MOVE_DOC], "Backspace at the start below: the last cell's end, nothing deleted");
+  reset();
+  const tall = MOVE_DOC.replace("| Fruit | Note |", `| Fruit | ${LONG_CELL} |`).replace("| plum | ripe |", `| plum | ripe, ${LONG_CELL} |`);
+  const t = await page(tall, { 0: 24, 1: 14 + gridH(7), 2: 38 }), tt = keyAt(t, 1);
+  await openBlock(t, 0, 12);
+  act(t, "mdb-down");
+  assert.deepEqual(caretAt(t), [tt, { r: 0, c: 1 }, at(0)], "Down into a cell of several rows: its start");
+  escape(t);
+  await openBlock(t, 2, 12);
+  act(t, "mdb-up");
+  assert.deepEqual(caretAt(t), [tt, { r: 3, c: 1 }, at(`ripe, ${LONG_CELL}`.length)], "Up into a cell of several rows: its end");
+  reset();
+  const listed = await page("- the item above\n\n  | Fruits | Size |\n  |---|---|\n  | apple | 12 |\n", { 0: 30, 1: 14 + gridH(2) }), lt = keyAt(listed, 1);
+  await openBlock(listed, 0, 7);
+  const ix = xOf(listed, 7), d1 = listed.view.data.get(lt);
+  assert.ok(ix > GRID.line + d1.grid.widths[0] && ix - INDENT < GRID.line + d1.grid.widths[0], "the caret's x is right of the first column's edge less the indent");
+  act(listed, "mdb-down");
+  assert.deepEqual(caretAt(listed), [lt, { r: 0, c: 0 }, at(cellColumnAt(listed, 1, 0, 0, ix))], "a table in a list item: x counted from its indented grid");
+});
+
+// The blocks of GRID_3X2: Intro (0), a table of three rows and two columns, its pipes aligned (1), End (2).
+const GRID_3X2 = "Intro\n\n| a | b |\n|---|---|\n| c | d |\n| e | f |\n\nEnd\n";
+const GRID_3X2_SIZES = { 0: 24, 1: 14 + gridH(3), 2: 38 };
+
+test("Tab selects each next cell's text from the first to the last; Tab in the last cell adds an empty row, the caret in its first cell, one entry whose undo puts the caret back; Shift+Tab goes back and in the first cell does nothing", async () => {
+  const m = await page(GRID_3X2, GRID_3X2_SIZES), table = keyAt(m, 1);
+  const where = () => [m.view.cell, m.view.field.value(), m.view.field.selection];
+  await pressCell(m, table, 0, 0, 0);
+  act(m, "mdb-shift-tab");
+  assert.deepEqual(where(), [{ r: 0, c: 0 }, "a", at(0)], "Shift+Tab in the first cell: nothing");
+  for (let k = 1; k < 6; k++) {
+    act(m, "mdb-tab");
+    assert.deepEqual(where(), [{ r: k >> 1, c: k & 1 }, "abcdef"[k], { start: 0, end: 1 }]);
+  }
+  act(m, "mdb-tab");
+  const added = GRID_3X2.replace("| e | f |\n", "| e | f |\n|   |   |\n");
+  assert.equal(m.view.text, added, "a row padded to the table's pipes");
+  assert.deepEqual([...where(), m.view.field], [{ r: 3, c: 0 }, "", at(0), m.view.cellField(table, 3, 0)], "the caret in its first cell");
+  assert.ok(m.view.cellField(table, 3, 1), "the new row's cells have their fields");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...where()], [GRID_3X2, { r: 2, c: 1 }, "f", at(1)], "one entry: the row goes, the caret back where it was");
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, ...where()], [added, { r: 3, c: 0 }, "", at(0)]);
+  for (let k = 5; k >= 0; k--) {
+    act(m, "mdb-shift-tab");
+    assert.deepEqual(where(), [{ r: k >> 1, c: k & 1 }, "abcdef"[k], { start: 0, end: 1 }], "Shift+Tab back");
+  }
+  reset();
+  const s = await page(SHORT_ROW_DOC, SHORT_ROW_SIZES), st = keyAt(s, 1);
+  await lastCellOfShortRow(s, st);
+  act(s, "mdb-tab");
+  assert.equal(s.view.text, SHORT_ROW_DOC.replace("| pear |\n", "| pear |\n|  |  |  |\n"), "a table not aligned: a compact row, a cell for each of the header's");
+  assert.deepEqual([s.view.cell, s.view.field.value()], [{ r: 2, c: 0 }, ""]);
+  act(s, "mdb-undo");
+  assert.deepEqual([s.view.text, s.view.cell, s.view.field.value(), s.view.field.selection], [SHORT_ROW_DOC, { r: 1, c: 2 }, "", at(0)], "back in the cell its row lacks");
+});
+
+test("Enter in a cell puts the caret at the end of the cell below's text; on the last row it adds an empty row with the caret in that column, one entry; Shift+Enter does nothing", async () => {
+  const m = await page(GRID_3X2, GRID_3X2_SIZES), table = keyAt(m, 1);
+  const where = () => [m.view.cell, m.view.field.value(), m.view.field.selection];
+  await pressCell(m, table, 0, 1, 0);
+  act(m, "mdb-enter");
+  assert.deepEqual(where(), [{ r: 1, c: 1 }, "d", at(1)]);
+  act(m, "mdb-enter");
+  assert.deepEqual(where(), [{ r: 2, c: 1 }, "f", at(1)]);
+  act(m, "mdb-shift-enter");
+  assert.deepEqual([m.view.text, ...where()], [GRID_3X2, { r: 2, c: 1 }, "f", at(1)], "Shift+Enter: nothing");
+  assert.equal(m.view.history.canUndo, false, "moving down made no entry");
+  act(m, "mdb-enter");
+  const added = GRID_3X2.replace("| e | f |\n", "| e | f |\n|   |   |\n");
+  assert.deepEqual([m.view.text, ...where()], [added, { r: 3, c: 1 }, "", at(0)], "the last row: a new row, the caret in its cell of that column");
+  m.view.field.type("g", m.cx);
+  assert.equal(m.view.text, added.replace("|   |   |", "|   | g |"), "typed into the new cell");
+  act(m, "mdb-undo");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...where()], [GRID_3X2, { r: 2, c: 1 }, "f", at(1)], "the row: one entry");
+});
+
+test("Cmd+Enter in a cell opens a new paragraph after the table, after its comments paragraph; Cmd+Z goes back to the cell and its caret, and takes back what was typed in the cell", async () => {
+  const m = await page(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), field = await pressCell(m, table, 1, 0, 5);
+  field.type("s", m.cx);
+  act(m, "mdb-cmd-enter");
+  const typed = CELL_DOC.replace("| apple |", "| apples |");
+  assert.ok(m.view.pending && m.view.activeKey === m.view.pending.key, "a paragraph not written yet");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...caretAt(m)], [typed, table, { r: 1, c: 0 }, at(6)], "back in the cell, its caret where it was");
+  act(m, "mdb-cmd-enter");
+  m.view.field.type("x", m.cx);
+  assert.equal(m.view.text, typed.replace("{>>on the table<<}\n", "{>>on the table<<}\n\nx\n"), "written after the table's comments");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...caretAt(m)], [typed, table, { r: 1, c: 0 }, at(6)]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.cell, m.view.field.value()], [CELL_DOC, { r: 1, c: 0 }, "apple"]);
+});
+
+test("in an empty cell Backspace and forward Delete change nothing: the table is never taken for an emptied block", async () => {
+  const doc = "Intro\n\n| a | b |\n|---|---|\n| c |  |\n\nEnd\n";
+  const m = await page(doc, { 0: 24, 1: 14 + gridH(2), 2: 38 }), table = keyAt(m, 1);
+  await pressCell(m, table, 1, 1, 0);
+  assert.equal(m.view.field.value(), "");
+  act(m, "mdb-backspace-start");
+  assert.deepEqual([m.view.text, ...caretAt(m)], [doc, table, { r: 1, c: 1 }, at(0)], "Backspace");
+  forwardDeleteAtEnd(m);
+  assert.deepEqual([m.view.text, ...caretAt(m)], [doc, table, { r: 1, c: 1 }, at(0)], "Delete");
+});
+
+test("in a cell Backspace at its start and forward Delete at its end change nothing, so cells never join; Page Down from a paragraph above a long table lands in the cell at that place", async () => {
+  const m = await page(GRID_3X2, GRID_3X2_SIZES), table = keyAt(m, 1);
+  await pressCell(m, table, 1, 1, 0);
+  act(m, "mdb-backspace-start");
+  assert.deepEqual([m.view.text, ...caretAt(m)], [GRID_3X2, table, { r: 1, c: 1 }, at(0)], "Backspace at its start");
+  m.view.field.select(1);
+  forwardDeleteAtEnd(m);
+  assert.deepEqual([m.view.text, ...caretAt(m)], [GRID_3X2, table, { r: 1, c: 1 }, at(1)], "Delete at its end");
+  reset();
+  const rows = Array.from({ length: 30 }, (_, i) => `| r${i} | s${i} |`).join("\n");
+  const p = await page(`Above\n\n| a | b |\n|---|---|\n${rows}\n\nEnd\n`, { 0: 24, 1: 14 + gridH(31), 2: 38 }), pt = keyAt(p, 1);
+  await openBlock(p, 0, 0);
+  act(p, "mdb-pagedown");
+  const r = p.view.cell?.r;
+  assert.deepEqual([p.view.activeKey, p.view.cell?.c, p.view.field.selection], [pt, 0, at(0)], "a cell of the first column, its start");
+  assert.ok(r > 5 && r < 30, `row ${r}`);
+  assert.equal(p.view.field.value(), `r${r - 1}`);
+  assert.ok(p.view.offset > 0, "the page moved");
 });

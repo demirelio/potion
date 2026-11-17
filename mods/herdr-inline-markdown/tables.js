@@ -175,6 +175,26 @@ export function rowAt(text, body, eol, columns) {
   return { cells, lead, trail };
 }
 
+// A pipe at either end, without which an empty first or last cell would be no cell; the pipes at `pipes` (code
+// points from the line's body) when that has one for each.
+function emptyRow(columns, pipes) {
+  if (pipes?.length !== columns + 1) return `|${"  |".repeat(columns)}`;
+  let row = "";
+  for (const at of pipes) row += `${" ".repeat(at - row.length)}|`;
+  return row;
+}
+
+// -> the splice that writes an empty row of the header's cells under row `after` of table t (tableOf(doc, b)), padded
+// to the pipes of an aligned table, else compact, with the block's container prefix and the file's line end, and
+// `cells`: where its cells' text sits once applied. Null for a table block the parser left without a delimiter row.
+export function insertRow(doc, b, t, after = t.rows.length - 1) {
+  if (b.lines.length < 2) return null;
+  const header = b.lines[0], line = b.lines[after === 0 ? 1 : t.rows[after].line], at = b.start + line.eol;
+  const pipes = t.aligned ? partRow(doc.text, b.start + header.body, b.start + header.eol).pipes : null;
+  const row = emptyRow(t.columns, pipes), insert = `${doc.eol}${b.contPrefix}${row}`, from = at + insert.length - row.length;
+  return { start: at, end: at, insert, cells: partRow(row, 0, row.length).cells.map(cell => from + cell.start) };
+}
+
 // -> the splice that writes `next` as the text of cell (r, c) of table t (tableOf(doc, b)), the table keeping its shape:
 // line breaks become spaces, a pipe not escaped yet is escaped, a text ending in an odd run of backslashes gets a space
 // before a pipe right after it, an empty cell's text goes between its pipes with a space each side, a cell the row lacks is added
