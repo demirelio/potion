@@ -5,7 +5,9 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureName, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, gridAt, gridRowTop, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, tablePress, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { gridOf } from "./grid.js";
+import { tableOf } from "./tables.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -577,6 +579,8 @@ export class Editor {
     // block's, act, caret: the block's own when it is the edited one, picture: the index of the picture it goes on or
     // -1 }).
     this.pairing = null; this.cellMemo = new Map(); this.blockNote = null; this.blockAdd = null;
+    // Tables drawn as grids: `grids` each table's memo for grid.js gridOf, `rowHeights` its rows' measured heights.
+    this.grids = new Map(); this.rowHeights = new Map();
     this.noteField = TextareaState.new({ placeholder: "Add a comment…" });
     this.noteField.set_auto_grow(1, NOTE_ROWS);
     this.noteField.on("submit", (_e, cx) => this.submitNote(cx));
@@ -1431,7 +1435,7 @@ export class Editor {
   forget(key) {
     const e = this.entities.get(key);
     if (e) { try { e.release(); } catch { /* already gone */ } }
-    for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames, this.cardMemo, this.cellMemo]) m.delete(key);
+    for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames, this.cardMemo, this.cellMemo, this.grids, this.rowHeights]) m.delete(key);
     this.zoomed.delete(key);
     this.releaseField(this.disown(key));
     if (this.hoverFrame === key) this.hoverFrame = null;
@@ -1748,11 +1752,12 @@ export class Editor {
   }
 
   dataFor(blocks, i, width) {
-    const b = blocks[i], look = lookOf(b), cal = this.calOf(look.style), marker = markerOf(b);
-    const text = look.look === "text" ? displayText(b, this.highlight) : b.kind === "table" ? this.tableText(b) : look.look === "boxed" ? b.render : b.content;
+    const b = blocks[i], grid = b.kind === "table" && b.key !== this.activeKey ? this.gridNow(b, width) : null;
+    const look = lookOf(b, Boolean(grid)), cal = this.calOf(look.style), marker = markerOf(b);
+    const text = grid ? "" : look.look === "text" ? displayText(b, this.highlight) : b.kind === "table" ? this.tableText(b) : look.look === "boxed" ? b.render : b.content;
     const space = spaceBefore(blocks, i, this.doc.blocks);
     return {
-      key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color,
+      key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color, grid,
       space, depth: b.depth, text, ...this.notesData(b, look, space, cal, width), ...this.chipData(b),
       marker, label: marker === "number" ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked),
       diagram: look.look === "diagram" ? diagramSig(this.shown.get(b.key), this.good.get(b.key)) : "",
@@ -1808,11 +1813,14 @@ export class Editor {
   }
 
   // Block data d's Comment button from the block's top-left while it shows, else null: left of a code block's language
-  // chip, inside a table's box at its top right, or left of the block's comment count where it would cover that.
+  // chip, right of a table's grid by its top right corner (in the column's padding when the grid is as wide as the
+  // column), inside the box of a table kept as source at its top right, or left of the block's comment count where it
+  // would cover that.
   blockButtonIn(d) {
     if (!this.blockButtonShown(d)) return null;
     const B = BLOCK_BUTTON, chip = d.chipW ? this.chipIn(d) : null;
-    const own = chip ? { x: chip.x - B.gap - B.size, y: chip.y } : { x: this.textWidth() - B.inset - B.size, y: d.space + B.inset };
+    const own = chip ? { x: chip.x - B.gap - B.size, y: chip.y }
+      : d.grid ? { x: d.depth * INDENT + d.grid.w + B.gap, y: d.space + B.inset } : { x: this.textWidth() - B.inset - B.size, y: d.space + B.inset };
     const box = { ...own, w: B.size, h: B.size }, count = d.notes ? { x: d.notesX, y: d.notesY, w: NOTES.w, h: NOTES.h } : null;
     return count && overlap(box, count) ? { ...box, x: count.x - B.gap - B.size, y: count.y + (NOTES.h - B.size) / 2 } : box;
   }
@@ -1825,9 +1833,42 @@ export class Editor {
     return this.blockAdd?.key === b.key && this.blockAddOpen() ? FRAMED.adding : "";
   }
 
-  // What Reading's TextView draws of table b: the comments in its cells highlighted as in text, the active one's in the
-  // deeper colour, their marks and notes left out; kept with its cell comments while it draws the same. The table being
-  // edited shows its source in its field instead.
+  // What table b's grid draws (grid.js gridOf) in a column `width` px wide, the same object while that stays the same;
+  // null for a table kept as source.
+  gridNow(b, width) {
+    let kept = this.grids.get(b.key);
+    if (!kept) this.grids.set(b.key, (kept = {}));
+    const opts = { room: width - b.depth * INDENT, head: this.calOf("head"), body: this.calOf("cell"), color: this.highlight, deep: this.cellDeep(b), defs: this.defsNow() };
+    return gridOf(kept, this.doc, b, opts);
+  }
+
+  // Table b's active cell comment as its grid deepens it: its cell and where it starts in the cell's text; else null.
+  cellDeep(b) {
+    const n = this.blockNote;
+    if (!n?.cell || n.key !== b.key) return null;
+    const card = this.cellNotesOf(b).cards[n.index];
+    return card ? { row: card.row, column: card.column, at: card.c.start - card.cell.start, color: this.deep } : null;
+  }
+
+  // The heights of table data d's grid rows: as measured, else as estimated.
+  gridHeights(d) {
+    const measured = this.rowHeights.get(d.key);
+    return measured ? d.grid.heights.map((h, r) => measured[r] ?? h) : d.grid.heights;
+  }
+
+  // A grid row's measured height is kept for its table, which isn't drawn again for it: a press and the cells' cards go
+  // by it. The size task lays the page out again, and a new layout places the cards anew.
+  rowSized(key, r, size) {
+    const h = size.height / zoom(), rows = this.rowHeights.get(key) ?? [];
+    if (rows[r] === h) return;
+    rows[r] = h;
+    this.rowHeights.set(key, rows);
+    this.wake();
+  }
+
+  // What Reading's TextView draws of a table kept as source: the comments in its cells highlighted as in text, the
+  // active one's in the deeper colour, their marks and notes left out; kept with its cell comments while it draws the
+  // same. The table being edited shows its source in its field instead.
   tableText(b) {
     if (b.key === this.activeKey) return b.render;
     const memo = this.cellNotesOf(b), n = this.blockNote, kept = memo.look;
@@ -1970,8 +2011,10 @@ export class Editor {
     return h;
   }
 
-  // Rows of the text, each line wrapped at `advance` px a character in a column `w` px wide; a table's rows do not wrap.
+  // Rows of the text, each line wrapped at `advance` px a character in a column `w` px wide; a grid's rows as estimated
+  // cell by cell. A table kept as source counts a line a row: TextView spreads a line over its cells.
   estimateOf(d, w, advance) {
+    if (d.look === "grid") return d.space + d.grid.h;
     if (d.look === "rule") return d.space + RULE_H;
     if (d.look === "diagram") return d.space + (d.frameH ? d.frameH + (d.boxAbove ? DIAGRAM_H + 8 : 0) : DIAGRAM_H);
     if (d.look === "picture" && d.mode === "rendered") return d.space + d.pictureH;
@@ -2091,7 +2134,9 @@ export class Editor {
     // A block's comments paragraph is not on the page: its block is shown instead.
     if (!this.at.has(blocks[i].key) && i > 0) [i, line] = [i - 1, 0];
     const d = this.data.get(blocks[i].key);
-    this.reveal = { key: blocks[i].key, fraction: REVEAL_AT, rowY: d.space + line * d.row };
+    // A grid draws the header from the source's first line and no delimiter row.
+    const rowY = d.grid ? gridRowTop(this.gridHeights(d), Math.max(0, line - 1)) : line * d.row;
+    this.reveal = { key: blocks[i].key, fraction: REVEAL_AT, rowY: d.space + rowY };
     this.layout(null);
   }
 
@@ -2418,15 +2463,16 @@ export class Editor {
     this.notifyBlocks([...new Set([...was, frame, box])], cx);
   }
 
-  // The code block or table whose box holds viewport point p, a diagram's source being edited counting as code; null
-  // where no Comment button would show.
+  // The code block or table whose box holds viewport point p, a diagram's source being edited counting as code, and a
+  // grid with its Comment button beside it; null where no Comment button would show.
   boxAt(p) {
     const blocks = this.blocks, n = blocks.length, y = p.y + this.offset - COLUMN.padTop;
     if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n] || !this.showsEdits()) return null;
     const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
     if (!d || !(d.strip || d.kind === "table") || y < this.sums[i] + d.space) return null;
     const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin);
-    return x >= b.depth * INDENT && x < this.textWidth() ? b.key : null;
+    const right = d.grid ? b.depth * INDENT + d.grid.w + BLOCK_BUTTON.gap + BLOCK_BUTTON.size : this.textWidth();
+    return x >= b.depth * INDENT && x < right ? b.key : null;
   }
 
   notifyBlocks(keys, cx) {
@@ -2621,6 +2667,8 @@ export class Editor {
       const tool = this.toolsShown(f.block.key) ? frameTool(f.fx, f.fy, f.d.frameW, this.toolsTopOf(f.block.key), this.showsEdits()) : null;
       return { block: f.block, on: tool ? "tool" : "frame", tool, fx: f.fx, fy: f.fy };
     }
+    const button = this.buttonAt(x, y);
+    if (button) return { block: button, on: "comment" };
     if (x < 0 || x >= this.textWidth()) return { on: "outside" };
     if (!n) return { on: "end" };
     if (y < 0) return { on: "outside" };
@@ -2628,11 +2676,18 @@ export class Editor {
     const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
     const inX = x - b.depth * INDENT, inY = y - this.sums[i] - d.space;
     if (d.look === "picture" && d.mode === "rendered") return { block: b, on: "picture", item: this.pictureAt(d, inX, inY), x, y: y - this.sums[i] };
-    const button = this.blockButtonIn(d);
-    if (button && inBox(button, x, y - this.sums[i])) return { block: b, on: "comment" };
     if (d.chip && this.editable() && inBox(this.chipIn(d), x, y - this.sums[i])) return { block: b, on: "chip" };
     const on = d.marker === "task" && inX >= 0 && inX < MARKER_W && inY >= 0 && inY < d.row ? "task" : "block";
     return { block: b, on, x, y: y - this.sums[i] };
+  }
+
+  // The block whose Comment button holds column point (x, y); a grid's lies right of the text column when the grid is
+  // as wide as the column.
+  buttonAt(x, y) {
+    const n = this.blocks.length;
+    if (!n || y < 0 || y >= this.sums[n]) return null;
+    const i = blockAt(this.sums, y), b = this.blocks[i], box = this.blockButtonIn(this.data.get(b.key));
+    return box && inBox(box, x, y - this.sums[i]) ? b : null;
   }
 
   // The block whose comment count holds column point (x, y), which may lie right of the text column.
@@ -3390,21 +3445,33 @@ export class Editor {
   }
 
   // The field caret for a press at (x, y) on block b, x from the column's left edge and y from the block's top,
-  // estimated from the block as currently drawn: rendered, or a field (the edited block's, or a text block's own); in a
-  // paragraph of pictures, where the picture at y begins. A press only the page heard (beside a text block's field: its
-  // marker, the space above it) and Page Up / Down use it.
+  // estimated from the block as currently drawn: rendered, or a field (the edited block's, or a text block's own); on a
+  // table in Reading, grid or source, the pressed cell's start; in a paragraph of pictures, where the picture at y
+  // begins. A press only the page heard (beside a text block's field: its marker, the space above it) and Page Up / Down
+  // use it.
   pressCaret(b, x, y) {
     const d = this.data.get(b.key), active = b.key === this.activeKey, asField = active || d.mode === "field";
+    if (d.grid && !active) return this.gridCaret(b, d, x - d.depth * INDENT, y - d.space);
     const c = this.chromeOf(d, asField), cal = this.calOf(d.style), value = active ? this.seen : this.openedValue(b);
     if (b.kind === "mermaid" && !active) return this.entry(b, value, 1, null);
     if (d.look === "picture" && !active) return this.pictureStartAt(b, d, y);
     const height = (this.heights.get(b.key) ?? this.estimate(b)) - c.y - c.below - (asField ? d.padActive : d.padRendered);
-    const fenced = !active && b.kind === "frontmatter";
-    return pressToField({ kind: b.kind, value, fenced, rows: this.rowsOf(d, asField), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance });
+    const fenced = !active && b.kind === "frontmatter", target = { kind: b.kind, value, fenced, rows: this.rowsOf(d, asField), width: c.w, height };
+    if (b.kind === "table" && !active) return tablePress(target, x - c.x, y - c.y);
+    return pressToField(target, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance });
   }
 
   openedValue(b) {
     return withInnerLine(b, fieldOf(this.doc, b).value);
+  }
+
+  // The field caret for a press at (x, y) from the top-left of table b's grid (data d): the start of the pressed cell's
+  // text, or of the row's last cell where the row lacks the pressed one.
+  gridCaret(b, d, x, y) {
+    const { row, column } = gridAt(this.gridHeights(d), d.grid.widths, x, y), cells = tableOf(this.doc, b).rows[row].cells;
+    let c = Math.min(column, cells.length - 1);
+    while (c > 0 && !cells[c]) c--;
+    return docToField(fieldOf(this.doc, b), cells[c].start);
   }
 
   // Where the caret lands in block b, whose field shows `value`, coming from above (dir > 0) or below: in front matter,
@@ -5821,10 +5888,12 @@ export class Editor {
     this.blockNoteCards(i, b, this.cellNotesOf(b), focus, list, card => ({ at: after + card.index, want: this.cellTop(i, d, card) }), true);
   }
 
-  // The page y that cell comment `card` of table data d (page index i) is level with: its row's top as Reading's TextView
-  // draws a table of one-line rows, or while the table's source is edited, the top of the line holding the comment.
+  // The page y that cell comment `card` of table data d (page index i) is level with: its grid row's top, measured or
+  // estimated; while the table's source is edited, the top of the line holding the comment; for a table kept as
+  // source, its row's top as Reading's TextView draws a table of one-line rows.
   cellTop(i, d, card) {
     if (d.key === this.activeKey) return this.caretTop(i, card.c.start);
+    if (d.grid) return this.sums[i] + d.space + gridRowTop(this.gridHeights(d), card.row);
     return this.sums[i] + d.space + tableRowTop(card.row, CELL_LINE_H, TABLE_INSET);
   }
 
@@ -5836,7 +5905,7 @@ export class Editor {
     if (kept?.value === value) return kept;
     const cards = cellComments(value).map((x, index) => {
       const { when, text } = readNote(x.note);
-      return { c: x.comment, index, row: x.row, cell: x.cell, note: x.note, when, text, look: cardLook({ text, header: true }) };
+      return { c: x.comment, index, row: x.row, column: x.column, cell: x.cell, note: x.note, when, text, look: cardLook({ text, header: true }) };
     });
     const memo = { value, cards, look: null };
     this.cellMemo.set(b.key, memo);

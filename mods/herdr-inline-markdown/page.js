@@ -7,8 +7,8 @@ import { pictureBlock } from "./images.js";
 import { RAW, TEXT } from "./keys.js";
 import { showComments } from "./comments.js";
 import { deepHighlightColor, highlightColor, textColor } from "./colors.js";
-import { parseInline } from "./inline.js";
-import { CHIP, CODE_HEAD, NOTES } from "./geometry.js";
+import { asText, coloredMarks } from "./inline.js";
+import { CHIP, CODE_HEAD, GRID, NOTES } from "./geometry.js";
 
 export const owners = new Map();
 let owned = 0;
@@ -43,8 +43,9 @@ export const STYLES = {
   mono: { size: 13, weight: 400, lh: 1.5, mono: true },
   small: { size: 12, weight: 400, lh: 1.5, mono: true },
   cell: { size: 14, weight: 400, lh: 1.5 },
+  head: { size: 14, weight: 600, lh: 1.5 },
 };
-export const CALIBRATED = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "mono", "small"];
+export const CALIBRATED = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "mono", "small", "cell", "head"];
 
 // A code block's, diagram's or table's frame: while one of its comments is active, or while one is written on it.
 export const FRAMED = { active: "active", adding: "adding" };
@@ -56,7 +57,9 @@ const frameColors = (letters, t) => [...letters].map(l => (l === PICTURE_FRAME.d
 const RAW_KINDS = new Set(["code", "mermaid", "table", "html", "frontmatter", "hr", "definition"]);
 export const isRaw = kind => RAW_KINDS.has(kind);
 
-export function lookOf(b) {
+// `grid`: table b is drawn as a grid of cells, not as its source.
+export function lookOf(b, grid = false) {
+  if (grid) return { style: "cell", color: "foreground", look: "grid" };
   if (b.kind === "heading") return { style: `h${b.level}`, color: "foreground", look: "text" };
   if (b.kind === "paragraph" && b.image) return { style: "small", color: "dim", look: "picture" };
   if (b.kind === "paragraph" || b.kind === "item" || b.kind === "quote") return { style: "p", color: "foreground", look: "text" };
@@ -91,28 +94,13 @@ const sameList = (tree, a, b) => {
   return ta.kind === "item" && tb.kind === "item" && ta.list === tb.list;
 };
 
-const BLOCK_START = /^(?:#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|>|`{3}|~{3}|\d{1,9}[.)](?:[ \t]|$)|(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$)/;
-const MAY_MARK = /<mark/i;
-
-// TextView draws a <mark> with no colour of its own in a bright yellow: it gets the highlight colour instead.
-function coloredMarks(text, color) {
-  if (!color || !MAY_MARK.test(text)) return text;
-  let out = "", at = 0;
-  for (const sp of parseInline(text).spans) {
-    if (sp.kind !== "html" || sp.tag !== "mark" || sp.color !== null) continue;
-    out += `${text.slice(at, sp.start)}<mark color="${color}">`;
-    at = sp.from;
-  }
-  return out + text.slice(at);
-}
-
 // A heading's text that would start a block of its own is escaped, and continuation lines are indented past anything
 // that could interrupt a paragraph: the source said they continue it. Comments and highlights show in `color`.
 export function displayText(b, color) {
   const content = showComments(coloredMarks(b.content, color), color), defs = b.render.slice(b.content.length);
   if (b.kind === "quote") return content + defs;
   const lines = content.split("\n");
-  if (b.kind === "heading" && BLOCK_START.test(lines[0])) lines[0] = lines[0].replace(/^(\d*)(.)/, "$1\\$2");
+  if (b.kind === "heading") lines[0] = asText(lines[0]);
   for (let k = 1; k < lines.length; k++) lines[k] = `    ${lines[k]}`;
   return lines.join("\n") + defs;
 }
@@ -180,6 +168,7 @@ function rendered(owner, d, t) {
       .child(TextView.markdown(`md-tv-${d.key}-${d.gen}`, d.text).selectable(true).on_link_click((url, cx) => owner.link(url, cx))));
   }
   if (d.look === "front") return frontBox(t, monoLines(d.text, st, color, mono));
+  if (d.look === "grid") return tableGrid(owner, d, t);
   if (d.look === "diagram") {
     const view = d.frameW ? owner.frameView(d.key) : null;
     const comment = view?.tools?.comment ? { tip: COMMENT_TIP, press: cx => owner.commentPress(d.key, cx) } : null;
@@ -194,6 +183,32 @@ function rendered(owner, d, t) {
 }
 
 const frontBox = (t, inner) => div().w_full().rounded(8).bg(t.surface).border_1().border_color(t.border).px(FRONT_BOX.px).py(FRONT_BOX.py).child(inner);
+
+// A table as its grid (block data d's `grid`, grid.js gridOf): the header row on the surface, each row reporting its
+// height, each cell's text drawn by a TextView of its own. Gpui clips to the box, not to its rounded corners, so the
+// header rounds its own top corners inside the 1 px line.
+function tableGrid(owner, d, t) {
+  const g = d.grid, last = g.texts.length - 1;
+  return v_flex().id(`md-table-${d.key}`).w(g.w).flex_none().border_1().border_color(t.border).rounded(GRID.radius).overflow_hidden()
+    .children(g.texts.map((cells, r) => h_flex().id(`md-row-${d.key}-${r}`).w_full().items_stretch()
+      .when(r === 0, el => el.bg(t.surface).rounded_t(GRID.radius - GRID.line))
+      .when(r < last, el => el.border_b(GRID.line).border_color(t.border))
+      .on_size_change((size, cx) => owner.rowSized(d.key, r, size, cx))
+      .children(cells.map((text, c) => gridCell(owner, d, t, r, c, text)))));
+}
+
+// A centred or right-aligned column's text sits in its box (`boxes`), left-aligned inside it: a field, which edits a
+// cell, can't align its own text.
+function gridCell(owner, d, t, r, c, text) {
+  const g = d.grid, lined = c < g.widths.length - 1, align = g.aligns[c], box = g.boxes[r][c], st = r === 0 ? STYLES.head : STYLES.cell;
+  const view = TextView.markdown(`md-tv-${d.key}-${r}-${c}-${d.gen}`, text).selectable(true).on_link_click((url, cx) => owner.link(url, cx));
+  const inner = type(div(), st, t[d.color], owner.fonts.sans).min_h(g.rowPx[r === 0 ? 0 : 1]).child(view);
+  return h_flex().id(`md-cell-${d.key}-${r}-${c}`).w(g.widths[c] + (lined ? GRID.line : 0)).flex_none().items_start().px(GRID.padX).py(GRID.padY)
+    .when(lined, el => el.border_r(GRID.line).border_color(t.border))
+    .when(align === "center", el => el.justify_center())
+    .when(align === "right", el => el.justify_end())
+    .child(box ? inner.w(box).flex_none() : inner.w_full());
+}
 
 function piece(owner, d, t, p) {
   const st = STYLES[d.style], { sans, mono } = owner.fonts;
@@ -285,8 +300,10 @@ export function renderBlock(owner, d) {
 // highlight colour): an overlay on its box, or on its diagram's frame, so that nothing under it moves.
 function commentFrame(d, t) {
   const color = d.framed === FRAMED.adding ? highlightColor(t) : deepHighlightColor(t);
-  const frame = div().id(`md-comment-frame-${d.key}`).absolute().rounded(8).border_2().border_color(color);
-  return d.frameW ? frame.left(d.depth * INDENT + d.frameMl).bottom(0).w(d.frameW).h(d.frameH) : frame.left(d.depth * INDENT).right(0).top(d.space).bottom(0);
+  const frame = div().id(`md-comment-frame-${d.key}`).absolute().border_2().border_color(color);
+  if (d.frameW) return frame.rounded(8).left(d.depth * INDENT + d.frameMl).bottom(0).w(d.frameW).h(d.frameH);
+  if (d.grid) return frame.rounded(GRID.radius).left(d.depth * INDENT).top(d.space).w(d.grid.w).bottom(0);
+  return frame.rounded(8).left(d.depth * INDENT).right(0).top(d.space).bottom(0);
 }
 
 // A code block's or table's Comment button at `box` (the editor's blockButtonIn). It takes its own press, which goes

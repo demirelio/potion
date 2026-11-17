@@ -7,7 +7,8 @@ import {
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
   barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
-  CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, TABLE_VIEW, tableRowTop,
+  CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, TABLE_VIEW, tablePress, tableRowTop, GRID, columnWidths, gridRowHeights,
+  gridAt, gridRowTop,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
@@ -66,17 +67,59 @@ test("pressToField on wrapped code counts the rows of every character the field 
   assert.equal(pressToField(tabbed, 2 * 7.8, 2 * 20 + 5, cal), tabbed.value.indexOf("short") + 2, "a tab is a character of the line");
 });
 
-test("tables give the cell start, the delimiter row skipped", () => {
+test("a table's cells, the delimiter row marked; a press on its source in the edited field lands as in code", () => {
   const value = "| name | value |\n|------|-------|\n| a    | 12345 |\n| bb   | 6     |";
-  const t = { kind: "table", value, width: 400, height: 90 };
   const cells = tableCells(value);
   assert.equal(cells[1].delimiter, true);
   assert.equal(value.slice(cells[2].cells[1].start, cells[2].cells[1].end), "12345");
-  assert.equal(pressToField(t, 10, 5, cal), value.indexOf("name"));
-  assert.equal(pressToField(t, 390, 5, cal), value.indexOf("value"));
-  assert.equal(pressToField(t, 10, 35, cal), value.indexOf("a    |"));
-  assert.equal(pressToField(t, 350, 80, cal), value.indexOf("6"));
   assert.deepEqual(tableCells("a | b\n--|--\nx | y | z\n | x").map(r => r.cells.length), [2, 2, 3, 1]);
+  assert.deepEqual(tableCells("| a | b \\\\|\n|---|---|\n| c | d \\|").map(r => r.cells.length), [2, 2, 2], "\\\\| closes a row, \\| does not");
+  const t = { kind: "table", value, width: 400, height: 4 * 20 };
+  assert.equal(pressToField(t, 9 * 7.8, 2 * 20 + 5, cal), value.indexOf("12345"), "line 3, column 9");
+});
+
+test("a press on a table Reading draws from its source gives the pressed cell's start, the delimiter row skipped", () => {
+  const value = "| name | value |\n|------|-------|\n| a    | 12345 |\n| bb   | 6     |";
+  const t = { kind: "table", value, width: 400, height: 90 };
+  assert.equal(tablePress(t, 10, 5), value.indexOf("name"));
+  assert.equal(tablePress(t, 390, 5), value.indexOf("value"));
+  assert.equal(tablePress(t, 10, 35), value.indexOf("a    |"));
+  assert.equal(tablePress(t, 350, 80), value.indexOf("6"));
+});
+
+test("column widths: natural ones (the widest text and the padding, 64 to 360 px) when they fit the room", () => {
+  assert.deepEqual(GRID, { padX: 10, padY: 6, line: 1, minW: 64, maxW: 360, radius: 6 });
+  assert.deepEqual(columnWidths([30, 50, 5], 600), [64, 70, 64], "never under 64");
+  assert.deepEqual(columnWidths([30, 900], 600), [64, 360], "nor over 360");
+});
+
+test("column widths that don't fit: a column that fits an equal share of what is left keeps its width, the others share the rest; equal shares when 64 px each doesn't fit", () => {
+  assert.deepEqual(columnWidths([30, 800], 300), [64, 236], "one wide column shrinks");
+  assert.deepEqual(columnWidths([30, 800, 800], 400), [64, 168, 168], "two wide ones share");
+  assert.deepEqual(columnWidths([30, 90, 800], 300), [64, 110, 126], "a share that grows as narrower columns keep theirs");
+  assert.deepEqual(columnWidths([100, 100, 120, 800], 400), [100, 100, 100, 100], "none fits a share");
+  assert.deepEqual(columnWidths([200, 200, 200, 200, 200], 330), [66, 66, 66, 66, 66], "all share, each over 64");
+  assert.deepEqual(columnWidths(Array(10).fill(30), 500), Array(10).fill(50), "too many columns for 64 px each: equal shares");
+  assert.ok(columnWidths([333, 77, 512, 64], 451).reduce((a, b) => a + b) <= 451, "never wider than the room");
+});
+
+test("a grid's estimated rows: the tallest cell's wrapped rows times its style's row, the padding and the line under it but the last", () => {
+  const head = { row: 21, advance: 7 }, body = { row: 21, advance: 6.5 };
+  const one = 2 * GRID.padY + 21;
+  assert.deepEqual(gridRowHeights([["a", "b"], ["c", "d"], ["e", "f"]], [100, 100], head, body), [one + 1, one + 1, one]);
+  const long = "word ".repeat(10).trim();
+  assert.deepEqual(gridRowHeights([["h"], [long]], [100], head, body), [one + 1, 2 * GRID.padY + 21 * wrapRows(long, 80, 6.5).length], "a cell that wraps raises its row");
+  assert.deepEqual(gridRowHeights([[""]], [64], head, body), [one], "an empty cell is a row");
+});
+
+test("the cell of a grid at a point from its top-left corner: the row by the rows' heights, the column by the widths, each with its line", () => {
+  const heights = [34, 34, 50], widths = [100, 80];
+  assert.deepEqual(gridAt(heights, widths, 5, 5), { row: 0, column: 0 });
+  assert.deepEqual(gridAt(heights, widths, 102, 35), { row: 1, column: 1 }, "past the first column's line");
+  assert.deepEqual(gridAt(heights, widths, 101, 34), { row: 0, column: 0 }, "a line belongs to the cell before it");
+  assert.deepEqual(gridAt(heights, widths, 500, 500), { row: 2, column: 1 }, "past the edges: the last");
+  assert.deepEqual(gridAt(heights, widths, -5, -5), { row: 0, column: 0 });
+  assert.equal(gridRowTop(heights, 2), 1 + 34 + 34);
 });
 
 test("a table's drawn rows of one line each: the frame's 1 px, then per row 7 px above and below its line and a 1 px rule", () => {

@@ -8,7 +8,8 @@ import { makeCx, must } from "./helpers.mjs";
 const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 const { CODE_HEAD, NOTES } = await import("../mods/herdr-inline-markdown/geometry.js");
-const { BOX, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
+const { BOX, CALIBRATED, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
+const { gridOf } = await import("../mods/herdr-inline-markdown/grid.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
 const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
 const { piecesOf } = await import("../mods/herdr-inline-markdown/tokens.js");
@@ -63,6 +64,72 @@ test("how Reading draws each kind, in which type and colour", () => {
   ]);
 });
 
+test("a table the grid draws is drawn in the cell style; the header's style is the cell's at 600; both are calibrated", () => {
+  const b = blocksOf("| a |\n|---|\n| b |\n")[0];
+  assert.deepEqual(lookOf(b, true), { style: "cell", color: "foreground", look: "grid" });
+  assert.deepEqual(lookOf(b).look, "boxed", "kept as source");
+  assert.deepEqual([STYLES.cell, STYLES.head], [{ size: 14, weight: 400, lh: 1.5 }, { size: 14, weight: 600, lh: 1.5 }]);
+  assert.ok(CALIBRATED.includes("cell") && CALIBRATED.includes("head"));
+});
+
+const GRID_TABLE = "| Name | Size | Note |\n|---|:-:|--:|\n| **apple** | 12 | [a](https://e.com) |\n| pear | 3 | {==ripe==}{>>2026-11-16 20:51 \\| why?<<} |\n";
+// A table drawn as its grid, from the grid's data as the editor makes it.
+function drawnGrid(more = {}, also = {}) {
+  const doc = parse(GRID_TABLE), b = doc.blocks[0], cal = { row: 21, advance: 6.6 };
+  const grid = gridOf({}, doc, b, { room: 700, head: cal, body: cal, color: HIGHLIGHT, deep: null, defs: { map: doc.defs } });
+  return drawn(GRID_TABLE, 0, { look: "grid", style: "cell", text: "", grid, ...more }, { rowSized(key, r, size) { (this.rows ??= []).push([key, r, size]); }, ...also });
+}
+
+test("a table drawn as a grid: its rows and cells, each cell's text by a TextView of its own, no pipe and no delimiter row", () => {
+  const { el, d, owner } = drawnGrid(), table = must(el, `md-table-${d.key}`);
+  assert.deepEqual(table.kids.map(k => k.id), [0, 1, 2].map(r => `md-row-${d.key}-${r}`), "the header first, no delimiter row");
+  const views = all(table, n => n.kind === "textview");
+  assert.equal(views.length, 9);
+  assert.deepEqual(views.map(v => v.markdown), ["Name", "Size", "Note", "**apple**", "12", "[a](https://e.com)", "pear", "3", `<mark color="${HIGHLIGHT}">ripe</mark>`]);
+  assert.ok(views.every(v => !v.markdown.includes("|") && !v.markdown.includes("---")));
+  assert.deepEqual(views.map(v => v.id).slice(0, 2), [`md-tv-${d.key}-0-0-0`, `md-tv-${d.key}-0-1-0`]);
+  assert.ok(find(table, `md-cell-${d.key}-2-1`));
+  fire(views[5], "on_link_click", "https://e.com", makeCx());
+  assert.deepEqual(owner.links, ["https://e.com"], "a link clicked in a cell goes to the editor");
+  fire(must(table, `md-row-${d.key}-1`), "on_size_change", { width: 300, height: 34 }, makeCx());
+  assert.deepEqual(owner.rows, [[d.key, 1, { width: 300, height: 34 }]], "each row reports its height");
+  const named = all(el, n => n.id !== null).map(n => n.id);
+  assert.equal(new Set(named).size, named.length, "ids unique");
+  assert.ok(all(el, n => Object.keys(n.handlers).length > 0).every(n => n.id), "every element with a handler has an id");
+});
+
+test("the grid's look: 1 px lines round it and between rows and columns, rounded 6 and clipped; the header on the surface at 600; cells padded 10 by 6 in the page font", () => {
+  const { el, d } = drawnGrid(), table = must(el, `md-table-${d.key}`), g = d.grid;
+  assert.deepEqual([table.style.w, table.style.border_1, table.style.border_color, table.style.rounded, table.style.overflow_hidden], [g.w, true, "border", 6, true]);
+  const [header, middle, last] = table.kids;
+  assert.deepEqual([header.style.bg, header.style.rounded_t, header.style.border_b, middle.style.bg, middle.style.border_b, last.style.border_b], ["surface", 5, 1, undefined, 1, undefined]);
+  const cells = middle.kids;
+  assert.deepEqual(cells.map(c => [c.style.w, c.style.px, c.style.py, c.style.border_r]), [[g.widths[0] + 1, 10, 6, 1], [g.widths[1] + 1, 10, 6, 1], [g.widths[2], 10, 6, undefined]]);
+  const typeOf = (r, c) => {
+    const view = all(must(table, `md-cell-${d.key}-${r}-${c}`), n => n.kind === "textview")[0], parent = all(table, n => n.kids.includes(view))[0];
+    return [parent.style.font_family, parent.style.text_size, parent.style.font_weight, parent.style.line_height, parent.style.text_color];
+  };
+  assert.deepEqual(typeOf(0, 0), [".SystemUIFont", 14, 600, 1.5, "foreground"], "the header at 600");
+  assert.deepEqual(typeOf(1, 0), [".SystemUIFont", 14, 400, 1.5, "foreground"]);
+});
+
+test("a centred column's text sits in a box as wide as the text, in the middle of its cell; a right one's at the right; left and none fill the cell", () => {
+  const { el, d } = drawnGrid(), g = d.grid;
+  const boxOf = (r, c) => all(must(el, `md-cell-${d.key}-${r}-${c}`), n => n.kids.some(k => k.kind === "textview"))[0];
+  const centred = must(el, `md-cell-${d.key}-1-1`), right = must(el, `md-cell-${d.key}-1-2`), left = must(el, `md-cell-${d.key}-1-0`);
+  assert.deepEqual([centred.style.justify_center, boxOf(1, 1).style.w], [true, g.boxes[1][1]]);
+  assert.ok(g.boxes[1][1] < g.widths[1] - 20, "narrower than its cell");
+  assert.deepEqual([right.style.justify_end, boxOf(1, 2).style.w], [true, g.boxes[1][2]]);
+  assert.deepEqual([left.style.justify_center, left.style.justify_end, boxOf(1, 0).style.w_full], [undefined, undefined, true]);
+  assert.deepEqual([must(el, `md-cell-${d.key}-0-1`).style.justify_center, boxOf(0, 1).style.w], [true, g.boxes[0][1]], "the header follows its column");
+});
+
+test("the frame of a table's active comment lies over its grid", () => {
+  const { el, d } = drawnGrid({ framed: "active" }), frame = must(el, `md-comment-frame-${d.key}`);
+  assert.deepEqual([frame.style.absolute, frame.style.left, frame.style.top, frame.style.w, frame.style.bottom, frame.style.rounded], [true, 0, d.space, d.grid.w, 0, 6]);
+  assert.equal(frame.style.right, undefined, "as wide as the grid, not the column");
+});
+
 test("space above a block: 0 first, 32 / 28 / 24 / 20 above headings, 8 after one, 6 inside a list, 14 otherwise", () => {
   const spaces = text => blocksOf(text).map((_, i, all) => spaceBefore(all, i));
   assert.deepEqual(spaces("# a\n## b\n### c\n#### d\n##### e\n###### f\n"), [0, 28, 24, 20, 20, 20]);
@@ -87,6 +154,7 @@ test("TextView text: a heading's text that would start a block is escaped; inlin
   assert.equal(head("*emphasis* stays"), "*emphasis* stays");
   assert.equal(head("-dash"), "-dash");
   assert.equal(head("2024 was a year"), "2024 was a year");
+  assert.equal(head("[a]: https://x"), "[a]\\: https://x", "a link reference definition's colon");
 });
 
 test("TextView text: continuation lines are indented past anything that could interrupt, line breaks kept, definitions kept apart", () => {

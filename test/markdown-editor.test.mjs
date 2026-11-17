@@ -18,7 +18,7 @@ const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, NOTE, LANG, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 
@@ -172,7 +172,7 @@ test("the font: the theme's sans on the root, on every text block's field and on
   const visit = n => { for (const k of n.kids) { if (k.kind === "textview") parents.push(n); visit(k); } };
   visit(must(t, "md-column"));
   const fields = all(must(t, "md-column"), n => n.kind === "textarea");
-  assert.deepEqual([parents.length, fields.length], [1, 4], "the table's TextView and four fields");
+  assert.deepEqual([parents.length, fields.length], [2, 4], "the TextView of each of the table's two cells, and four fields");
   for (const el of [...parents, ...fields]) assert.equal(el.style.font_family, SANS);
 });
 
@@ -650,7 +650,7 @@ test("calibration: one and three rows of each style, rendered and in a field, se
   assert.deepEqual([strip.style.absolute, strip.style.top], [true, -10000]);
   assert.equal(must(strip, "md-cal-p-tv3-view").markdown, "Ag\\\nAg\\\nAg", "three rows made with hard breaks");
   assert.equal(all(must(strip, "md-cal-p-f3"), n => n.kind === "textarea")[0].state.value(), "Ag\nAg\nAg");
-  const sizes = { p: [24, 72, 24, 72, 283.2], h1: [35, 105, 35, 105, 527], h2: [28.5, 85.5, 30, 88, 414], h3: [25, 75, 25, 75, 339], h4: [24, 72, 24, 72, 301], h5: [24, 72, 24, 72, 283], h6: [24.5, 69.5, 22, 66, 264], mono: [19.5, 58.5, 20, 60, 321.2], small: [18, 54, 18, 54, 296] };
+  const sizes = { p: [24, 72, 24, 72, 283.2], h1: [35, 105, 35, 105, 527], h2: [28.5, 85.5, 30, 88, 414], h3: [25, 75, 25, 75, 339], h4: [24, 72, 24, 72, 301], h5: [24, 72, 24, 72, 283], h6: [24.5, 69.5, 22, 66, 264], mono: [19.5, 58.5, 20, 60, 321.2], small: [18, 54, 18, 54, 296], cell: [21, 63, 21, 63, 263.2], head: [21, 63, 21, 63, 272] };
   const t = m.tree();
   m.cx.notifiedEntities.length = 0;
   for (const [name, [tv1, tv3, f1, f3, adv]] of Object.entries(sizes)) {
@@ -659,6 +659,7 @@ test("calibration: one and three rows of each style, rendered and in a field, se
   }
   assert.deepEqual(m.view.cal.p, { row: 24, ratio: 1.6, padActive: 0, padRendered: 0, advance: 283.2 / 40 });
   assert.deepEqual(m.view.cal.h2, { row: 28.5, ratio: 28.5 / 22, padActive: 0, padRendered: 1, advance: 414 / 40 }, "the field's extra pixel goes under the rendered heading");
+  assert.deepEqual([m.view.cal.cell.advance, m.view.cal.head.advance], [263.2 / 40, 272 / 40], "a table's cells and header, measured as text");
   assert.deepEqual([m.view.cal.h6.row, m.view.cal.h6.padActive, m.view.cal.h6.padRendered], [22.5, 2, 0], "a field shorter than TextView gets the difference under it");
   assert.equal(find(m.tree(), "md-cal"), null, "the strip is gone once measured");
   assert.deepEqual([m.view.data.get(keyAt(m, 0)).row, m.view.data.get(keyAt(m, 0)).ratio], [35, 1.25]);
@@ -668,7 +669,7 @@ test("calibration: one and three rows of each style, rendered and in a field, se
 test("calibration that differs from the defaults redraws the blocks of that style with the measured row and pad", async () => {
   const m = await mount({ disk: "## Title\n\nText\n" });
   const t = m.tree();
-  for (const name of ["p", "h1", "h2", "h3", "h4", "h5", "h6", "mono", "small"]) {
+  for (const name of ["p", "h1", "h2", "h3", "h4", "h5", "h6", "mono", "small", "cell", "head"]) {
     const [tv1, tv3, f1, f3] = name === "h2" ? [28.5, 85.5, 30, 88] : [24, 72, 24, 72];
     for (const [part, h] of [["tv1", tv1], ["tv3", tv3], ["f1", f1], ["f3", f3]]) fire(must(t, `md-cal-${name}-${part}`), "on_size_change", { width: 600, height: h }, m.cx);
     fire(must(t, `md-cal-${name}-adv`), "on_size_change", { width: 300, height: 20 }, m.cx);
@@ -2977,8 +2978,8 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.equal(all(written, n => n.kind === "textarea")[0].state, view.noteField, "the card of the comment being written");
   const jsCard = must(t, `md-card-${code[0].key}-0`);
   assert.ok(find(jsCard, `md-card-${code[0].key}-0-time`) && textOf(must(jsCard, `md-card-${code[0].key}-0-text`)).trim() === "why 42?", "the js block's comment on its card");
-  const table = view.doc.blocks.find(b => b.kind === "table").key, cells = all(must(t, `md-block-${table}`), n => n.kind === "textview")[0].markdown;
-  assert.ok(!cells.includes("{>>") && cells.includes(`<mark color="${highlightColor(theme())}">b</mark>`), "the table's cell comment: its text highlighted, its markup hidden");
+  const table = view.doc.blocks.find(b => b.kind === "table").key, cells = all(must(t, `md-table-${table}`), n => n.kind === "textview").map(n => n.markdown);
+  assert.deepEqual(cells, ["Column", "Other", "a", `<mark color="${highlightColor(theme())}">b</mark>`], "the table drawn as a grid, its cell comment's text highlighted and its markup hidden");
   assert.equal(textOf(must(t, `md-card-${table}-cell-0-text`)).trim(), "on a cell", "and its card");
   audit(t);
 });
@@ -3232,7 +3233,7 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   for (const name of new Set(table.map(x => x.action))) assert.equal(typeof root.handlers[`on_action:${name}`], "function", name);
 });
 
-test("a press on a code block puts the caret on the pressed line and column and moves nothing, its field showing only the code; on a table, at the pressed cell's start", async () => {
+test("a press on a code block puts the caret on the pressed line and column and moves nothing, its field showing only the code; on a table's grid, at the pressed cell's start", async () => {
   const code = "const a = 1;\nlet b = 2;\nreturn a + b;", table = "| name | value |\n|------|-------|\n| a    | 12345 |";
   const m = await page(`Intro\n\n\`\`\`js\n${code}\n\`\`\`\n\n${table}\n`, { 0: 24, 1: 14 + 26 + CODE_HEAD + 3 * 19.5, 2: 14 + 26 + 60 }, 150);
   const [codeKey, tableKey] = [keyAt(m, 1), keyAt(m, 2)];
@@ -3248,7 +3249,8 @@ test("a press on a code block puts the caret on the pressed line and column and 
   await clickAt(m, { x: X + 15 + 4 * 7.8 + 1, y: topOf(m, 1) + 14 + 13 + CODE_HEAD + 19.5 + 5 }); // line 2, column 4
   const second = code.indexOf("let") + 4;
   assert.deepEqual([m.view.activeKey, m.view.field.selection, m.view.offset], [codeKey, { start: second, end: second }, 0]);
-  await clickAt(m, { x: X + 15 + 400, y: topOf(m, 2) + 14 + 13 + 30 + 5 }); // the body row, the second column
+  const grid = m.view.data.get(tableKey).grid;
+  await clickAt(m, { x: X + 1 + grid.widths[0] + 1 + 5, y: topOf(m, 2) + 14 + 1 + grid.heights[0] + 5 }); // the grid's body row, the second column
   assert.equal(m.view.activeKey, tableKey);
   const cell = table.indexOf("12345");
   assert.deepEqual(m.view.field.selection, { start: cell, end: cell });
@@ -5418,7 +5420,8 @@ test("a block not measured yet is estimated at the rows its lines wrap to in its
   const m = await mount({ disk: `Short\n\n${long}\n\n- ${long}\n\n| a |\n|---|\n| ${long} |\n` });
   viewportOf(m, 900, 600);
   const h = i => m.view.sums[i + 1] - m.view.sums[i];
-  assert.deepEqual([0, 1, 2, 3].map(h), [24, 14 + 3 * 24, 14 + 4 * 24, 14 + 3 * 19.5 + 26], "a table's source lines count as one row each");
+  const cellRow = STYLES.cell.size * STYLES.cell.lh, cellPad = 2 * GRID.padY;
+  assert.deepEqual([0, 1, 2, 3].map(h), [24, 14 + 3 * 24, 14 + 4 * 24, 14 + (cellRow + cellPad + 1) + (6 * cellRow + cellPad) + 2], "a grid's rows wrap in their cells: 10 words a row in a 360 px column");
   let worked = 0;
   const real = m.view.estimateOf.bind(m.view);
   m.view.estimateOf = (...args) => { worked++; return real(...args); };
@@ -11294,7 +11297,7 @@ test("a press on a block's card makes its comment active: the card raised with i
       assert.equal(m.cx.stopped - stopped, 1, "the press goes no further");
       assert.deepEqual([m.view.activeKey, isRaised(card), isRaised(blockCard(m, key, 0, t))], [null, true, false]);
       assert.ok(find(card, `md-card-${key}-1-edit`) && find(card, `md-card-${key}-1-resolve`), "Edit and Resolve");
-      assert.deepEqual([frame.style.border_color, frame.style.border_2, frame.style.rounded, frame.style.absolute], [deepHighlightColor(theme()), true, 8, true]);
+      assert.deepEqual([frame.style.border_color, frame.style.border_2, frame.style.rounded, frame.style.absolute], [deepHighlightColor(theme()), true, key === table ? GRID.radius : 8, true], "rounded as the box or grid it lies on");
       assert.equal(all(t, n => /^md-comment-frame-/.test(n.id ?? "")).length, 1, "one active at a time");
       audit(t);
     }
@@ -11527,7 +11530,7 @@ const NEW_CARD_ID = "md-card-new";
 const CODE_AND_TABLE = "Intro\n\n```js\nlet a = 1;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nEnd\n";
 const CODE_AND_TABLE_SIZES = { 0: 24, 1: CODE_H, 2: TABLE_H, 3: 38 };
 
-test("a code block's and a table's Comment button shows while the pointer is over the block: 4 px left of the code block's language chip, which stays put, and raised at the top right of the table's box; hovering redraws that block alone", async () => {
+test("a code block's and a table's Comment button shows while the pointer is over the block: 4 px left of the code block's language chip, which stays put, and raised 4 px right of the table's grid by its top right corner; hovering redraws that block alone", async () => {
   const m = await page(CODE_AND_TABLE, CODE_AND_TABLE_SIZES);
   const [code, table, intro] = [keyOfKind(m, "code"), keyOfKind(m, "table"), keyAt(m, 0)];
   const chipBefore = m.view.chipIn(m.view.data.get(code)), head = must(m.tree(), `md-code-head-${code}`).kids.length, data = m.view.data.get(code);
@@ -11552,7 +11555,7 @@ test("a code block's and a table's Comment button shows while the pointer is ove
   assert.equal(buttonOf(m, code, t), null, "off the code block it goes");
   button = must(t, `md-block-comment-${table}`);
   const d = m.view.data.get(table);
-  assert.deepEqual([button.style.left, button.style.top, button.style.w, button.style.h], [m.view.textWidth() - 6 - CHIP.h, d.space + 6, CHIP.h, CHIP.h], "6 px inside the box's top right corner");
+  assert.deepEqual([button.style.left, button.style.top, button.style.w, button.style.h], [d.grid.w + 4, d.space + 6, CHIP.h, CHIP.h], "4 px right of the grid, 6 px below its top");
   assert.deepEqual([button.style.bg, button.style.border_1, button.style.border_color, button.style.shadow_sm, button.style.tooltip], ["popover", true, "border", true, COMMENT_TIP], "raised over the table");
   hover(m, overBlock(m, intro));
   assert.deepEqual(buttonsIn(m.tree()), [], "none over a paragraph");
@@ -11789,7 +11792,8 @@ test("in a narrow pane, and in a file with no comment yet, the new comment is a 
     for (const key of [table, code]) {
       hover(m, overBlock(m, key));
       const d = m.view.data.get(key), s = buttonOf(m, key).style;
-      assert.deepEqual([s.left, s.top], [d.notesX - 4 - CHIP.h, d.notesY], "left of the block's count, which would be under it");
+      if (key === code) assert.deepEqual([s.left, s.top], [d.notesX - 4 - CHIP.h, d.notesY], "left of the block's count, which would be under it");
+      else assert.deepEqual([s.left, s.top, d.notesX > s.left + CHIP.h], [d.grid.w + 4, d.space + 6, true], "right of the grid, clear of the count at the column's edge");
       hover(m, buttonPoint(m, key));
       assert.equal(m.view.hit(buttonPoint(m, key)).on, "comment");
     }
@@ -12236,17 +12240,24 @@ const CELL_DOC = [
   "{>>on the table<<}", "",
   "End", "",
 ].join("\n");
-const CELL_ROW = 7 + STYLES.cell.size * STYLES.cell.lh + 7 + 1;
-const CELL_SIZES = { 0: 24, 1: 14 + 26 + 4 * CELL_ROW, 3: 38 };
+// A grid row of one-line cells: a line of the cell style in its padding; each row but the last has a line under it,
+// and the grid a line round it.
+const GRID_ROW = 2 * GRID.padY + STYLES.cell.size * STYLES.cell.lh;
+const CELL_ROW = GRID_ROW + GRID.line;
+const gridH = rows => rows * CELL_ROW - GRID.line + 2 * GRID.line;
+const CELL_SIZES = { 0: 24, 1: 14 + gridH(4), 3: 38 };
 const cellCard = (m, key, n, t = m.tree()) => find(t, `md-card-${key}-cell-${n}`);
-// Where a card level with drawn row `row` of table `key` goes: TextView's table in its box, each row one line, framed.
-const rowLevel = (m, key, row) => levelWith(m, key) + 1 + BOX.py + 1 + row * CELL_ROW;
+// Where a card level with grid row `row` of table `key` goes, the rows as estimated: one line each, under the grid's line.
+const rowLevel = (m, key, row) => levelWith(m, key) + GRID.line + row * CELL_ROW;
+const gridOfKey = (m, key, t = m.tree()) => must(t, `md-table-${key}`);
+const cellViews = (m, key, t = m.tree()) => all(gridOfKey(m, key, t), n => n.kind === "textview");
+const rowReport = (m, key, r, height) => fire(must(m.tree(), `md-row-${key}-${r}`), "on_size_change", { width: 300, height }, m.cx);
 
 test("Reading draws a table's cell comments as highlighted text, notes and marks hidden, a point comment a highlighted 💬; the table's source while edited and an HTML block show them as written", async () => {
   const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), light = highlightColor(theme());
-  assert.equal(viewAt(m, 1).markdown, [
-    `| <mark color="${light}">Name</mark> | Size |`, "|---|---|", `| apple | <mark color="${light}">12</mark> |`, `| pear | <mark color="${light}">${POINT}</mark> |`,
-  ].join("\n"));
+  assert.deepEqual(cellViews(m, table).map(v => v.markdown), [
+    `<mark color="${light}">Name</mark>`, "Size", "apple", `<mark color="${light}">12</mark>`, "pear", `<mark color="${light}">${POINT}</mark>`,
+  ], "each in its grid cell");
   await openKey(m, table);
   assert.equal(m.view.field.value(), CELL_DOC.split("\n").slice(2, 6).join("\n"), "edited: the source, comments and all");
   reset();
@@ -12283,18 +12294,19 @@ test("a press on a cell comment's card makes it active: the card raised, that ce
     let t = m.tree();
     assert.deepEqual([isRaised(cellCard(m, table, 1, t)), isRaised(cellCard(m, table, 0, t)), frameOf(m, table, t), m.view.activeKey], [true, false, null, null]);
     assert.ok(find(t, `md-card-${table}-cell-1-edit`) && find(t, `md-card-${table}-cell-1-resolve`), "Edit and Resolve");
-    const shown = viewAt(m, 1, t).markdown;
-    assert.ok(shown.includes(`<mark color="${deep}">12</mark>`) && shown.includes(`<mark color="${light}">Name</mark>`) && shown.includes(`<mark color="${light}">${POINT}</mark>`), shown);
+    const shown = cellViews(m, table, t).map(v => v.markdown);
+    assert.deepEqual([shown[3], shown[0], shown[5]], [`<mark color="${deep}">12</mark>`, `<mark color="${light}">Name</mark>`, `<mark color="${light}">${POINT}</mark>`], "its cell's text deep, the others light");
     audit(t);
+    const deepAnywhere = (tree = m.tree()) => cellViews(m, table, tree).some(v => v.markdown.includes(deep));
     await m.key("escape");
     t = m.tree();
-    assert.deepEqual([isRaised(cellCard(m, table, 1, t)), viewAt(m, 1, t).markdown.includes(deep)], [false, false], "Escape ends it");
+    assert.deepEqual([isRaised(cellCard(m, table, 1, t)), deepAnywhere(t)], [false, false], "Escape ends it");
     cardPress(m, `md-card-${table}-cell-2`);
-    assert.ok(viewAt(m, 1).markdown.includes(`<mark color="${deep}">${POINT}</mark>`), "a point comment's 💬 deep");
+    assert.equal(cellViews(m, table)[5].markdown, `<mark color="${deep}">${POINT}</mark>`, "a point comment's 💬 deep");
     cardPress(m, `md-card-${table}-0`);
     await flush();
     t = m.tree();
-    assert.deepEqual([isRaised(cellCard(m, table, 2, t)), isRaised(cellCard(m, table, 0, t)), isRaised(blockCard(m, table, 0, t)), Boolean(frameOf(m, table, t)), viewAt(m, 1, t).markdown.includes(deep)],
+    assert.deepEqual([isRaised(cellCard(m, table, 2, t)), isRaised(cellCard(m, table, 0, t)), isRaised(blockCard(m, table, 0, t)), Boolean(frameOf(m, table, t)), deepAnywhere(t)],
       [false, false, true, true, false], "the table's own comment: its frame, the cells back in the highlight colour");
     cardPress(m, `md-card-${table}-cell-0`);
     await flush();
@@ -12372,7 +12384,7 @@ test("counts take in cell comments: the footer, the margin for a file whose only
     const card = must(m.tree(), "md-notes-card");
     assert.deepEqual([0, 1, 2, 3].map(i => textOf(must(card, `md-note-${i}`))), ["on the table Edit Resolve", "Name 9:00 PM a header Edit Resolve", "12 8:51 PM too big? Edit Resolve", "Nov 15 fill in Edit Resolve"]);
     cardPress(m, "md-note-edit-2");
-    const box = must(m.tree(), "md-note"), top = pageTop(m, table) + d.space + 1 + BOX.py + 1 + CELL_ROW, over = top - BAR.gap - NOTE_BOX.h;
+    const box = must(m.tree(), "md-note"), top = pageTop(m, table) + d.space + GRID.line + CELL_ROW, over = top - BAR.gap - NOTE_BOX.h;
     assert.deepEqual([box.style.top, box.style.left, m.view.noteField.value(), m.view.noteField.focused, cardOf(m)], [over >= BAR.margin ? over : top + BAR.gap, leftOf(m), "too big?", true, null], "the box over the cell's row");
     writeNote(m, "a | b");
     act(m, "mdb-note-save");
@@ -12405,4 +12417,146 @@ test("a table's cell comments are read once per table text: not again for a draw
   fire(must(m.tree(), `md-card-${table}-cell-0-resolve`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
   m.tree();
   assert.equal(m.view.cellMemo.get(table).cards.length, 2, "read again");
+});
+
+// Tables drawn as a grid of cells in Reading. The blocks of GRID_DOC: Intro (0), the table (1), End (2).
+const GRID_DOC = [
+  "Intro", "",
+  "| A | B | C |", "|---|:-:|--:|",
+  "| **b** | [l](https://e.com) | {==c==}{>>2026-11-16 20:51 \\| a note<<} |",
+  "| a \\| b | `x\\|y` | # not a heading |",
+  "", "End", "",
+].join("\n");
+
+test("Reading draws a table as a grid of cells: no pipe and no delimiter row; each cell's text by a TextView of its own as a paragraph's, its comments highlighted without their notes, \\| as | in code too, a block start kept as text", async () => {
+  const m = await page(GRID_DOC, { 0: 24, 1: 14 + gridH(3), 2: 38 }), table = keyAt(m, 1), light = highlightColor(theme());
+  const t = m.tree(), grid = gridOfKey(m, table, t);
+  assert.deepEqual(grid.kids.map(k => k.id), [0, 1, 2].map(r => `md-row-${table}-${r}`));
+  assert.deepEqual(cellViews(m, table, t).map(v => v.markdown), [
+    "A", "B", "C", "**b**", "[l](https://e.com)", `<mark color="${light}">c</mark>`, "a | b", "`x|y`", "\\# not a heading",
+  ]);
+  assert.equal(all(blockAt(m, 1, t), n => n.kind === "textview").length, 9, "no TextView of the source");
+  assert.deepEqual([grid.kids[0].style.bg, all(must(t, `md-cell-${table}-0-0`), n => n.style.font_weight === 600).length > 0], ["surface", true], "the header at 600 on the surface");
+  assert.equal(m.view.data.get(table).look, "grid");
+  audit(t);
+});
+
+test("a grid's columns are as wide as their widest shown text with the padding, within the page column less the block's indent; the widths stay one object while the table, the room and the calibration do", async () => {
+  const long = "long words ".repeat(30).trim();
+  const doc = `Intro\n\n| a | b |\n|---|---|\n| **short** | x |\n\n- item\n\n  | one | two | three |\n  |---|---|---|\n  | ${long} | ${long} | ${long} |\n\nEnd\n`;
+  const m = await page(doc, {}), [narrow, wide] = [keyOfKind(m, "table"), keyOfKind(m, "table", 1)];
+  const dn = m.view.data.get(narrow), dw = m.view.data.get(wide), adv = 14 * 0.47;
+  assert.deepEqual(dn.grid.widths, columnWidths([5 * adv, 1 * adv], m.view.textWidth() - 3), "**short** shows five characters");
+  assert.equal(dn.grid.w, dn.grid.widths[0] + dn.grid.widths[1] + 3);
+  assert.ok(dw.grid.w <= m.view.textWidth() - 24 && dw.grid.w > m.view.textWidth() - 24 - 3, "a wide table fills the room beside its item's indent");
+  const widths = dn.grid.widths;
+  m.view.scrollTo(10, m.cx);
+  m.view.rebuild(m.cx, null);
+  assert.equal(m.view.data.get(narrow).grid.widths, widths, "the same object");
+  assert.equal(m.view.data.get(narrow), dn, "so the table is not drawn again");
+  viewportOf(m, 500, 600);
+  await flush();
+  assert.ok(m.view.data.get(wide).grid.w <= m.view.textWidth() - 24, "a narrower pane: narrower columns");
+});
+
+test("a table not measured yet is estimated row by row: one-row cells within 2 px of their parts' sum, a cell that wraps raising its row; measured rows are kept without drawing anything again", async () => {
+  const m = await page("| a | b | c |\n|---|---|---|\n| d | e | f |\n| g | h | i |\n\nEnd\n", {}), table = keyAt(m, 0);
+  const parts = 3 * (2 * GRID.padY + STYLES.head.size * STYLES.head.lh) + 2 + 2;
+  assert.ok(Math.abs(m.view.sums[1] - m.view.sums[0] - parts) <= 2, `${m.view.sums[1] - m.view.sums[0]} vs ${parts}`);
+  reset();
+  const long = "word ".repeat(60).trim();
+  const w = await page(`| a | b |\n|---|---|\n| ${long} | e |\n| g | h |\n`, {}), d = w.view.data.get(keyAt(w, 0));
+  assert.ok(d.grid.heights[1] > 2 * d.grid.heights[2], "the wrapped row");
+  assert.equal(w.view.sums[1] - w.view.sums[0], d.grid.h);
+  const entity = m.view.entities.get(table), data = m.view.data.get(table);
+  m.cx.notifiedEntities.length = 0;
+  rowReport(m, table, 1, 60);
+  await flush();
+  assert.deepEqual([m.view.rowHeights.get(table)[1], m.view.data.get(table), m.cx.notifiedEntities.includes(entity)], [60, data, false], "kept for the table, nothing redrawn");
+});
+
+test("a press on a table's grid opens its source with the caret at the start of the pressed cell's text, found from the measured rows and the columns' widths", async () => {
+  const table = "| name | value |\n|------|-------|\n| a    | 12345 |\n| b    | 6     |";
+  const m = await page(`Intro\n\n${table}\n`, { 0: 24, 1: 14 + 34 + 60 + 34 + 33 + 2 }), key = keyAt(m, 1), d = m.view.data.get(key);
+  rowReport(m, key, 0, 34);
+  rowReport(m, key, 1, 60);
+  await flush();
+  const second = leftOf(m) + 1 + d.grid.widths[0] + 1 + 5, rowTop = r => topOf(m, 1) + d.space + 1 + [0, 34, 94][r];
+  await clickAt(m, { x: second, y: rowTop(2) + 5 });
+  assert.equal(m.view.activeKey, key);
+  assert.equal(m.view.field.value(), table, "its source");
+  assert.deepEqual(m.view.field.selection, { start: table.indexOf("6"), end: table.indexOf("6") }, "the third row by its measured top");
+  escape(m);
+  await clickAt(m, { x: second, y: rowTop(1) + 50 });
+  assert.deepEqual(m.view.field.selection, { start: table.indexOf("12345"), end: table.indexOf("12345") }, "a tall row");
+  escape(m);
+  await clickAt(m, { x: leftOf(m) + 5, y: rowTop(0) + 5 });
+  assert.deepEqual(m.view.field.selection, { start: 2, end: 2 });
+});
+
+test("a table kept as source: one whose rows hold more cells than its header, or of more than 1,000 cells, is drawn and opened as before, a press at the start of the pressed cell", async () => {
+  const irregular = "| a | b |\n|---|---|\n| c | d |\n| e | f | g |";
+  const m = await page(`${irregular}\n\n| a |\n|---|\n| b |\n`, { 0: 26 + 3 * 30, 1: 14 + gridH(2) });
+  assert.deepEqual([m.view.data.get(keyAt(m, 0)).look, find(m.tree(), `md-table-${keyAt(m, 0)}`), viewAt(m, 0).markdown], ["boxed", null, irregular]);
+  assert.deepEqual([m.view.data.get(keyAt(m, 1)).look, Boolean(gridOfKey(m, keyAt(m, 1)))], ["grid", true], "the regular one beside it");
+  // TextView spreads a row's cells over the box's width, three columns of one character each here, rows 30 px tall.
+  const box = m.view.chromeOf(m.view.data.get(keyAt(m, 0)), false);
+  const cellAt = (row, column) => ({ x: X + box.x + ((column + 0.5) * box.w) / 3, y: topOf(m, 0) + box.y + row * 30 + 5 });
+  await clickAt(m, cellAt(1, 1));
+  assert.equal(m.view.field.value(), irregular, "opened as before");
+  assert.deepEqual(m.view.field.selection, { start: irregular.indexOf("d"), end: irregular.indexOf("d") }, "the second row's second cell");
+  escape(m);
+  await clickAt(m, cellAt(2, 2));
+  assert.deepEqual(m.view.field.selection, { start: irregular.indexOf("g"), end: irregular.indexOf("g") }, "the extra cell of the last row");
+  reset();
+  const rows = n => `${"| x ".repeat(7)}|\n${"|---".repeat(7)}|\n${`${"| y ".repeat(7)}|\n`.repeat(n)}`;
+  const b = await page(`${rows(141)}\n${rows(142)}`, { 0: 2000, 1: 2000 });
+  assert.deepEqual([0, 1].map(i => b.view.data.get(keyAt(b, i)).look), ["grid", "boxed"], "1,000 cells less 6 and 1,001");
+});
+
+test("a file that can't be edited draws its tables as grids too, and a link clicked in a cell opens", async () => {
+  const m = await mount({ machine: "devbox", disk: GRID_DOC });
+  viewportOf(m);
+  const table = keyAt(m, 1), link = cellViews(m, table).find(v => v.markdown.includes("https://e.com"));
+  fire(link, "on_link_click", "https://e.com", m.cx);
+  assert.deepEqual(m.cx.opened, ["https://e.com"]);
+  assert.equal(m.view.activeKey, null);
+});
+
+test("phase 10 on the grid: the active frame over the grid, the Comment button 4 px right of its top right corner (in the column's padding for a table as wide as the column), a cell's card level with its grid row", async () => {
+  await atTime(NOW, async () => {
+    const wideCells = "| " + "word ".repeat(40).trim() + " | " + "more ".repeat(40).trim() + " |";
+    const doc = `Intro\n\n| a | {==b==}{>>2026-11-16 20:51 \\| on b<<} |\n|---|---|\n| c | {==d==}{>>2026-11-16 20:52 \\| on d<<} |\n\n{>>2026-11-16 20:00 | on the table<<}\n\n${wideCells}\n|---|---|\n\nEnd\n`;
+    const m = await widePage(doc, { 0: 24, 1: 14 + gridH(2), 3: 14 + 2 * GRID_ROW + 200, 4: 38 }), [table, full] = [keyOfKind(m, "table"), keyOfKind(m, "table", 1)];
+    const d = m.view.data.get(table);
+    cardPress(m, `md-card-${table}-0`);
+    const frame = must(m.tree(), `md-comment-frame-${table}`);
+    assert.deepEqual([frame.style.left, frame.style.top, frame.style.w, frame.style.bottom], [0, d.space, d.grid.w, 0], "the frame over the grid");
+    escape(m);
+    hover(m, { x: leftOf(m) + 10, y: pageTop(m, table) + d.space + 10 });
+    let button = must(m.tree(), `md-block-comment-${table}`);
+    assert.deepEqual([button.style.left, button.style.top], [d.grid.w + 4, d.space + 6], "right of the grid's corner");
+    rowReport(m, table, 0, 50);
+    await flush();
+    assert.equal(28 + m.view.cardList().find(e => e.id === `md-card-${table}-cell-1`).want, levelWith(m, table) + 1 + 50, "a cell's card level with its measured row's top");
+    assert.equal(28 + m.view.cardList().find(e => e.id === `md-card-${table}-cell-0`).want, levelWith(m, table) + 1, "the header's");
+    const df = m.view.data.get(full);
+    assert.ok(df.grid.w > m.view.textWidth() - 3, "a table as wide as the column");
+    hover(m, { x: leftOf(m) + 10, y: pageTop(m, full) + df.space + 10 });
+    button = must(m.tree(), `md-block-comment-${full}`);
+    assert.equal(button.style.left, df.grid.w + 4, "in the column's right padding");
+    await pressButton(m, full);
+    assert.deepEqual([m.view.blockAdd?.key, Boolean(newCardOf(m))], [full, true], "a press on it through the page opens the new comment");
+  });
+});
+
+test("a table's source offset revealed in Reading goes to the top of its grid row, the measured rows counted; the delimiter row's goes to the header's", async () => {
+  const table = "| a |\n|---|\n| b |\n| c |";
+  const m = await page(`Intro\n\n${table}\n`, { 0: 24, 1: 14 + gridH(3) }), key = keyAt(m, 1), d = m.view.data.get(key), start = m.view.doc.blocks[1].start;
+  rowReport(m, key, 0, 40);
+  await flush();
+  m.view.revealOffset(start + table.indexOf("c"));
+  assert.equal(m.view.reveal.rowY, d.space + GRID.line + 40 + d.grid.heights[1]);
+  m.view.revealOffset(start + table.indexOf("---"));
+  assert.equal(m.view.reveal.rowY, d.space + GRID.line);
 });

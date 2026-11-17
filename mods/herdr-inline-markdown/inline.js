@@ -1162,3 +1162,30 @@ export function visibleMap(value) {
   map.push(s.length);
   return map;
 }
+
+const MAY_MARK = /<mark/i;
+
+// TextView draws a <mark> with no colour of its own in a bright yellow: it gets the highlight colour instead.
+export function coloredMarks(text, color) {
+  if (!color || !MAY_MARK.test(text)) return text;
+  let out = "", at = 0;
+  for (const sp of parseInline(text).spans) {
+    if (sp.kind !== "html" || sp.tag !== "mark" || sp.color !== null) continue;
+    out += `${text.slice(at, sp.start)}<mark color="${color}">`;
+    at = sp.from;
+  }
+  return out + text.slice(at);
+}
+
+const BLOCK_START = /^(?:#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|>|`{3}|~{3}|\d{1,9}[.)](?:[ \t]|$)|(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$)/;
+// A link reference definition's label and colon.
+const DEFINITION_START = /^\[(?:[^\\[\]]|\\[\s\S])*\]:/;
+
+// A line of text that would start a block of its own, or be a link reference definition, read as a paragraph's first
+// line, escaped so that it reads as text: the backslash before its first character, after an ordered marker's digits,
+// or before a definition's colon, which keeps its label a reference link.
+export function asText(line) {
+  if (BLOCK_START.test(line)) return line.replace(/^(\d*)(.)/, "$1\\$2");
+  const colon = (DEFINITION_START.exec(line)?.[0].length ?? 0) - 1;
+  return colon > 0 ? `${line.slice(0, colon)}\\${line.slice(colon)}` : line;
+}

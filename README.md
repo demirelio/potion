@@ -163,8 +163,13 @@ shows them. A word with formatting moves as one piece until the caret is in it: 
 the caret stops between its letters. A code block, or a diagram's source, shows only its code, in the terminal font,
 where Reading draws it: its fences stay in the file, out of sight, its [language](#code-languages) stays on its chip at
 the top right, and a diagram is drawn again when you leave it. An indented code block (four spaces, no fence) shows
-without its indent and stays indented. A table, HTML block or front matter shows its source. A paragraph of pictures
-never shows its source: a click [picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as
+without its indent and stays indented. A table is drawn as a grid of cells, with no pipe and no delimiter row: the
+header row first, in bold on a tinted background; lines round the table and between its rows and columns; each
+column as wide as its widest text (from 64 to 360 px, shared out when the page is narrower than the columns), and a
+column's text centred or at the right when its delimiter row's colons say so (`:-:`, `--:`). Each cell shows its text
+as a paragraph does: formatting, links (a click opens them), comments highlighted. A table whose rows hold more cells
+than its header, or of more than 1,000 cells, shows its source, as do an HTML block and front matter. A paragraph of
+pictures never shows its source: a click [picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as
 spaces, so it wraps as it did on the page, and keeps them in the file.
 
 In code, typing stays as typed: no formatting, shortcut or slash menu. Enter starts the new line with the indent of
@@ -177,7 +182,7 @@ fences.
 
 | Key or click | What it does |
 |---|---|
-| Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, the page staying put too; in a table at the start of the clicked cell (there the second click is exact) |
+| Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, the page staying put too; on a table's grid the table's source opens, the caret at the start of the clicked cell's text; in a table that shows its source, at the start of the clicked cell (there the second click is exact) |
 | Click a link | Selects the whole link and shows its [popover](#links) over it; a second click puts the caret in its text |
 | Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
@@ -225,7 +230,9 @@ item, `[] ` or `[ ] ` a task, and `> ` a quote; Cmd+Z right after gives back wha
 starts an empty code block with the caret in it, and `---`, `***` or `___` then Enter makes a rule. A block you open
 and leave empty disappears and writes nothing to the file; a code block you empty keeps its fences.
 
-**Known limits:** in code blocks and tables the first click puts the caret near the click, and the second is exact;
+**Known limits:** in code blocks and in a table that shows its source the first click puts the caret near the click, and
+the second is exact; a click on a table's grid still shows the table's source, pipes and delimiter row included, until
+its cells can be edited in place;
 code has no syntax colours; blank lines typed at the end of an indented code block show while you edit it but not in
 Reading, which leaves them out as markdown does;
 selecting across blocks selects whole blocks (the middle of one block to the middle of another needs the Markdown
@@ -357,7 +364,7 @@ before the editor stored times are like that). Only the comment's text is ever s
   commented text shows that comment's card over it, with Edit and Resolve; Edit, or a click on the card's text, opens
   the box to edit it. A file that can't be edited shows its cards without Resolve or Edit. The footer counts the file's comments.
 - **On code blocks, diagrams and tables.** With the pointer over a code block or a table, a Comment button shows:
-  left of a code block's language chip, and at the top right of a table's box (also while you edit the block, and on a
+  left of a code block's language chip, and just right of a table's grid at its top (also while you edit the block, and on a
   diagram's source). A diagram drawn as a frame has its own, left of its zoom buttons. Press it, or press Cmd+Alt+M
   while you edit the block or with it selected as a block: a new card opens beside the block, after its comments, and
   the block gets a 2 px frame in the highlight colour while you write. Enter writes the comment with the time; Escape,
@@ -404,8 +411,7 @@ before the editor stored times are like that). Only the comment's text is ever s
   A point comment alone in a cell is that empty cell's comment. Reading highlights the commented text in the cell (a
   point comment as a highlighted 💬) and leaves the comment out; the Markdown view, and the table's source while you
   edit it, show it as written. Each comment's card sits beside the row holding it, after the table's own cards; while
-  you edit the table's source, beside the line holding it. The rows are taken to be one line each, so under a cell that
-  wraps the cards of later rows sit a little high. A click on the card makes it active: the card stands out and the
+  you edit the table's source, beside the line holding it. A click on the card makes it active: the card stands out and the
   cell's commented text turns the deeper ochre (no frame on the table). Edit and Resolve work as on any card: Edit keeps
   the time and writes the `|` escaped again, Resolve takes the marks and the comment off and leaves the cell's text.
   Each is one undo step, and undo opens nothing. In a narrow pane the table's count counts its cells' comments with its

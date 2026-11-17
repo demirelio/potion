@@ -5,7 +5,7 @@ export const COLUMN = { maxWidth: 780, padX: 32, padTop: 28, padBottom: 160 };
 export const REVEAL = { top: 24, bottom: 72 };
 export const PAGE_KEEP = 40;
 
-const MONO = new Set(["code", "mermaid", "frontmatter", "html", "definition", "hr"]);
+const MONO = new Set(["code", "mermaid", "table", "frontmatter", "html", "definition", "hr"]);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const WORD = /[\p{L}\p{N}_]/u;
 const NEWLINE = 10, SPACE = 32;
@@ -16,7 +16,6 @@ const NEWLINE = 10, SPACE = 32;
 // mono character advances. In prose a press lands on the nearest word edge; `side` "start" or "end" takes the start
 // or the end of the word it falls in instead, for the ends of a selection.
 export function pressToField(target, x, y, cal, side = null) {
-  if (target.kind === "table") return tablePress(target, x, y);
   if (MONO.has(target.kind)) return monoPress(target, x, y, cal);
   return textPress(target, x, y, cal, side);
 }
@@ -95,7 +94,7 @@ export function tableCells(value) {
       if (line[i] === "\\") i++;
       else if (line[i] === "|") bounds.push(i);
     }
-    const lead = line.trimStart().startsWith("|"), trail = /\|[ \t]*$/.test(line) && !/\\\|[ \t]*$/.test(line);
+    const lead = line.trimStart().startsWith("|"), trail = bounds.length > 0 && bounds.at(-1) === line.trimEnd().length - 1;
     const edges = [lead ? bounds[0] : -1, ...bounds.slice(lead ? 1 : 0, trail ? -1 : undefined), trail ? bounds.at(-1) : line.length];
     const cells = [];
     for (let k = 0; k + 1 < edges.length; k++) {
@@ -113,7 +112,9 @@ export function tableCells(value) {
   });
 }
 
-function tablePress(t, x, y) {
+// The cell start under a press on a table Reading's TextView draws from its source (`t` as for pressToField): its
+// drawn rows share the height equally, its columns the width by their longest cells.
+export function tablePress(t, x, y) {
   const rows = tableCells(t.value), drawn = rows.filter(r => !r.delimiter);
   if (!drawn.length) return 0;
   const r = clamp(Math.floor(y / (t.height / drawn.length)), 0, drawn.length - 1);
@@ -124,6 +125,62 @@ function tablePress(t, x, y) {
   while (c < columns - 1 && x >= edge) edge += (widths[++c] / total) * t.width;
   const cells = drawn[r].cells;
   return cells.length ? cells[Math.min(c, cells.length - 1)].start : drawn[r].start;
+}
+
+// A table drawn as a grid of cells: `padX` and `padY` inside each cell, `line` px between rows, between columns and
+// round the grid, its corners rounded `radius`; a column `minW` to `maxW` px wide.
+export const GRID = { padX: 10, padY: 6, line: 1, minW: 64, maxW: 360, radius: 6 };
+
+// -> the width of each column, its padding in and its lines out: `widest[c]` is the px width of column c's widest text.
+// The natural widths (the text and the padding, minW to maxW) when they fit `room`. Else a column whose natural width
+// fits an equal share of what is left keeps it, again until no more do, and the others share the rest equally; when
+// not even minW each fits, every column gets an equal share.
+export function columnWidths(widest, room) {
+  const n = widest.length, natural = widest.map(w => clamp(Math.ceil(w) + 2 * GRID.padX, GRID.minW, GRID.maxW));
+  if (natural.reduce((a, b) => a + b, 0) <= room) return natural;
+  if (n * GRID.minW > room) return natural.map(() => Math.floor(room / n));
+  const widths = new Array(n).fill(0);
+  let left = room, free = n, kept = true;
+  while (kept && free > 0) {
+    kept = false;
+    const share = left / free;
+    for (let c = 0; c < n; c++) {
+      if (widths[c] || natural[c] > share) continue;
+      widths[c] = natural[c];
+      left -= natural[c];
+      free--;
+      kept = true;
+    }
+  }
+  return widths.map(w => w || Math.floor(left / free));
+}
+
+// The estimated height of each row of a grid whose cells show `shown` (rows of texts) in columns `widths` wide: the
+// cell whose text wraps to the most rows at its style's advance, those rows at its style's row height, the padding,
+// and the line under each row but the last. The first row is the header, in `head`'s style; `body` = { row, advance }.
+export function gridRowHeights(shown, widths, head, body) {
+  return shown.map((cells, r) => {
+    const st = r === 0 ? head : body;
+    let rows = 1;
+    for (let c = 0; c < cells.length; c++) rows = Math.max(rows, wrapRows(cells[c], Math.max(1, (widths[c] ?? GRID.minW) - 2 * GRID.padX), st.advance).length);
+    return rows * st.row + 2 * GRID.padY + (r < shown.length - 1 ? GRID.line : 0);
+  });
+}
+
+// The top of row `r` of a grid whose rows are `heights` tall, from the grid's top edge.
+export const gridRowTop = (heights, r) => {
+  let y = GRID.line;
+  for (let k = 0; k < r && k < heights.length; k++) y += heights[k];
+  return y;
+};
+
+// The row and column of a grid at (x, y) from its top-left corner, the rows `heights` tall and the columns `widths`
+// wide, each with the line after it; a point past an edge takes the cell nearest it.
+export function gridAt(heights, widths, x, y) {
+  let row = 0, column = 0;
+  for (let top = GRID.line; row < heights.length - 1 && y >= top + heights[row]; row++) top += heights[row];
+  for (let left = GRID.line; column < widths.length - 1 && x > left + widths[column]; column++) left += widths[column] + GRID.line;
+  return { row, column };
 }
 
 // How Herdr's TextView draws a table (gpui-kit text/node.rs render_table, render_table_rows): a 1 px frame round its

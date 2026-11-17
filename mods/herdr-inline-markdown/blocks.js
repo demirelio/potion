@@ -138,15 +138,15 @@ function reference(s, at) {
   return end < 0 ? null : { end, label };
 }
 
-function cellCount(row) {
+// A pipe that ends the row closes it unless a backslash takes it, as micromark pairs them: `\\|` closes, `\|` does not.
+export function cellCount(row) {
   let s = row.trim();
   if (s.startsWith("|")) s = s.slice(1);
-  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
   let n = 1;
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
     if (c === BSL) i++;
-    else if (c === PIPE) n++;
+    else if (c === PIPE && i < s.length - 1) n++;
   }
   return n;
 }
@@ -822,14 +822,21 @@ function hardBreak(text, b, L) {
 
 const DEF_LABELS = /\[((?:[^\\[\]]|\\[\s\S]){1,999})\]/g;
 
-function withDefs(b, defs) {
-  if ((!isText(b) && b.kind !== "table") || !defs.size || !b.content.includes("[")) return b.content;
+// The definitions (`defs`, a doc's) that the reference links of `text` may use, a line each; "" for none.
+export function defsFor(text, defs) {
+  if (!defs.size || !text.includes("[")) return "";
   const found = [];
-  for (const m of b.content.matchAll(DEF_LABELS)) {
+  for (const m of text.matchAll(DEF_LABELS)) {
     const d = defs.get(normalizeLabel(`[${m[1]}]`));
     if (d !== undefined && !found.includes(d)) found.push(d);
   }
-  return found.length ? `${b.content}\n\n${found.join("\n")}` : b.content;
+  return found.join("\n");
+}
+
+function withDefs(b, defs) {
+  if (!isText(b) && b.kind !== "table") return b.content;
+  const used = defsFor(b.content, defs);
+  return used ? `${b.content}\n\n${used}` : b.content;
 }
 
 function linkTree(text, blocks) {
