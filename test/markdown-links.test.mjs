@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
 import { parse } from "../mods/herdr-inline-markdown/blocks.js";
 import { addLink, clipboardAddress, destinationOf, linkAddress, linkForm, pictureCut, pictureForm, setAddress, setPicture, unlink } from "../mods/herdr-inline-markdown/links.js";
+import { cellText, tableOf } from "../mods/herdr-inline-markdown/tables.js";
 
 const DEFS = parse("x\n\n[ref]: https://r.org \"T\"\n[cat]: <my cat.png> \"A cat\"\n").defs;
 const linksOf = value => parseInline(value, { defs: DEFS }).spans.filter(sp => sp.kind === "link");
@@ -118,6 +119,36 @@ test("addLink at a caret writes the address as a link whose text is the address,
     assert.equal(linkIn(odd.value).url, address);
   }
   assert.equal(addLink("x ", { start: 2, end: 2 }, "https://a.org", { defs: DEFS, text: "a.org" }).value, "x [a.org](https://a.org)", "a text of its own");
+});
+
+// The cells of a one-row table whose second cell holds `value` as written there.
+function cellsOf(value) {
+  const doc = parse(`| x | ${value} |\n|---|---|\n`), b = doc.blocks[0], t = tableOf(doc, b);
+  return b.kind === "table" ? t.rows[0].cells.map((_, c) => cellText(doc, t, 0, c)) : null;
+}
+
+test("in a table cell what a link writes has each | as \\|, so the cell keeps its shape, and the link reads back with | in its text, address and title; outside a cell nothing is escaped", () => {
+  const cell = { defs: DEFS, cell: true }, pipe = "https://e.com/x|y";
+  const cases = [
+    [addLink("see a b now", { start: 4, end: 7 }, pipe, cell), "see [a b](https://e.com/x\\|y) now", "a b"],
+    [addLink("see  now", { start: 4, end: 4 }, pipe, cell), "see [https\\://e.com/x\\|y](https://e.com/x\\|y) now", pipe],
+    [addLink("a\\|b", { start: 0, end: 4 }, pipe, cell), "[a\\|b](https://e.com/x\\|y)", "a|b"],
+    [setAddress('[t](u "a\\|b") z', linkIn('[t](u "a\\|b") z'), pipe, cell), '[t](https://e.com/x\\|y "a\\|b") z', "t"],
+    [setAddress("[ref] z", linkIn("[ref] z"), pipe, cell), "[ref](https://e.com/x\\|y) z", "ref"],
+    [setAddress("<https://a.org> z", linkIn("<https://a.org> z"), pipe, cell), "[https\\://e.com/x\\|y](https://e.com/x\\|y) z", pipe],
+    [setAddress("go https://a.org z", linkIn("go https://a.org z"), pipe, cell), "go [https\\://e.com/x\\|y](https://e.com/x\\|y) z", pipe],
+    [setAddress("[t](u) z", linkIn("[t](u) z"), "a\\|b", cell), "[t](a\\\\\\|b) z", "t"],
+  ];
+  for (const [out, value, text] of cases) {
+    assert.equal(out?.value, value);
+    assert.deepEqual(cellsOf(out.value), ["x", out.value], `${out.value}: one cell`);
+    const link = linkIn(out.value);
+    assert.deepEqual([link.start, link.end, shown(out.value.slice(link.start, link.end))], [out.start, out.end, text], out.value);
+  }
+  assert.deepEqual(cases.map(([out]) => linkIn(out.value).url), [pipe, pipe, pipe, pipe, pipe, pipe, pipe, "a\\|b"], "the addresses as typed");
+  assert.equal(linkIn(cases[3][0].value).title, "a|b", "the title kept");
+  assert.equal(addLink("see a b now", { start: 4, end: 7 }, pipe, { defs: DEFS }).value, "see [a b](https://e.com/x|y) now", "in a paragraph");
+  assert.equal(setAddress("[t](u) z", linkIn("[t](u) z"), pipe, { defs: DEFS }).value, "[t](https://e.com/x|y) z");
 });
 
 const picturesIn = value => parseInline(value, { defs: DEFS }).spans.filter(sp => sp.kind === "image");

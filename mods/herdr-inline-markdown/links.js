@@ -2,10 +2,12 @@
 // link is written in, an address as typed and as written, and the edits that set an address, take a link off or make
 // one. Offsets are UTF-16 indices into the value; `defs` are the document's link reference definitions as doc.defs holds
 // them. An edit -> { value, start, end }, the value after it and the range of the link (or of its text, once unlinked),
-// or null when what it would write does not read back as meant. The pictures of a text block are rewritten in the same
-// forms.
+// or null when what it would write does not read back as meant. With `cell` the value is a table cell's text, where a |
+// would end the cell: each one written is escaped, \|, which a link's text, address and title read as |. The pictures of
+// a text block are rewritten in the same forms.
 import { destinationSpan, parseInline } from "./inline.js";
 import { escapeAlt } from "./lib.js";
+import { cellWritten } from "./tables.js";
 
 const WEB_OR_MAIL = /^(?:https?:\/\/|mailto:)[^\s<>]+$/i;
 // A web host typed without its scheme: dotted names, maybe a port, then a path, a query, a fragment or nothing.
@@ -72,10 +74,12 @@ export function linkForm(value, span) {
 
 const linksIn = (value, defs) => parseInline(value, { defs }).spans.filter(sp => sp.kind === "link");
 
-// `value` with [start, end) replaced by `written`, when a link to `address` is then exactly [start, start + length),
-// showing `text` when that is given.
-function linked(value, start, end, written, address, defs, text = null) {
-  const next = value.slice(0, start) + written + value.slice(end), stop = start + written.length, inline = parseInline(next, { defs });
+const inCell = (written, cell) => (cell ? cellWritten(written) : written);
+
+// `value` with [start, end) replaced by `written` (its | escaped in a `cell`), when a link to `address` is then exactly
+// [start, start + length), showing `text` when that is given. An autolink or a bare address can't hold a \|.
+function linked(value, start, end, written, address, defs, text = null, cell = false) {
+  const put = inCell(written, cell), next = value.slice(0, start) + put + value.slice(end), stop = start + put.length, inline = parseInline(next, { defs });
   const sp = inline.spans.find(x => x.kind === "link" && x.start === start && x.end === stop && x.url === address);
   if (!sp || (text !== null && inline.chars.filter(c => c.start >= sp.from && c.end <= sp.to).map(c => c.text).join("") !== text)) return null;
   return { value: next, start, end: stop };
@@ -87,12 +91,14 @@ function autolinkOf(address) {
 }
 
 // An inline link to `address` showing `text` in place of [start, end): the text as it is when it shows so (an address
-// as text is read whole, escapes and all), else escaped.
-function inlineLink(value, start, end, address, text, defs) {
-  const dest = destinationOf(address), tries = [`[${text}](${dest})`, `[${textOf(text)}](${dest})`];
+// as text is read whole, escapes and all: a cell's \| would show its backslash), else escaped, else escaped with the
+// address in it broken as unlinked breaks one.
+function inlineLink(value, start, end, address, text, defs, cell) {
+  const dest = destinationOf(address), escaped = textOf(text);
+  const tries = [text, escaped, ...UNLINKING.map(unlinks => unlinks(escaped))].map(shown => `[${shown}](${dest})`);
   for (const shows of [text, null]) {
     for (const written of tries) {
-      const out = linked(value, start, end, written, address, defs, shows);
+      const out = linked(value, start, end, written, address, defs, shows, cell);
       if (out) return out;
     }
   }
@@ -102,21 +108,21 @@ function inlineLink(value, start, end, address, text, defs) {
 // -> the link `span` of `value` going to `address`. An inline or reference link keeps its text (a reference link gets
 // an inline address of its own, its definition left alone); an autolink or a bare address, whose text is its address,
 // is rewritten in its form while the new address can have it, else as an inline link.
-export function setAddress(value, span, address, { defs } = {}) {
+export function setAddress(value, span, address, { defs, cell = false } = {}) {
   const form = linkForm(value, span);
   if (form === "inline" || form === "reference") {
     const target = form === "inline" ? destinationSpan(value, span.to + 1) : { start: span.to, end: span.end };
     if (!target) return null;
-    const written = form === "inline" ? destinationOf(address) : `](${destinationOf(address)})`;
+    const written = inCell(form === "inline" ? destinationOf(address) : `](${destinationOf(address)})`, cell);
     const next = value.slice(0, target.start) + written + value.slice(target.end), end = span.end + next.length - value.length;
     return linksIn(next, defs).some(sp => sp.start === span.start && sp.end === end && sp.url === address) ? { value: next, start: span.start, end } : null;
   }
   const forms = form === "literal" ? [address, autolinkOf(address)] : [autolinkOf(address)];
   for (const written of forms) {
-    const out = linked(value, span.start, span.end, written, address, defs);
+    const out = linked(value, span.start, span.end, written, address, defs, null, cell);
     if (out) return out;
   }
-  return inlineLink(value, span.start, span.end, address, address, defs);
+  return inlineLink(value, span.start, span.end, address, address, defs, cell);
 }
 
 const linkOver = (value, start, end, defs) => linksIn(value, defs).some(sp => sp.start < end && start < sp.end);
@@ -163,11 +169,11 @@ function uncut(spans, start, end) {
 // -> `value` with `range` a link to `address`; at a caret, a new link whose text is `text` (the address unless given).
 // A range that cuts into formatting, code or a comment grows to hold it whole. Null when `address` is empty or a link
 // would hold a link.
-export function addLink(value, range, address, { defs, text = address } = {}) {
+export function addLink(value, range, address, { defs, text = address, cell = false } = {}) {
   if (!address) return null;
-  if (range.start === range.end) return inlineLink(value, range.start, range.end, address, text, defs);
+  if (range.start === range.end) return inlineLink(value, range.start, range.end, address, text, defs, cell);
   const { start, end } = uncut(parseInline(value, { defs }).spans, range.start, range.end);
-  return linked(value, start, end, `[${value.slice(start, end)}](${destinationOf(address)})`, address, defs);
+  return linked(value, start, end, `[${value.slice(start, end)}](${destinationOf(address)})`, address, defs, null, cell);
 }
 
 // -> "inline" (![alt](address)), "reference" (![alt][label], ![label][], ![label]) or "html" (<img …>), for an image span

@@ -169,9 +169,11 @@ column as wide as its widest text (from 64 to 360 px, shared out when the page i
 column's text centred or at the right when its delimiter row's colons say so (`:-:`, `--:`). Each cell shows its text
 as a paragraph does: formatting, links (Cmd+click opens them; a click in a file you can't edit), comments highlighted.
 A click in a cell puts the caret where you click, and you type in the cell as in a paragraph: the format keys, typed
-`**bold**` and the like, copy and paste. A cell holds one line: a line break you paste becomes a space, and a `|` you
-type shows as `|` and is written `\|`, so the table keeps its columns. Tab and Shift+Tab select the whole text of the
-next and the previous cell, the header row first. Enter does nothing in a cell yet, and the arrows stay in it. While
+`**bold**` and the like, copy and paste, the [format bar](#the-format-bar) over a selection (without Comment, Text style
+and List), a link's [popover](#links) and the address box, Cmd+K. A cell holds one line: a line break you paste becomes
+a space, and a `|` you type, or one in an address you give a link there, shows as `|` and is written `\|`, so the table
+keeps its columns. Tab and Shift+Tab select the whole text of the next and the previous cell, the header row first.
+Enter does nothing in a cell yet, and the arrows stay in it. While
 the caret is in the table its columns keep their widths, however long a word you type; they are worked out again when
 you leave it. A table whose rows hold more cells than its header, or of more than 1,000 cells, shows its source, as do
 an HTML block and front matter. A paragraph of pictures never shows its source: a click [picks a
@@ -219,7 +221,7 @@ fences.
 | Cmd+Shift+H | The same for a highlight |
 | Cmd+K | Opens the [address box](#links) under the selection, offering the web or mail address the clipboard holds; Enter makes the selection a link to what you typed. On a caret in a word it links the word; elsewhere Enter writes the address as a link. In a link the box holds its address, to change it |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret. In a code block, diagram source or table you are editing, or with one of them selected as a block, a comment on the whole block. With a picture picked, a comment on that picture (its own, when it has one) |
-| Select text in a paragraph, heading, item or quote | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block not being edited a drag selects the drawn text, for Cmd+C. A selection in a table's cell shows no bar yet, and Cmd+K does nothing there |
+| Select text in a paragraph, heading, item, quote or table cell | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link; in a table's cell without Comment, Text style and List. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 The file stays plain markdown. Bold, italic, strikethrough and code are written `**…**`, `*…*`, `~~…~~` and
@@ -276,7 +278,11 @@ can't edit the chip only names the language, and a block with none has no chip.
 
 ### The format bar
 
-Selecting text in a paragraph, heading, item or quote shows a bar over it, its groups parted by thin lines:
+Selecting text in a paragraph, heading, item, quote or table cell shows a bar over it, its groups parted by thin
+lines. In a cell it leaves out Text style and List, since a cell can't be a heading, a quote or a list item, and
+Comment, which there would comment the whole table (as Cmd+Alt+M does in a cell for now); a header cell takes Bold
+too, which writes `**` though the header is drawn bold already, and the button shows pressed only once the marks are
+there.
 
 | Button | What it does |
 |---|---|
@@ -316,6 +322,12 @@ Enter on an empty box does nothing). A web host typed without its scheme (`googl
 `mailto:` and other schemes, `#anchors` and paths to files (`other.md`, `notes/plan.md`) are written as typed. An
 address with spaces or a parenthesis out of its pair is written in `<…>`. Each change is one Cmd+Z, which brings the
 link and its selection back.
+
+Links in a table's cell work the same way, the popover over the cell's text. A `|` in an address, a title or a link's
+text written there is written `\|` (a bare one would end the cell), which the table reads as `|`; a link whose text is
+an address holding one is written as an inline link with a backslash before the `:` of its text
+(`[https\://a.org/x\|y](https://a.org/x\|y)`), since an address written bare or as an autolink would show the
+backslash. Commented text in a cell takes the caret when clicked, as plain text does.
 
 A reference link (`[text][label]`, `[label]`) shows its definition's address; Edit gives that one link an inline
 address of its own and leaves the definition. An autolink (`<https://…>`) or an address written bare shows its address

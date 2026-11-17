@@ -214,15 +214,15 @@ function gridCell(owner, d, t, r, c, text, look) {
     .child(box ? inner.w(box).flex_none() : inner.w_full());
 }
 
-// A cell's text drawn by its field, as a text block's field draws: only the edited cell's wrapper has the text keys.
-// The wrapper hands its key-ups and presses to the editor under the cell's id.
+// A cell's text drawn by its field, as a text block's field draws: only the edited cell's wrapper has the text keys and
+// its row count. The wrapper hands its key-ups and presses to the editor under the cell's id.
 function cellField(owner, d, t, r, c, state, st, look) {
   const id = cellId(d.key, r, c), name = `${d.key}-${r}-${c}`;
   const input = Textarea.new(state).id(`md-input-${name}`).w_full()
     .font_family(owner.fonts.sans).text_size(st.size).font_weight(st.weight).line_height(d.ratio).text_color(t[d.color])
     .token(ctx => tokenView(owner, look, t, ctx)).on_token_click((ev, cx) => owner.tokenClick(id, ev, cx));
   return div().id(`md-field-${name}`).w_full().pb(d.padActive)
-    .when(d.cell === `${r}:${c}`, el => el.key_context(`${TEXT} rows=many`))
+    .when(d.cell === `${r}:${c}`, el => el.key_context(`${TEXT} rows=${d.rows}`))
     .on_key_up((e, cx) => owner.fieldKeyUp(id, e, cx))
     .on_mouse_down("left", (e, cx) => owner.fieldDown(id, e, cx))
     .on_mouse_up("left", (e, cx) => owner.fieldUp(id, e, cx))

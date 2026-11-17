@@ -12674,7 +12674,7 @@ test("a press in a cell's field makes it the edited cell with no set_value: the 
   assert.deepEqual(look(), was, "the same elements, widths, fonts and sizes");
   assert.equal(m.view.data.get(table).grid.widths, widths);
   assert.deepEqual(texts(state), ["**pie**"], "the same tokens: the caret is in a plain word");
-  assert.equal(must(m.tree(), `md-field-${table}-1-0`).style.key_context, `${TEXT} rows=many`, "the text keys reach it");
+  assert.equal(must(m.tree(), `md-field-${table}-1-0`).style.key_context, `${TEXT} rows=one`, "the text keys reach it, its column as wide as its text");
   assert.equal(must(m.tree(), `md-field-${table}-1-1`).style.key_context, undefined, "and no other cell");
   assert.equal(m.view.data.get(table).look, "grid", "never shown as source");
   await pressCell(m, table, 2, 1, 0);
@@ -12707,7 +12707,7 @@ test("a press only the page hears on a cell its row lacks opens that cell, empty
   assert.equal(m.view.text, doc.replace("| pear |", "| pear | 7 |"));
 });
 
-test("in a cell, Cmd+press on a link opens it and opens no cell; a press on the link places the caret at the pressed letter and shows no popover", async () => {
+test("in a cell, Cmd+press on a link opens it and opens no cell; a plain press on the link selects it and shows its popover", async () => {
   const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), state = m.view.cellField(table, 2, 0), [word] = state.tokens(), id = `md-field-${table}-2-0`;
   const cmd = { ...NO_MODS, platform: true }, bounds = { x: 100, y: 0, width: 100, height: 21 };
   fire(must(m.tree(), id), "on_mouse_down:left", press({ x: 150, y: 10 }, { modifiers: cmd }), m.cx);
@@ -12721,8 +12721,8 @@ test("in a cell, Cmd+press on a link opens it and opens no cell; a press on the 
   fire(must(m.tree(), id), "on_mouse_up:left", press({ x: 150, y: 10 }), m.cx);
   await flush();
   await fire_timers(m.cx, { ms: 30 });
-  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.known.start], [table, { r: 2, c: 0 }, 3], "between e and a of pear");
-  assert.deepEqual([m.view.element, m.view.elementFloat(theme()), m.cx.opened.length], [null, null, 1], "no popover, nothing opened");
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.known], [table, { r: 2, c: 0 }, { start: 0, end: 23, valid: true }], "the whole link");
+  assert.deepEqual([addressOf(m), m.cx.opened.length], ["https://e.com/p", 1], "its popover, nothing opened");
 });
 
 test("typing in a cell writes that cell alone: letters; a | written \\| (the field holds it, its token draws |); a paste of two lines and a pipe as one line", async () => {
@@ -12776,23 +12776,26 @@ test("in a cell, Backspace at a bold run's edge keeps the bold, words copied fro
   assert.ok(m.view.text.includes("| Name | # Size |") && m.view.text.includes("| `x\\|y` **w** / |"), m.view.text);
 });
 
-test("format keys act on a cell's selection as in a paragraph, one entry each; a selection in a cell shows no bar, Cmd+K opens nothing, and Cmd+Alt+M comments the whole table", async () => {
+test("format keys act on a cell's selection as in a paragraph, one entry each; a selection in a cell shows the bar, Cmd+K opens the address box, and Cmd+Alt+M comments the whole table", async () => {
   const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), state = await pressCell(m, table, 1, 1, 0, 2);
-  assert.equal(barOf(m), null, "no bar over a selection in a cell");
+  assert.ok(barOf(m), "the bar over a selection in a cell");
   act(m, "mdb-bold");
   assert.equal(m.view.text, CELLS_DOC.replace("| 12 |", "| **12** |"));
   assert.deepEqual([m.view.cell, state.value()], [{ r: 1, c: 1 }, "**12**"]);
   act(m, "mdb-link");
-  assert.deepEqual([m.view.linkBox, barOf(m)], [null, null], "Cmd+K: nothing");
+  assert.deepEqual([Boolean(linkBoxOf(m)), barOf(m)], [true, null], "Cmd+K: the address box");
+  act(m, "mdb-note-cancel");
   act(m, "mdb-undo");
   assert.equal(m.view.text, CELLS_DOC, "one Cmd+Z");
   act(m, "mdb-comment");
   assert.deepEqual([m.view.blockAdd?.key, m.view.activeKey], [table, table], "the whole table's new comment");
 });
 
-test("Escape leaves the cell and Enter on the page comes back to it with its selection; a press outside the table commits and leaves; a long word typed leaves the widths alone until the caret leaves the table", async () => {
+test("Escape leaves the cell, once the bar over its selection has gone, and Enter on the page comes back to it with its selection; a press outside the table commits and leaves; a long word typed leaves the widths alone until the caret leaves the table", async () => {
   const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
   const state = await pressCell(m, table, 1, 1, 0, 2), widths = m.view.data.get(table).grid.widths;
+  escape(m);
+  assert.deepEqual([barOf(m), m.view.cell], [null, { r: 1, c: 1 }], "the bar goes first, as in a paragraph");
   escape(m);
   assert.deepEqual([m.view.activeKey, m.view.cell], [null, null]);
   await m.key("enter");
@@ -13045,4 +13048,299 @@ test("cell fields go with their rows: scrolling a note of tables to and fro, a r
   const left = [...view.cellKeys.keys()];
   await view.close(m.cx);
   assert.ok(left.length > 0 && left.every(s => s.releases === 1), "closing the pane releases every cell field");
+});
+
+// The words of the third row's second cell of MIDDLE_DOC, 71 characters that wrap in that column's 340 px: the first
+// row ends after "from the ".
+const LATE = "ripe and sweet, picked late in the autumn from the old tree by the wall";
+// The blocks of MIDDLE_DOC: the intro (0), a table of four rows and three columns (1), End (2).
+const MIDDLE_DOC = ["Intro", "", "| Name | Notes | Size |", "|---|---|---|", "| apple | crisp | 1 |", `| pear | ${LATE} | 2 |`, "| plum | dark | 3 |", "", "End", ""].join("\n");
+const MIDDLE_SIZES = { 0: 24, 1: 14 + gridH(4) + STYLES.cell.size * STYLES.cell.lh, 2: 38 };
+// The blocks of LINK_CELLS: the intro (0), a table whose second column is centred, its third row's second cell holding a
+// link after 19 letters, in a text box narrower than the column (1), End (2).
+const LINK_CELLS = ["Intro", "", "| Name | Notes |", "|---|:---:|", "| apple | crisp and cold from the shelf by the door |", "| pear | a few words before [the docs](https://e.com/d) now |", "| plum | dark |", "", "End", ""].join("\n");
+const LINK_CELL_SIZES = { 0: 24, 1: 14 + gridH(4), 2: 38 };
+const BEFORE_LINK = "a few words before ".length;
+// How far apart a cell's field draws its letters here: closer than the editor's estimate (STYLES.cell.size * 0.47), so
+// a float placed from where a press was is told apart from one the estimate places.
+const DRAWN_CELL = 6;
+// Where cell (r, c) of table block i draws its text on the screen: inside its padding, and in a centred or right-aligned
+// column inside the box as wide as its text.
+const cellOrigin = (m, i, r, c) => {
+  const g = m.view.data.get(keyAt(m, i)).grid, inner = g.widths[c] - 2 * GRID.padX, box = g.boxes[r][c] || inner;
+  const room = g.aligns[c] === "center" ? (inner - box) / 2 : g.aligns[c] === "right" ? inner - box : 0;
+  return { x: gridX(m, i, c) + GRID.padX + room, y: gridY(m, i, r) + GRID.padY };
+};
+// A press on cell (r, c)'s field of table block i at `local`, from its text's top-left, as the cell's wrapper hears it.
+const cellPress = (m, i, r, c, local, more = {}) => {
+  const o = cellOrigin(m, i, r, c);
+  return press({ x: o.x + local.x, y: o.y + local.y }, { local_position: { ...local }, ...more });
+};
+// A drag in cell (r, c)'s field of table block i from `from` to `to` ({ x, y } from its text's top-left), the field
+// selecting `range`; with clicks 2 a double-click at `from`. Read out 30 ms after the mouse-up.
+async function dragInCell(m, i, r, c, from, to, range, clicks = 1) {
+  const key = keyAt(m, i), state = m.view.cellField(key, r, c), wrap = () => must(m.tree(), `md-field-${key}-${r}-${c}`);
+  fire(wrap(), "on_mouse_down:left", cellPress(m, i, r, c, from, { click_count: clicks }), m.cx);
+  state.select(range.start, range.end);
+  if (m.view.field !== state) state.handlers.focus({}, m.cx);
+  fire(wrap(), "on_mouse_up:left", cellPress(m, i, r, c, to, { click_count: clicks }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+}
+// A click on token `t` of cell (r, c)'s field of table block i, `share` of the way across it, the token on the field's
+// first row with its letters `advance` px apart: as clickToken does for a block's field.
+async function clickCellToken(m, i, r, c, t, { modifiers = NO_MODS, share = 0.5, advance = DRAWN_CELL } = {}) {
+  const key = keyAt(m, i), state = m.view.cellField(key, r, c), wrap = () => must(m.tree(), `md-field-${key}-${r}-${c}`);
+  const row = m.view.data.get(key).row, o = cellOrigin(m, i, r, c);
+  const x = drawnBefore(state, t.range.start) * advance, width = t.token.label.length * advance, local = { x: x + share * width, y: row / 2 };
+  fire(wrap(), "on_mouse_down:left", cellPress(m, i, r, c, local, { modifiers }), m.cx);
+  if (m.view.field !== state && !modifiers.platform) state.handlers.focus({}, m.cx);
+  state.select(t.range.start, t.range.end);
+  fire(cellInputOf(m, key, r, c), "on_token_click", { ...t, bounds: { x: o.x + x, y: o.y, width, height: row }, modifiers }, m.cx);
+  fire(wrap(), "on_mouse_up:left", cellPress(m, i, r, c, local, { modifiers }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+}
+const BAR_H = BAR.button + 2 * (BAR.pad + 1);
+const wordIn = (text, word) => ({ start: text.indexOf(word), end: text.indexOf(word) + word.length });
+
+test("the format bar over words selected in a cell of the third row and second column: after a drag forward or back, over the row and at the x the mouse gave; after a double-click, left of the press by at most the word; after Shift+arrows and a right-click, where the text wrapped at the cell's width puts it; no Comment, Text style or List; Bold is one entry and the Colour menu colours the words", async () => {
+  const m = await page(MIDDLE_DOC, MIDDLE_SIZES), table = keyAt(m, 1), state = m.view.cellField(table, 2, 1);
+  const advance = m.view.calOf("cell").advance, row = m.view.data.get(table).row, w = m.view.data.get(table).grid.widths[1] - 2 * GRID.padX;
+  const drawnRows = referenceRows(LATE, w / DRAWN_CELL), estimatedRows = referenceRows(LATE, w / advance);
+  assert.deepEqual([w, drawnRows, estimatedRows], [340, [0, 55], [0, 51]], "two rows in the cell's 340 px, as drawn and as estimated");
+  const placeIn = (rows, px) => k => {
+    const r = rows.findLastIndex(s => s <= k);
+    return { x: (k - rows[r]) * px, y: (r + 0.5) * row, row: r };
+  };
+  const place = placeIn(drawnRows, DRAWN_CELL), estimate = placeIn(estimatedRows, advance);
+  const over = (p, why, lowest = p.x) => {
+    const o = cellOrigin(m, 1, 2, 1), bar = barOf(m)?.style;
+    assert.ok(bar, `${why}: the bar`);
+    assert.equal(bar.top, o.y + p.row * row - BAR.gap - BAR_H, `${why}: over row ${p.row}`);
+    assert.ok(bar.left >= o.x + lowest - 1e-6 && bar.left <= o.x + p.x + 1e-6, `${why}: ${bar.left} for ${o.x + lowest} to ${o.x + p.x}`);
+  };
+  const tree = wordIn(LATE, "old tree"), by = wordIn(LATE, "by the"), wall = wordIn(LATE, "wall"), old = wordIn(LATE, "old"), autumn = wordIn(LATE, "autumn");
+  assert.deepEqual([place(tree.start).row, estimate(tree.start).row], [0, 1], "\"old\" drawn on the first row, estimated on the second");
+  await dragInCell(m, 1, 2, 1, place(tree.start), place(tree.end), tree);
+  assert.deepEqual([m.view.cell, selectedText(m)], [{ r: 2, c: 1 }, "old tree"]);
+  over(place(tree.start), "a drag forward: the press");
+  await dragInCell(m, 1, 2, 1, place(by.end), place(by.start), by);
+  over(place(by.start), "a drag back on the cell's second row: the release");
+  const rowStart = { start: drawnRows[1], end: by.end }, o = cellOrigin(m, 1, 2, 1);
+  fire(must(m.tree(), `md-field-${table}-2-1`), "on_mouse_down:left", cellPress(m, 1, 2, 1, place(by.end)), m.cx);
+  state.select(rowStart.start, rowStart.end);
+  up(m, { x: o.x - 20, y: o.y + place(by.end).y });
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+  assert.equal(selectedText(m), "tree by the");
+  over({ x: 0, row: 1 }, "a drag back let go left of the cell, which the page hears: its row's start");
+  const inWall = place(wall.start + 2);
+  await dragInCell(m, 1, 2, 1, inWall, inWall, wall, 2);
+  over(inWall, "a double-click", inWall.x - (wall.end - wall.start) * advance);
+  state.select(old.start, old.end);
+  cellKeyUp(m, table, 2, 1, "right", { shift: true });
+  await flush();
+  over(estimate(old.start), "Shift+arrows: wrapped at the cell's width");
+  state.select(autumn.start + 2);
+  fire(must(m.tree(), `md-field-${table}-2-1`), "on_mouse_up:right", press({ x: 0, y: 0 }, { button: "right" }), m.cx);
+  await flush();
+  assert.equal(selectedText(m), "autumn", "a right-click selects the word under it");
+  over(estimate(autumn.start), "a right-click: the estimate");
+  assert.deepEqual(barButtons(m), ["bold", "italic", "underline", "strike", "code", "|", "color", "|", "link"]);
+  const entries = m.view.history.entries.length;
+  barPress(m, "bold");
+  assert.equal(m.view.text, MIDDLE_DOC.replace("the autumn", "the **autumn**"));
+  assert.deepEqual([m.view.history.entries.length, m.view.cell, selectedText(m).includes("autumn"), isPressed(must(m.tree(), "md-format-bold"))], [entries + 1, { r: 2, c: 1 }, true, true]);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, MIDDLE_DOC, "one Cmd+Z");
+  m.view.field.select(autumn.start, autumn.end);
+  cellKeyUp(m, table, 2, 1, "right", { shift: true });
+  await flush();
+  barPress(m, "color");
+  rowPress(m, "text-red");
+  assert.equal(m.view.text, MIDDLE_DOC.replace("the autumn", 'the <span style="color: red">autumn</span>'));
+  assert.deepEqual([m.view.cell, Boolean(barOf(m)), m.view.doc.blocks.map(b => b.kind)], [{ r: 2, c: 1 }, true, ["paragraph", "table", "paragraph"]]);
+});
+
+test("in a header cell Cmd+B writes ** round the word, which the header draws bold already, and the bar shows Bold pressed only once the marks are there", async () => {
+  const m = await page(MIDDLE_DOC, MIDDLE_SIZES), table = keyAt(m, 1), advance = m.view.calOf("head").advance, row = m.view.data.get(table).row;
+  await dragInCell(m, 1, 0, 1, { x: 0, y: row / 2 }, { x: 5 * advance, y: row / 2 }, { start: 0, end: 5 });
+  assert.deepEqual([m.view.cell, selectedText(m), Boolean(barOf(m)), isPressed(must(m.tree(), "md-format-bold"))], [{ r: 0, c: 1 }, "Notes", true, false]);
+  act(m, "mdb-bold");
+  assert.equal(m.view.text, MIDDLE_DOC.replace("| Notes |", "| **Notes** |"));
+  assert.deepEqual([m.view.cell, isPressed(must(m.tree(), "md-format-bold"))], [{ r: 0, c: 1 }, true]);
+  assert.equal(barOf(m).style.top, cellOrigin(m, 1, 0, 1).y - BAR.gap - BAR_H, "over the header's row");
+});
+
+test("a press on a link in a cell selects it and shows its popover over it, its left at the link's start as drawn inside a centred column's box; Open, Copy, Edit (Enter applies, Escape goes back) and Remove (one entry); a second press places the caret; Escape or the caret leaving closes it", async () => {
+  const m = await page(LINK_CELLS, LINK_CELL_SIZES), table = keyAt(m, 1), state = m.view.cellField(table, 2, 1);
+  const advance = m.view.calOf("cell").advance, value = state.value(), link = { start: value.indexOf("["), end: value.indexOf(")") + 1 };
+  const g = m.view.data.get(table).grid, docsAt = value.indexOf("docs"), docs = () => state.tokens().find(t => t.range.start <= docsAt && docsAt < t.range.end);
+  assert.ok(g.boxes[2][1] < g.widths[1] - 2 * GRID.padX, "the cell's text box is narrower than its column");
+  // From the pressed word: within a few px of where the link starts as drawn ("the " before "docs" estimated).
+  const over = (why, x = BEFORE_LINK * DRAWN_CELL, slack = 3) => {
+    const o = cellOrigin(m, 1, 2, 1), pop = popoverOf(m)?.style;
+    assert.ok(pop, `${why}: the popover`);
+    assert.equal(pop.top, o.y - BAR.gap - pop.h, `${why}: over the cell's row`);
+    assert.ok(Math.abs(pop.left - (o.x + x)) <= slack, `${why}: ${pop.left} for ${o.x + x}`);
+  };
+  assert.ok(BEFORE_LINK * (advance - DRAWN_CELL) > 10, "the estimate of the link's start is far from where it is drawn");
+  await clickCellToken(m, 1, 2, 1, docs());
+  assert.deepEqual([m.view.activeKey, m.view.cell, state.selection, barOf(m)], [table, { r: 2, c: 1 }, link, null], "the whole link, no bar");
+  over("pressed on its second word");
+  assert.equal(addressOf(m), "https://e.com/d");
+  assertNoSource(m, "https://e.com/d", "the link selected");
+  linkPress(m, "open");
+  linkPress(m, "copy");
+  assert.deepEqual([m.cx.opened, m.cx.read_from_clipboard()], [["https://e.com/d"], "https://e.com/d"]);
+  linkPress(m, "edit");
+  const box = linkBoxOf(m).style, o = cellOrigin(m, 1, 2, 1);
+  assert.deepEqual([popoverOf(m), box.top, m.view.linkField.value()], [null, o.y - BAR.gap - LINK_BOX.h, "https://e.com/d"], "Edit: the address box in the popover's place");
+  assert.ok(Math.abs(box.left - (o.x + BEFORE_LINK * DRAWN_CELL)) <= 3, `${box.left} for ${o.x + BEFORE_LINK * DRAWN_CELL}`);
+  act(m, "mdb-note-cancel");
+  assert.deepEqual([Boolean(popoverOf(m)), linkBoxOf(m), m.view.text], [true, null, LINK_CELLS], "Escape: back to the popover");
+  linkPress(m, "edit");
+  typeAddress(m, "https://e.com/x|y");
+  const piped = LINK_CELLS.replace("(https://e.com/d)", "(https://e.com/x\\|y)");
+  assert.equal(m.view.text, piped);
+  assert.deepEqual([m.view.cell, addressOf(m), m.view.doc.blocks.map(b => b.kind)], [{ r: 2, c: 1 }, "https://e.com/x|y", ["paragraph", "table", "paragraph"]], "Enter: the popover shows the new address");
+  over("after Enter, the text rewritten: the estimate at the cell's advance", BEFORE_LINK * advance, 1e-6);
+  const entries = m.view.history.entries.length;
+  linkPress(m, "remove");
+  assert.deepEqual([m.view.text, selectedText(m), m.view.history.entries.length, popoverOf(m)], [LINK_CELLS.replace("[the docs](https://e.com/d)", "the docs"), "the docs", entries + 1, null], "Remove: the text kept and selected");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, piped, "one Cmd+Z");
+  await clickCellToken(m, 1, 2, 1, docs());
+  over("pressed again after the undo");
+  await clickCellToken(m, 1, 2, 1, docs(), { share: 0.1 });
+  assert.equal(m.view.known.start, m.view.known.end, "a second press places the caret");
+  over("the caret in the link");
+  escape(m);
+  assert.deepEqual([popoverOf(m), m.view.cell], [null, { r: 2, c: 1 }], "Escape closes it, the cell still edited");
+  await clickCellToken(m, 1, 2, 1, docs());
+  m.view.field.select(m.view.field.value().length);
+  cellKeyUp(m, table, 2, 1, "right");
+  await flush();
+  assert.equal(popoverOf(m), null, "the caret left the link");
+});
+
+test("Cmd+K in a cell: over a selection the address box writes a link, its | written \\| so the table keeps its shape; in a link it edits that link; at a caret outside a word it writes the address as a link", async () => {
+  const m = await page(LINK_CELLS, LINK_CELL_SIZES), table = keyAt(m, 1);
+  await pressCell(m, table, 1, 1, 0, 5);
+  act(m, "mdb-link");
+  const box = linkBoxOf(m).style, o = cellOrigin(m, 1, 1, 1);
+  assert.equal(box.top, o.y - BAR.gap - LINK_BOX.h, "over the cell's row");
+  assert.ok(Math.abs(box.left - o.x) < 1, `${box.left} for ${o.x}`);
+  typeAddress(m, "https://e.com/a|b");
+  const crisp = LINK_CELLS.replace("| crisp and", "| [crisp](https://e.com/a\\|b) and");
+  assert.equal(m.view.text, crisp);
+  assert.deepEqual([m.view.cell, addressOf(m)], [{ r: 1, c: 1 }, "https://e.com/a|b"]);
+  escape(m);
+  escape(m);
+  assert.deepEqual(m.view.data.get(table).grid.texts.map(cells => cells.length), [2, 2, 2, 2], "four rows of two cells");
+  const state = await pressCell(m, table, 2, 1, 0);
+  state.select(state.value().indexOf("docs"));
+  cellKeyUp(m, table, 2, 1, "right");
+  await flush();
+  act(m, "mdb-link");
+  assert.equal(m.view.linkField.value(), "https://e.com/d", "a caret in the link: its address");
+  typeAddress(m, "other.md");
+  assert.equal(m.view.text, crisp.replace("(https://e.com/d)", "(other.md)"));
+  const dark = await pressCell(m, table, 3, 1, 4);
+  dark.type(" ", m.cx);
+  act(m, "mdb-link");
+  typeAddress(m, "https://e.com/a|b");
+  assert.equal(m.view.text, crisp.replace("(https://e.com/d)", "(other.md)").replace("| dark |", "| dark [https\\://e.com/a\\|b](https://e.com/a\\|b) |"));
+  assert.equal(drawnText(m.view.field), "dark https://e.com/a|b", "the address shown as typed");
+  escape(m);
+  escape(m);
+  assert.deepEqual([m.view.doc.blocks.map(b => b.kind), m.view.data.get(table).grid.texts.map(cells => cells.length)], [["paragraph", "table", "paragraph"], [2, 2, 2, 2]]);
+});
+
+test("a press on commented text in a cell places the caret at the pressed letter: nothing is picked and its highlight is drawn as before", async () => {
+  const m = await page(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), state = m.view.cellField(table, 1, 1), i = m.view.at.get(table);
+  const twelve = state.tokens().find(t => t.token.label === "12"), input = () => cellInputOf(m, table, 1, 1);
+  const bgs = () => [...new Set(state.tokens().flatMap(x => all(input().token({ token: x.token, range: x.range, selected: false, line_height: 21, available_width: 300 }, m.cx), n => n.style.bg !== undefined).map(n => n.style.bg)))];
+  assert.deepEqual(bgs(), [m.view.highlight], "highlighted");
+  await clickCellToken(m, i, 1, 1, twelve, { share: 0.5 });
+  assert.deepEqual([m.view.cell, m.view.known.start === m.view.known.end, m.view.element, m.view.elementFloat(theme())], [{ r: 1, c: 1 }, true, null, null]);
+  assert.deepEqual(bgs(), [m.view.highlight], "its highlight as before, not the active comment's");
+});
+
+test("a link's popover over a cell follows its text as the page scrolls and as a row above the edited one grows", async () => {
+  const m = await page(LINK_CELLS, LINK_CELL_SIZES, 300), table = keyAt(m, 1), state = m.view.cellField(table, 2, 1);
+  await clickCellToken(m, 1, 2, 1, state.tokens().find(t => t.token.label === "docs"));
+  const at = () => [popoverOf(m).style.top, popoverOf(m).style.left], [top, left] = at();
+  const o = cellOrigin(m, 1, 2, 1);
+  assert.deepEqual([top, Math.abs(left - (o.x + BEFORE_LINK * DRAWN_CELL)) <= 3], [o.y - BAR.gap - popoverOf(m).style.h, true], "where the press put it");
+  wheel(m, -30);
+  assert.deepEqual([m.view.offset, ...at()], [30, top - 30, left], "up with the page");
+  const grown = m.view.gridHeights(m.view.data.get(table))[1] + 21;
+  rowReport(m, table, 1, grown);
+  await flush();
+  assert.deepEqual([m.view.offset, ...at()], [30, top - 30 + 21, left], "down with its row");
+});
+
+test("typing at the end of a tall cell near the foot of the pane scrolls the page to keep the caret's row in view", async () => {
+  const long = Array.from({ length: 30 }, (_, k) => `word${k}`).join(" "), viewH = 250;
+  const doc = ["Intro", "", "Some words", "", "| A | B |", "|---|---|", `| ${long} | x |`, "", "End", ""].join("\n");
+  const m = await page(doc, { 0: 24, 1: 38, 2: 14 + gridH(2) + 4 * 21, 3: 38 }, viewH), table = keyAt(m, 2);
+  const advance = m.view.calOf("cell").advance, row = m.view.data.get(table).row;
+  assert.equal(m.view.offset, 0);
+  const state = await pressCell(m, table, 1, 0, long.length);
+  state.type("s", m.cx);
+  const rows = referenceRows(`${long}s`, (m.view.data.get(table).grid.widths[0] - 2 * GRID.padX) / advance), last = rows.length - 1;
+  assert.ok(last >= 3, `${rows.length} rows`);
+  const y = 28 + m.view.sums[2] + m.view.data.get(table).space + GRID.line + m.view.gridHeights(m.view.data.get(table))[0] + GRID.padY + last * row;
+  assert.equal(m.view.offset, y + row - viewH + REVEAL.bottom, "the caret's row at the pane's foot");
+});
+
+test("a cell's field declares rows=one while its text fits one row of the cell, rows=many while it wraps there, and many once typing makes it wrap", async () => {
+  const m = await page(MIDDLE_DOC, MIDDLE_SIZES), table = keyAt(m, 1);
+  const context = (r, c) => must(m.tree(), `md-field-${table}-${r}-${c}`).style.key_context;
+  const crisp = await pressCell(m, table, 1, 1, 5);
+  assert.deepEqual([m.view.rows, context(1, 1)], ["one", `${TEXT} rows=one`], "a short cell");
+  await pressCell(m, table, 2, 1, 3);
+  assert.deepEqual([m.view.rows, context(2, 1)], ["many", `${TEXT} rows=many`], "a wrapped one");
+  await pressCell(m, table, 1, 1, 5);
+  assert.equal(m.view.rows, "one");
+  crisp.type(` ${"x".repeat(46)}`, m.cx);
+  assert.deepEqual([m.view.rows, context(1, 1)], ["many", `${TEXT} rows=many`], "typed until it wraps: 52 letters in 340 px");
+});
+
+// The blocks of FITTED_CELLS: the intro (0), a table whose second column is left-aligned and as wide as its widest
+// text, cell (1, 1)'s (1), End (2).
+const FITTED_CELLS = ["Intro", "", "| Name | Notes |", "|---|---|", "| apple | crisp and cold from the shelf |", "| pear | dark |", "", "End", ""].join("\n");
+const FITTED_SIZES = { 0: 24, 1: 14 + gridH(3), 2: 38 };
+
+test("a cell's field declares rows=one while its text just fits its text box: the widest of a left or a centred column, a centred cell in the box as wide as its text; many once one more letter wraps it", async () => {
+  const fits = async (doc, sizes, r, c, text, at, why) => {
+    const m = await page(doc, sizes), table = keyAt(m, 1), g = m.view.data.get(table).grid, advance = m.view.calOf("cell").advance;
+    const box = g.boxes[r][c] || g.widths[c] - 2 * GRID.padX, px = text.length * advance;
+    assert.ok(px <= box && px > 0.9 * box, `${why}: ${px} px of text in ${box}, past a paragraph's 90 %`);
+    const state = await pressCell(m, table, r, c, at);
+    assert.deepEqual([drawnText(state), m.view.rows, must(m.tree(), `md-field-${table}-${r}-${c}`).style.key_context], [text, "one", `${TEXT} rows=one`], why);
+    return { m, state, context: () => must(m.tree(), `md-field-${table}-${r}-${c}`).style.key_context };
+  };
+  const shelf = "crisp and cold from the shelf", left = await fits(FITTED_CELLS, FITTED_SIZES, 1, 1, shelf, shelf.length, "the widest of a left-aligned column");
+  left.state.type("s", left.m.cx);
+  assert.deepEqual([left.m.view.rows, left.context()], ["many", `${TEXT} rows=many`], "one letter more wraps it");
+  await fits(LINK_CELLS, LINK_CELL_SIZES, 1, 1, "crisp and cold from the shelf by the door", 0, "the widest of a centred column");
+  await fits(LINK_CELLS, LINK_CELL_SIZES, 2, 1, "a few words before the docs now", 0, "a centred cell's box, its link drawn as its text");
+});
+
+test("a drag in a cell of one row let go in the cell's padding under its text, with no room for the bar above: the bar goes under that row, not under a row the cell doesn't have", async () => {
+  const m = await page(MIDDLE_DOC, MIDDLE_SIZES, 300), table = keyAt(m, 1), state = m.view.cellField(table, 1, 1), row = m.view.data.get(table).row;
+  wheel(m, -(cellOrigin(m, 1, 1, 1).y - 30));
+  const o = cellOrigin(m, 1, 1, 1);
+  assert.equal(o.y, 30, "the cell's text 30 px under the pane's top");
+  fire(must(m.tree(), `md-field-${table}-1-1`), "on_mouse_down:left", cellPress(m, 1, 1, 1, { x: 0, y: row / 2 }), m.cx);
+  state.select(0, 5);
+  state.handlers.focus({}, m.cx);
+  up(m, { x: o.x + 5 * DRAWN_CELL, y: o.y + row + GRID.padY / 2 });
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+  assert.deepEqual([m.view.cell, selectedText(m)], [{ r: 1, c: 1 }, "crisp"]);
+  assert.equal(barOf(m).style.top, o.y + row + BAR.gap, "under the cell's one row");
 });

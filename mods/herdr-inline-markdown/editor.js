@@ -100,6 +100,10 @@ const FORMAT_BAR = [
 const BAR_BUTTONS = new Map(FORMAT_BAR.flat().map(b => [b.name, b]));
 const buttonW = b => (b.menu ? BAR.button + BAR.chevron : BAR.button);
 const FORMAT_GROUPS = FORMAT_BAR.map(group => group.map(b => ({ name: b.name, w: buttonW(b) })));
+// A table cell can't be a heading, a quote or a list item, and Comment there would comment the whole table, not the
+// words selected: its bar leaves those buttons out.
+const NOT_IN_CELLS = new Set(["comment", "style", "list"]);
+const CELL_FORMAT_GROUPS = FORMAT_GROUPS.map(group => group.filter(b => !NOT_IN_CELLS.has(b.name))).filter(group => group.length);
 const BAR_RULE_H = 16;
 const commandOf = id => COMMANDS.find(c => c.id === id);
 const STYLE_ROWS = ["text", "h1", "h2", "h3", "quote"], LIST_ROWS = ["ul", "ol", "todo"];
@@ -160,6 +164,8 @@ const ELEMENTS = {
   link: { float: "linkPopover" }, comment: { float: "commentFloat" }, point: { float: "commentFloat" }, image: { float: "imageFloat" },
 };
 const COMMENT_KINDS = new Set(["comment", "point"]);
+// In a table cell a press picks a link alone: commented text and a picture there take the caret as plain text does.
+const CELL_ELEMENTS = new Set(["link"]);
 const NEW_CARD = "md-card-new", FLOAT_CARD = "md-card-float";
 // Cards this far above and below the viewport are drawn too, so a short scroll shows no gap before the next draw.
 const CARD_SLACK = 200;
@@ -3052,7 +3058,7 @@ export class Editor {
     if (!this.setField(f.value, { start: clamp(range.start, 0, n), end: clamp(range.end, 0, n) })) { this.drop(); this.rebuild(cx, anchor); return false; }
     this.activeKey = b.key; this.cell = { r, c }; this.act++;
     this.retoken();
-    this.rows = "many";
+    this.rows = this.rowsFlag();
     this.rebuild(cx, anchor);
     if (shift) this.offset = clampOffset(this.offset + shift, this.contentH(), this.viewH());
     this.focusField(cx);
@@ -3216,7 +3222,7 @@ export class Editor {
     const r = this.richNow(), box = ev?.bounds, range = ev?.range, x = press?.x;
     if (!r || !range) return;
     const at = pressedAt(r, range, typeof x === "number" && box?.width > 0 ? (x - box.x) / box.width : 1);
-    const span = this.cell ? null : this.elementPressed(range, at);
+    const span = this.elementPressed(range, at);
     if (span && !this.wasPicked(span)) {
       this.pickElement(span, cx);
       this.pinToken(r, span, range, box, press);
@@ -3234,16 +3240,21 @@ export class Editor {
   // on (a link around the picture alone).
   elementPressed(range, at) {
     const shows = sp => (sp.from === sp.to ? range.start <= sp.start && sp.end <= range.end : sp.from < range.end && range.start < sp.to);
-    const hit = parsedInline(this.seen, this.defsNow().map).spans.filter(sp => ELEMENTS[sp.kind] && shows(sp));
+    const hit = parsedInline(this.seen, this.defsNow().map).spans.filter(sp => ELEMENTS[sp.kind] && this.picks(sp.kind) && shows(sp));
     let inner = null;
     for (const sp of hit) if (sp.from <= at && at <= sp.to) inner = sp;
     inner ??= hit[0] ?? null;
     return hit.find(sp => sp.kind === "image" && inner.start <= sp.start && sp.end <= inner.end) ?? inner;
   }
 
+  // Whether a press on the edited field picks an element of `kind`: in a table cell only CELL_ELEMENTS.
+  picks(kind) {
+    return !this.cell || CELL_ELEMENTS.has(kind);
+  }
+
   wasPicked(span) {
     const p = this.pressedOn;
-    return Boolean(p) && p.key === this.activeKey && p.value === this.seen && p.kind === span.kind && p.start === span.start;
+    return Boolean(p) && p.key === this.editedId() && p.value === this.seen && p.kind === span.kind && p.start === span.start;
   }
 
   pickElement(span, cx) {
@@ -3260,7 +3271,7 @@ export class Editor {
   // The element picked, while the selection lies inside it: { kind, span, extent }, or null.
   elementNow() {
     const e = this.element, k = this.known;
-    if (!e || e.act !== this.act || !this.activeKey || this.pending || this.cell || !this.editable() || !k.valid || this.noteOpen()) return null;
+    if (!e || e.act !== this.act || !this.activeKey || this.pending || !this.picks(e.kind) || !this.editable() || !k.valid || this.noteOpen()) return null;
     return this.elementHolding(e.kind, k);
   }
 
@@ -3641,13 +3652,13 @@ export class Editor {
   }
 
   // "one" while the active field has no line break, measures under 1.5 rows and its text is estimated to fit, so the
-  // flag drops before a wrap is measured.
+  // flag drops before a wrap is measured. A cell's box is sized to its text by the estimate, so no margin there.
   rowsFlag() {
     const d = this.data.get(this.activeKey);
-    if (this.cell) return "many";
     if (!d) return this.seen.includes("\n") ? "many" : "one";
-    const cal = this.calOf(d.style), rows = this.rowsOf(d, true) ?? 1;
-    return isOneRow({ value: this.drawnNow(), height: rows * d.row, rowPx: d.row, width: this.chromeOf(d, true).w, advance: cal.advance }) ? "one" : "many";
+    const box = this.editedBox(d);
+    if (this.cell && d.grid) return box.rows === 1 ? "one" : "many";
+    return isOneRow({ value: this.drawnNow(), height: (box.rows ?? 1) * box.row, rowPx: box.row, width: box.w, advance: box.advance }) ? "one" : "many";
   }
 
   updateRows(cx) {
@@ -3662,32 +3673,42 @@ export class Editor {
   caretTop(i, at = caretOf(this.field)?.end ?? 0) {
     const d = this.data.get(this.blocks[i]?.key);
     if (!d) return null;
-    if (this.cell && d.grid) return this.cellCaretTop(i, d, at);
-    return this.sums[i] + this.chromeOf(d, true).y + this.wrapAt(at).row * d.row;
+    const box = this.editedBox(d);
+    return this.sums[i] + box.y + this.wrapAt(at, false, box).row * box.row;
   }
 
-  // caretTop in the edited cell of grid table data d: its row's top and padding, and the row of the cell's text, wrapped
-  // at the cell's inner width.
-  cellCaretTop(i, d, at) {
-    const { r, c } = this.cell, g = d.grid, advance = this.calOf(r === 0 ? "head" : "cell").advance;
-    const inner = g.boxes[r]?.[c] || g.widths[c] - 2 * GRID.padX, wrap = this.wrapOf(this.drawnNow(), inner, advance);
-    return this.sums[i] + d.space + gridRowTop(this.gridHeights(d), r) + GRID.padY + wrapPlace(wrap.rows, this.drawnAt(at), advance, false).row * d.row;
+  // Where the edited field draws its text in block data d, from the block's top-left: { x, y, w } as chromeOf gives
+  // them, its row height `row`, its `advance`, and the rows it measures (`rows`, undefined until measured); in an edited
+  // cell, that cell's text (cellBox) and the rows the estimate wraps it to.
+  editedBox(d) {
+    if (this.cell && d.grid) return this.cellBox(d, this.cell.r, this.cell.c, this.drawnNow());
+    return { ...this.chromeOf(d, true), row: d.row, advance: this.calOf(d.style).advance, rows: this.rowsOf(d, true) };
+  }
+
+  // Where cell (r, c) of grid table data d draws its text, from the block's top-left: past the grid's lines, the columns
+  // before it and its padding (cellTextLeft), under the rows above it as measured, else estimated; as wide as its text
+  // box; the header's text at its own advance. `rows`: the rows the estimate wraps `drawn` to (the field reports none).
+  cellBox(d, r, c, drawn) {
+    const g = d.grid, advance = this.calOf(r === 0 ? "head" : "cell").advance, w = g.boxes[r][c] || g.widths[c] - 2 * GRID.padX;
+    return {
+      x: d.depth * INDENT + this.cellTextLeft(g, r, c), y: d.space + gridRowTop(this.gridHeights(d), r) + GRID.padY,
+      w, row: d.row, advance, rows: drawn === undefined ? undefined : this.wrapOf(drawn, w, advance).rows.length,
+    };
   }
 
   // Where the edited field draws offset `at`: { row, x }, x from the field's left. `end` takes an offset where a row
-  // starts as the end of the row before.
-  wrapAt(at, end = false) {
-    const d = this.data.get(this.activeKey);
-    return this.estimateIn(d, this.drawnNow(), this.drawnAt(at), this.chromeOf(d, true).w, true, end);
+  // starts as the end of the row before. `box`: the field's editedBox.
+  wrapAt(at, end = false, box = this.editedBox(this.data.get(this.activeKey))) {
+    return this.estimateIn(this.drawnNow(), this.drawnAt(at), box, end);
   }
 
-  // Where a field of block data `d`, `width` px wide, draws offset `at` of `drawn`: wrapped at the calibrated advance,
-  // and not at all while the field measures no more rows than it has lines. The measured rows cap it, unless lines were
-  // typed since they were measured.
-  estimateIn(d, drawn, at, width, asField, end = false) {
-    const advance = this.calOf(d.style).advance, wrap = this.wrapOf(drawn, width, advance), rows = this.rowsOf(d, asField);
+  // Where a field `w` px wide draws offset `at` of `drawn`: wrapped at `advance` px a character, and not at all while
+  // the field measures no more `rows` than it has lines. The measured rows cap it, unless lines were typed since they
+  // were measured.
+  estimateIn(drawn, at, { w, advance, rows }, end = false) {
+    const wrap = this.wrapOf(drawn, w, advance);
     const unwrapped = rows !== undefined && rows <= wrap.lines.length, place = wrapPlace(unwrapped ? wrap.lines : wrap.rows, at, advance, end);
-    return { row: rows ? Math.min(place.row, Math.max(rows, wrap.lines.length) - 1) : place.row, x: Math.min(place.x, width) };
+    return { row: rows ? Math.min(place.row, Math.max(rows, wrap.lines.length) - 1) : place.row, x: Math.min(place.x, w) };
   }
 
   wrapOf(text, width, advance) {
@@ -3699,22 +3720,27 @@ export class Editor {
     return wrap;
   }
 
-  fieldInPane(i) {
-    const d = this.data.get(this.blocks[i]?.key), c = this.chromeOf(d, true);
-    return { x: columnLeft(this.paneW(), this.margin) + c.x, y: COLUMN.padTop + this.sums[i] + c.y - this.offset };
+  // Where the field box `box` (editedBox, cellBox, chromeOf) of block i is in the pane.
+  boxInPane(i, box) {
+    return { x: columnLeft(this.paneW(), this.margin) + box.x, y: COLUMN.padTop + this.sums[i] + box.y - this.offset };
   }
 
-  paneToField(key, p) {
-    const i = this.at.get(key);
-    if (!p || i === undefined || !this.data.get(key) || this.sums.length !== this.blocks.length + 1) return null;
-    const o = this.fieldInPane(i);
+  fieldInPane(i) {
+    return this.boxInPane(i, this.editedBox(this.data.get(this.blocks[i]?.key)));
+  }
+
+  // Pane point p from the top-left of the field `id` names: a block's key, or a cell's id.
+  paneToField(id, p) {
+    const cell = cellOfId(id), key = cell?.key ?? id, i = this.at.get(key), d = this.data.get(key);
+    if (!p || i === undefined || !d || (cell && !d.grid) || this.sums.length !== this.blocks.length + 1) return null;
+    const o = this.boxInPane(i, cell ? this.cellBox(d, cell.r, cell.c) : this.chromeOf(d, true));
     return { x: p.x - o.x, y: p.y - o.y };
   }
 
   // `first` and `last` are rows of the field, `x` from its left.
   setPin(k, first, last, x) {
     const d = this.data.get(this.activeKey);
-    this.pin = { key: this.activeKey, act: this.act, value: this.seen, width: this.chromeOf(d, true).w, cal: this.cal, start: k.start, end: k.end, first, last, x };
+    this.pin = { key: this.activeKey, act: this.act, value: this.seen, width: this.editedBox(d).w, cal: this.cal, start: k.start, end: k.end, first, last, x };
   }
 
   pinFor(k, width) {
@@ -3727,32 +3753,33 @@ export class Editor {
   // the estimated width of the element's text before it). The token's bounds are window pixels; the press that led to
   // the click says where the field is in the window.
   pinToken(r, span, range, box, press) {
-    const key = this.activeKey, d = this.data.get(key);
-    if (press?.key !== key || !press.origin || !box || !d) return;
-    const z = zoom(), extent = extentOf(r, span), advance = this.calOf(d.style).advance;
-    const before = (drawnOffset(r, range.start) - drawnOffset(r, extent.start)) * advance;
-    const row = this.rowAtY(d, (box.y - press.origin.y) / z + d.row / 2);
+    const d = this.data.get(this.activeKey);
+    if (press?.key !== this.editedId() || !press.origin || !box || !d) return;
+    const z = zoom(), extent = extentOf(r, span), field = this.editedBox(d);
+    const before = (drawnOffset(r, range.start) - drawnOffset(r, extent.start)) * field.advance;
+    const row = this.rowAtY(field, (box.y - press.origin.y) / z + field.row / 2);
     this.setPin(extent, row, row, Math.max(0, (box.x - press.origin.x) / z - before));
   }
 
   // A drag's selection starts at the press going forward, at the release going back. A double-click's word starts left
   // of the press by at most the word's width, which bounds the estimate. A click picks no range here (see pinToken).
   pinSelection(c) {
-    const p = this.pressed, r = this.released, key = this.activeKey, d = this.data.get(key);
-    if (!c || c.start === c.end || !d || p?.key !== key || r?.key !== key || !p.at || !r.at) return;
-    const from = { row: this.rowAtY(d, p.at.y), x: p.at.x }, to = { row: this.rowAtY(d, r.at.y), x: r.at.x };
+    const p = this.pressed, r = this.released, id = this.editedId(), d = this.data.get(this.activeKey);
+    if (!c || c.start === c.end || !d || p?.key !== id || r?.key !== id || !p.at || !r.at) return;
+    const box = this.editedBox(d), from = { row: this.rowAtY(box, p.at.y), x: p.at.x }, to = { row: this.rowAtY(box, r.at.y), x: r.at.x };
     if (p.clicks === 2) {
-      const width = (this.drawnAt(c.end) - this.drawnAt(c.start)) * this.calOf(d.style).advance;
-      return this.setPin(c, from.row, from.row, clamp(this.wrapAt(c.start).x, from.x - width, from.x));
+      const width = (this.drawnAt(c.end) - this.drawnAt(c.start)) * box.advance;
+      return this.setPin(c, from.row, from.row, clamp(this.wrapAt(c.start, false, box).x, from.x - width, from.x));
     }
     if (Math.hypot(r.at.x - p.at.x, r.at.y - p.at.y) <= CLICK_SLOP) return;
     const back = to.row < from.row || (to.row === from.row && to.x < from.x), [a, b] = back ? [to, from] : [from, to];
-    this.setPin(c, a.row, b.row, clamp(a.x, 0, this.chromeOf(d, true).w));
+    this.setPin(c, a.row, b.row, clamp(a.x, 0, box.w));
   }
 
-  rowAtY(d, y) {
-    const rows = this.rowsOf(d, true), row = Math.max(0, Math.floor(y / d.row));
-    return rows ? Math.min(row, rows - 1) : row;
+  // The row of a field of box `box` (editedBox) at y from its top.
+  rowAtY(box, y) {
+    const row = Math.max(0, Math.floor(y / box.row));
+    return box.rows ? Math.min(row, box.rows - 1) : row;
   }
 
   revealCaret(cx) {
@@ -3978,15 +4005,15 @@ export class Editor {
   }
 
   // Herdr's field has already kept the selection under a right-click, or moved the caret there: on a picture, which its
-  // token holds whole, the caret is at its edge or in its alt text, and the picture is picked with its float; else the
-  // bar shows over the selection, or over the word at the caret.
+  // token holds whole, the caret is at its edge or in its alt text, and the picture is picked with its float (not in a
+  // table cell, CELL_ELEMENTS); else the bar shows over the selection, or over the word at the caret.
   fieldRightUp(key) {
     this.post(cx => {
       if (key !== this.editedId()) this.takeField(key, cx);
       if (key !== this.editedId() || !this.editable()) return;
       this.syncField(cx);
       this.element = null;
-      const c = this.caretNow(), picture = c && this.formatted() ? this.elementHolding("image", c) : null;
+      const c = this.caretNow(), picture = c && this.formatted() && this.picks("image") ? this.elementHolding("image", c) : null;
       if (picture) return this.pickElement(picture.span, cx);
       const word = c && c.start === c.end ? wordAround(this.seen, c.start) : null;
       if (word) this.selectField(word);
@@ -4058,7 +4085,7 @@ export class Editor {
     else if (!this.setField(f.value, { start: 0, end: 0 })) { this.drop(); this.rebuild(cx, anchor); return; }
     this.activeKey = key; this.cell = { r, c }; this.act++;
     this.retoken();
-    this.rows = "many";
+    this.rows = this.rowsFlag();
     this.rebuild(cx, anchor);
     if (this.focusedState !== this.field) this.field.focus();
     cx.notify();
@@ -4983,11 +5010,11 @@ export class Editor {
       .when(Boolean(c.hint), el => el.child(div().flex_none().font_family(this.fonts.mono).text_size(11.5).text_color(t.dim).child(c.hint)));
   }
 
-  // The format bar belongs to one activation of a writable text block, as the menu does, and shows while the selection
-  // last read or set holds more than spaces, the menu and the boxes are shut, and no element is picked.
+  // The format bar belongs to one activation of a writable text block or table cell, as the menu does, and shows while
+  // the selection last read or set holds more than spaces, the menu and the boxes are shut, and no element is picked.
   barOpen() {
     const k = this.known;
-    return this.bar?.act === this.act && Boolean(this.activeKey) && !this.cell && this.editable() && k.valid
+    return this.bar?.act === this.act && Boolean(this.activeKey) && this.editable() && k.valid
       && Boolean(this.seen.slice(k.start, k.end).trim()) && !this.slashOpen() && !this.boxOpen() && !this.elementNow() && this.takesMarks();
   }
 
@@ -5066,10 +5093,10 @@ export class Editor {
   placeBar(k = this.known, size = this.barLayout(), place = barPlace) {
     const key = this.activeKey, i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
-    const o = this.fieldInPane(i), pin = this.pinFor(k, this.chromeOf(d, true).w);
-    const first = pin ? { row: pin.first, x: pin.x } : this.wrapAt(k.start), last = pin ? pin.last : this.wrapAt(k.end, k.end > k.start).row;
+    const box = this.editedBox(d), o = this.boxInPane(i, box), pin = this.pinFor(k, box.w);
+    const first = pin ? { row: pin.first, x: pin.x } : this.wrapAt(k.start, false, box), last = pin ? pin.last : this.wrapAt(k.end, k.end > k.start, box).row;
     return place({
-      firstTop: o.y + first.row * d.row, lastTop: o.y + last * d.row, rowH: d.row, size, x: o.x + first.x,
+      firstTop: o.y + first.row * box.row, lastTop: o.y + last * box.row, rowH: box.row, size, x: o.x + first.x,
       viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H,
     });
   }
@@ -5079,7 +5106,7 @@ export class Editor {
   }
 
   barLayout() {
-    return barLayout(FORMAT_GROUPS, this.paneW() - 2 * BAR.margin);
+    return barLayout(this.cell ? CELL_FORMAT_GROUPS : FORMAT_GROUPS, this.paneW() - 2 * BAR.margin);
   }
 
   // Where the bar and its open menu go: { place, layout, name, menu } (no `menu` while none is open), or null while the
@@ -5361,7 +5388,7 @@ export class Editor {
       return cx.notify();
     }
     if (name === "edit") return this.showLinkBox({ link: span, place: extent, text: span.url, back: true }, cx);
-    const value = this.seen, next = unlink(value, span, { defs: this.doc.defs });
+    const value = this.seen, next = unlink(value, span, this.linkOptions());
     if (!next) return;
     this.element = null;
     this.typeChange(value, this.known, next, cx);
@@ -5372,14 +5399,14 @@ export class Editor {
   // its edge is outside it), else for a new link over the selection, the word holding the caret, or at the caret,
   // offering the address the clipboard holds.
   linkKey(cx) {
-    if (!this.takesMarks() || this.cell) return;
+    if (!this.takesMarks()) return;
     const r = this.caretNow();
     if (!r) return;
     const picked = this.elementNow(), held = picked?.kind === "link" ? picked : this.elementHolding("link", r);
     const inside = held && (picked || r.start !== r.end || (held.extent.start < r.start && r.start < held.extent.end));
     if (inside) return this.showLinkBox({ link: held.span, place: held.extent, text: held.span.url, back: false }, cx);
     const sel = actedOn(this.seen, r), target = sel.start === undefined ? { start: sel.caret, end: sel.caret } : { start: sel.start, end: sel.end };
-    if (!addLink(this.seen, target, ANY_ADDRESS, { defs: this.doc.defs })) return notify({ title: LINK_REFUSED, level: "info" });
+    if (!addLink(this.seen, target, ANY_ADDRESS, this.linkOptions())) return notify({ title: LINK_REFUSED, level: "info" });
     this.closeElement(cx);
     this.showLinkBox({ link: null, target, place: target, text: clipboardAddress(cx.read_from_clipboard?.()), back: false }, cx);
   }
@@ -5411,10 +5438,10 @@ export class Editor {
   applyLinkBox(cx) {
     const b = this.linkBox;
     if (!this.linkBoxOpen()) return this.closeLinkBox(cx);
-    const address = linkAddress(this.linkField.value()), value = this.seen, defs = { defs: this.doc.defs };
+    const address = linkAddress(this.linkField.value()), value = this.seen, options = this.linkOptions();
     const span = b.link && parsedInline(value, this.defsNow().map).spans.find(sp => sp.kind === "link" && sp.start === b.link.start);
     if (!span && !address) return this.cancelLinkBox(cx);
-    const next = span ? (address ? setAddress(value, span, address, defs) : unlink(value, span, defs)) : addLink(value, b.target, address, defs);
+    const next = span ? (address ? setAddress(value, span, address, options) : unlink(value, span, options)) : addLink(value, b.target, address, options);
     this.linkBox = null;
     if (next) this.typeChange(value, b.range, next, cx);
     else this.selectField(b.range);
@@ -5440,6 +5467,11 @@ export class Editor {
     if (!this.linkBox) return;
     this.linkBox = null;
     cx?.notify();
+  }
+
+  // What links.js writes links with: the document's definitions, and whether the edited field is a table cell's.
+  linkOptions() {
+    return { defs: this.doc.defs, cell: Boolean(this.cell) };
   }
 
   // Drawn by the root where the link's popover goes. One press outside closes it, writing nothing.
@@ -6393,7 +6425,8 @@ export class Editor {
     if (b.key === this.activeKey) return this.caretTop(i, at);
     const d = this.data.get(b.key), asField = d.mode === "field", c = this.chromeOf(d, asField), own = this.blockFields.get(b.key);
     const r = own?.rich && own.value === memo.value ? own.rich : null, drawn = r ? r.drawn : memo.value;
-    return this.sums[i] + c.y + this.estimateIn(d, drawn, r ? drawnOffset(r, at) : at, c.w, asField).row * d.row;
+    const box = { w: c.w, advance: this.calOf(d.style).advance, rows: this.rowsOf(d, asField) };
+    return this.sums[i] + c.y + this.estimateIn(drawn, r ? drawnOffset(r, at) : at, box).row * d.row;
   }
 
   // What a commented block's cards are read from, kept while its content stays the same: its field value and cards.
