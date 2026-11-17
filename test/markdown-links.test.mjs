@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
 import { parse } from "../mods/herdr-inline-markdown/blocks.js";
-import { addLink, clipboardAddress, destinationOf, linkAddress, linkForm, setAddress, unlink } from "../mods/herdr-inline-markdown/links.js";
+import { addLink, clipboardAddress, destinationOf, linkAddress, linkForm, pictureCut, pictureForm, setAddress, setPicture, unlink } from "../mods/herdr-inline-markdown/links.js";
 
-const DEFS = parse("x\n\n[ref]: https://r.org \"T\"\n").defs;
+const DEFS = parse("x\n\n[ref]: https://r.org \"T\"\n[cat]: <my cat.png> \"A cat\"\n").defs;
 const linksOf = value => parseInline(value, { defs: DEFS }).spans.filter(sp => sp.kind === "link");
 const linkIn = value => linksOf(value)[0];
 const read = (out, value = out.value) => value.slice(out.start, out.end);
@@ -118,4 +118,71 @@ test("addLink at a caret writes the address as a link whose text is the address,
     assert.equal(linkIn(odd.value).url, address);
   }
   assert.equal(addLink("x ", { start: 2, end: 2 }, "https://a.org", { defs: DEFS, text: "a.org" }).value, "x [a.org](https://a.org)", "a text of its own");
+});
+
+const picturesIn = value => parseInline(value, { defs: DEFS }).spans.filter(sp => sp.kind === "image");
+const pictureIn = value => picturesIn(value)[0];
+const pictureEdit = (value, change) => setPicture(value, pictureIn(value), change, { defs: DEFS });
+
+test("a picture's form in text: inline, reference (full, collapsed or its label alone) or an HTML <img> tag", () => {
+  for (const [value, form] of [
+    ["![a](u)", "inline"], ["![a]()", "inline"], ['![a](u "t")', "inline"], ["[![a](u)](v)", "inline"],
+    ["![a][cat]", "reference"], ["![cat][]", "reference"], ["![cat]", "reference"],
+    ['<img src="u" alt="a">', "html"], ["<img src=u>", "html"],
+  ]) assert.equal(pictureForm(value, pictureIn(value)), form, value);
+});
+
+test("setPicture writes a new address into an inline picture, keeping its alt text, its title and the link around it; the whole picture comes back as the range", () => {
+  const value = 'see ![a *cat*](cat.png "Title") here';
+  const out = pictureEdit(value, { address: "<dog 1.png>" });
+  assert.deepEqual(out, { value: 'see ![a *cat*](<dog 1.png> "Title") here', start: 4, end: 35 });
+  assert.deepEqual([pictureIn(out.value).url, pictureIn(out.value).title, pictureIn(out.value).alt], ["dog 1.png", "Title", "a cat"]);
+  assert.equal(pictureEdit("[![a](a.png)](https://e.com) b", { address: "b.png" }).value, "[![a](b.png)](https://e.com) b");
+  assert.equal(pictureEdit("x ![a]() y", { address: "a.png" }).value, "x ![a](a.png) y", "an empty address gets one");
+});
+
+test("setPicture on a reference picture writes it inline for that picture alone, with its definition's title, when its address changes", () => {
+  for (const [value, edited] of [
+    ["x ![a cat][cat] y", 'x ![a cat](dog.png "A cat") y'], ["x ![cat][] y", 'x ![cat](dog.png "A cat") y'], ["x ![cat] y", 'x ![cat](dog.png "A cat") y'],
+  ]) {
+    const out = pictureEdit(value, { address: "dog.png" });
+    assert.equal(out.value, edited, value);
+    assert.equal(read(out), edited.slice(2, -2));
+  }
+});
+
+test("setPicture writes an alt text so that parseInline reads back exactly what was typed; an empty one leaves ![](…)", () => {
+  for (const alt of ["a *b* [c]", "x\\y", "u_v_ `w` ~x~ <y> &amp;", ""]) {
+    const out = pictureEdit("see ![old](a.png) here", { alt });
+    assert.equal(pictureIn(out.value).alt, alt, out.value);
+    assert.equal(pictureIn(out.value).url, "a.png");
+  }
+  assert.equal(pictureEdit("see ![old](a.png) here", { alt: "" }).value, "see ![](a.png) here");
+});
+
+test("setPicture on a picture whose alt text is its label writes it inline first, with the definition's address and title; a full reference keeps its label", () => {
+  assert.equal(pictureEdit("x ![cat] y", { alt: "kitty" }).value, 'x ![kitty](<my cat.png> "A cat") y');
+  assert.equal(pictureEdit("x ![cat][] y", { alt: "kitty" }).value, 'x ![kitty](<my cat.png> "A cat") y');
+  assert.equal(pictureEdit("x ![a cat][cat] y", { alt: "kitty" }).value, "x ![kitty][cat] y");
+  assert.equal(pictureIn(pictureEdit("x ![cat] y", { alt: "kitty" }).value).url, "my cat.png");
+});
+
+test("setPicture changes the address and the alt text together, and writes nothing for an HTML <img> tag", () => {
+  assert.equal(pictureEdit("![shot 1](shot-1.png) z", { alt: "shot 2", address: "images/shot-2.png" }).value, "![shot 2](images/shot-2.png) z");
+  assert.equal(pictureEdit('see <img src="a.png" alt="a"> z', { alt: "b" }), null);
+  assert.equal(pictureEdit('see <img src="a.png" alt="a"> z', { address: "b.png" }), null);
+});
+
+test("pictureCut: the picture's source, with its link when the link shows nothing else, and the space after it when spaces show on both sides", () => {
+  const cut = (value, options) => pictureCut(value, pictureIn(value), { defs: DEFS, ...options });
+  assert.deepEqual(cut("see ![a](a.png) here"), { start: 4, end: 16 });
+  assert.deepEqual(cut("see ![a](a.png) here", { space: false }), { start: 4, end: 15 }, "the picture alone");
+  assert.deepEqual(cut("see [![a](a.png)](https://e.com) here"), { start: 4, end: 33 }, "its link with it");
+  assert.deepEqual(cut("see [![a](a.png) more](https://e.com) here"), { start: 5, end: 17 }, "a link that shows more stays");
+  assert.deepEqual(cut("![a](a.png) here"), { start: 0, end: 11 }, "nothing before it: no space goes");
+  assert.deepEqual(cut("see ![a](a.png)"), { start: 4, end: 15 }, "nothing after it");
+  assert.deepEqual(cut("see ![a](a.png), here"), { start: 4, end: 15 });
+  assert.deepEqual(cut("**see ![a](a.png)** here"), { start: 6, end: 20 }, "a space shown after the marks that close round it");
+  assert.deepEqual(cut('see <img src="a.png" alt="a"> here'), { start: 4, end: 30 });
+  assert.deepEqual(cut("see ![a][cat] here"), { start: 4, end: 14 });
 });

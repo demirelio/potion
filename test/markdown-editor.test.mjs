@@ -10268,3 +10268,311 @@ test("Cmd+E lets a picked picture go; the Markdown view still shows its source",
   await m.key("cmd-e");
   assert.deepEqual([m.view.mode, m.view.picked, m.view.source.value()], ["markdown", null, PICDOC]);
 });
+
+test("Cmd+C and Cmd+X of a picked picture of a paragraph of pictures: its markdown as written, its link around it; Cmd+X deletes it as Delete does, one entry", async () => {
+  const doc = "# Title\n\n![a](a.png) [![b](b.png)](https://e.com)\n\nBye\n";
+  const m = await picturedAll(doc), key = keyAt(m, 1);
+  await clickAt(m, onNth(m, 0));
+  rootKey(m, "cmd-c");
+  assert.deepEqual([m.cx.read_from_clipboard(), m.view.text, pickedNow(m)], ["![a](a.png)", doc, [key, 0]]);
+  await clickAt(m, onNth(m, 1));
+  rootKey(m, "cmd-c");
+  assert.equal(m.cx.read_from_clipboard(), "[![b](b.png)](https://e.com)", "with its link");
+  rootKey(m, "cmd-x");
+  assert.deepEqual([m.cx.read_from_clipboard(), m.view.text, pickedNow(m), m.view.history.entries.length], ["[![b](b.png)](https://e.com)", "# Title\n\n![a](a.png)\n\nBye\n", [key, 0], 1]);
+  rootKey(m, "cmd-z");
+  assert.deepEqual([m.view.text, pickedNow(m)], [doc, [key, 1]]);
+  m.view.locked = "Read-only: unusual characters";
+  rootKey(m, "cmd-x");
+  assert.deepEqual([m.view.text, m.cx.read_from_clipboard()], [doc, "[![b](b.png)](https://e.com)"], "a file that cannot be edited: copied, not deleted");
+});
+
+test("a picture copied from a paragraph of pictures and pasted into a line of text is a picture there, drawn as its icon; pasted alone into a new paragraph it makes a paragraph of pictures", async () => {
+  const m = await picturedAll("# Title\n\n![a](a.png) ![b](b.png)\n\nBye\n");
+  await clickAt(m, onNth(m, 1));
+  rootKey(m, "cmd-c");
+  await openBlock(m, 2, 3);
+  m.view.field.type(" ", m.cx);
+  act(m, "mdb-paste");
+  assert.equal(m.view.text, "# Title\n\n![a](a.png) ![b](b.png)\n\nBye ![b](b.png)\n");
+  assert.equal(drawnText(m.view.field), "Bye b");
+  act(m, "mdb-enter");
+  act(m, "mdb-paste");
+  escape(m);
+  await flush();
+  assert.deepEqual([m.view.text, m.view.doc.blocks[3].image], ["# Title\n\n![a](a.png) ![b](b.png)\n\nBye ![b](b.png)\n\n![b](b.png)\n", true]);
+});
+
+// A paragraph with a picture in its line of text, between two others.
+const PIC_LINE = 'Intro\n\nSee ![a cat](cat.png "T") here\n\nOther\n';
+const inText = (disk = PIC_LINE) => page(disk, { 0: 24, 1: 24, 2: 38 });
+const pictureAddressOf = m => textOf(must(m.tree(), "md-picture-address")).trim();
+const literally = s => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+// What the field draws never holds a picture's marks, its address, nor an <img> tag's name and attributes.
+const assertNoPictureSource = (m, address, why) => assert.doesNotMatch(drawnText(m.view.field), new RegExp(`!\\[|\\]\\(|<img|alt=|${literally(address)}`), why);
+
+test("a press on a picture's icon or its alt text in a line of text picks it: its whole source selected, its float over the pressed token with its address; a second press puts the caret in its alt text; Escape and a press elsewhere close the float", async () => {
+  const m = await inText(), key = keyAt(m, 1), advance = STYLES.p.size * 0.47;
+  await clickToken(m, 1, tokenShowing(m, 1, "a "), { share: 0.1 });
+  const t = m.tree(), float = must(t, "md-picture");
+  assert.deepEqual([m.view.activeKey, m.view.field.selection, barOf(m)], [key, { start: 4, end: 25 }, null], "the whole picture, its float and not the bar");
+  assert.deepEqual([pictureAddressOf(m), must(t, "md-picture-address").style.tooltip], ["cat.png", "cat.png"]);
+  assert.deepEqual(floatButtons(m), ["change", "alt", "copy", "open", "delete"]);
+  assert.deepEqual(["change", "alt", "copy", "open", "delete"].map(name => must(t, `md-picture-${name}`).style.tooltip),
+    ["Change picture", "Alt text", "Copy address", "Open picture", "Delete picture"]);
+  assert.deepEqual([float.style.top + float.style.h + BAR.gap, float.style.left], [fieldOrigin(m, 1).y, fieldOrigin(m, 1).x + 4 * advance], "over the pressed token, at the picture's start");
+  assert.equal(drawnText(m.view.field), "See a cat here");
+  assertNoPictureSource(m, "cat.png", "picked");
+  audit(t);
+  await pressIn(m, 1, 0);
+  assert.deepEqual([floatOf(m), m.view.field.selection], [null, { start: 0, end: 0 }], "a press elsewhere");
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  assert.deepEqual([m.view.field.selection, Boolean(floatOf(m))], [{ start: 4, end: 25 }, true], "a press on its alt text picks it too");
+  await clickToken(m, 1, tokenShowing(m, 1, "c"), { share: 1 });
+  assert.deepEqual([m.view.field.selection, Boolean(floatOf(m))], [{ start: 9, end: 9 }, true], "a second press: the caret in its alt text, the float staying");
+  m.view.field.type("o", m.cx);
+  assert.deepEqual([m.view.text, Boolean(floatOf(m))], ['Intro\n\nSee ![a coat](cat.png "T") here\n\nOther\n', true], "typed into its alt text");
+  assertNoPictureSource(m, "cat.png", "the caret in its alt text");
+  escape(m);
+  assert.deepEqual([floatOf(m), m.view.activeKey], [null, key], "Escape closes the float first");
+});
+
+test("the same for a picture with no alt text (its icon alone), a reference picture and an <img> tag: a press picks it whole with its float; a second press leaves a caret, the float staying", async () => {
+  for (const [line, end] of [["![](cat.png)", 16], ["![a cat][cat]", 17], ['<img src="cat.png" alt="a cat">', 35]]) {
+    reset();
+    const m = await inText(`Intro\n\nSee ${line} here\n\nOther\n\n[cat]: cat.png\n`);
+    await clickToken(m, 1, tokenAt(m, 1, 4), { share: 0.1 });
+    assert.deepEqual([m.view.field.selection, pictureAddressOf(m), barOf(m)], [{ start: 4, end }, "cat.png", null], line);
+    assertNoPictureSource(m, "cat.png", line);
+    await clickToken(m, 1, tokenAt(m, 1, 4), { share: 0.1 });
+    assert.deepEqual([m.view.field.selection.start === m.view.field.selection.end, Boolean(floatOf(m))], [true, true], `${line}: a second press`);
+    await pressIn(m, 1, 0);
+    assert.equal(floatOf(m), null, `${line}: a press elsewhere`);
+  }
+});
+
+test("a picture inside a link is picked rather than the link, its float has Open link; Cmd+press opens the link, and on a picture with no link it is a press", async () => {
+  const m = await inText("Intro\n\nSee [![a cat](cat.png)](https://e.com/page) here\n\nOther\n"), CMD = { ...NO_MODS, platform: true };
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  assert.deepEqual([m.view.field.selection, popoverOf(m), pictureAddressOf(m)], [{ start: 4, end: 43 }, null, "cat.png"]);
+  assert.deepEqual(floatButtons(m), ["change", "alt", "copy", "open", "link", "delete"]);
+  pictureButton(m, "link");
+  assert.deepEqual(m.cx.opened, ["https://e.com/page"]);
+  assertNoPictureSource(m, "https://e.com/page", "picked in its link");
+  for (const [label, share] of [["a ", 0.05], ["cat", 1]]) {
+    await pressIn(m, 1, 0);
+    await clickToken(m, 1, tokenShowing(m, 1, label), { share });
+    assert.deepEqual([popoverOf(m), Boolean(floatOf(m))], [null, true], `a press on the link's marks at the edge of ${label}`);
+  }
+  await pressIn(m, 1, 0);
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"), { modifiers: CMD });
+  assert.equal(m.cx.opened.length, 2, "Cmd+press");
+  reset();
+  const plain = await inText();
+  await clickToken(plain, 1, tokenShowing(plain, 1, "cat"), { modifiers: CMD });
+  assert.deepEqual([plain.cx.opened, plain.view.field.selection, Boolean(floatOf(plain))], [[], { start: 4, end: 25 }, true], "no link: picked");
+});
+
+test("a right-click on a picture's token in a line of text picks it and shows its float, not the format bar, in the block being edited or another", async () => {
+  const m = await inText(), key = keyAt(m, 1);
+  const rightClick = async () => {
+    fire(must(m.tree(), `md-field-${key}`), "on_mouse_up:right", press({ x: X + 50, y: topOf(m, 1) + 10 }, { button: "right" }), m.cx);
+    await flush();
+  };
+  m.view.blockField(key).select(10);
+  await rightClick();
+  assert.deepEqual([m.view.activeKey, m.view.field.selection, Boolean(floatOf(m)), barOf(m)], [key, { start: 4, end: 25 }, true, null], "a block not being edited");
+  await pressIn(m, 1, 0);
+  m.view.field.select(4);
+  await rightClick();
+  assert.deepEqual([m.view.field.selection, Boolean(floatOf(m)), barOf(m)], [{ start: 4, end: 25 }, true, null], "the caret at its edge");
+  m.view.field.select(26, 30);
+  await rightClick();
+  assert.deepEqual([floatOf(m), Boolean(barOf(m))], [null, true], "text beside it: the bar");
+});
+
+test("Change on a picture in text: the file chosen replaces its address, its title kept and an alt text that was the old file's name following; a reference picture is written inline, its definition left; Cmd+Z puts back the text and the selection", async () => {
+  files.set(`${DESKTOP}/new shot.png`, OTHER);
+  files.set(`${DIR}/b2.png`, OTHER);
+  const doc = 'Intro\n\nSee ![cat](cat.png "T") and ![the b][pic] here\n\nOther\n\n[pic]: b.png "B"\n';
+  const m = await inText(doc);
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  await changeTo(m, chosen(`${DESKTOP}/new shot.png`));
+  const [sh] = ran("sh");
+  assert.equal(sh.args.at(-1), DIR, "opens where the picture is");
+  const changed = doc.replace('![cat](cat.png "T")', '![new shot](images/new-shot.png "T")');
+  assert.deepEqual([m.view.text, m.view.field.selection, Boolean(floatOf(m)), m.view.history.entries.length], [changed, { start: 4, end: 40 }, true, 1]);
+  assert.equal(m.view.field.focused, true, "the field has the keyboard back once the dialog closes");
+  assertNoPictureSource(m, "images/new-shot.png", "after Change");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], [doc, { start: 4, end: 23 }]);
+  await clickToken(m, 1, tokenShowing(m, 1, "b"));
+  await changeTo(m, chosen(`${DIR}/b2.png`));
+  const inline = doc.replace("![the b][pic]", '![the b](b2.png "B")');
+  assert.equal(m.view.text, inline, "inline for that picture, its definition left");
+  await changeTo(m, CANCELLED);
+  assert.equal(m.view.text, inline, "Cancel writes nothing");
+});
+
+test("Change on a picture in text: an answer that comes after the line was edited writes nothing and says so; without osascript the address box opens", async () => {
+  files.set(`${DIR}/b.png`, OTHER);
+  const held = dialogHeld();
+  const m = await inText();
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  pictureButton(m, "change");
+  await flush();
+  m.view.field.select(0);
+  m.view.field.type("x", m.cx);
+  held.answer(chosen(`${DIR}/b.png`));
+  await polled(m);
+  assert.equal(m.view.text, `Intro\n\nxSee ![a cat](cat.png "T") here\n\nOther\n`);
+  assert.deepEqual(calls.notify.map(n => n.title), ["The picture changed meanwhile, so it wasn't replaced"]);
+  reset();
+  const left = dialogHeld(), away = await inText();
+  files.set(`${DIR}/b.png`, OTHER);
+  await clickToken(away, 1, tokenShowing(away, 1, "cat"));
+  pictureButton(away, "change");
+  await flush();
+  escape(away);
+  escape(away);
+  assert.equal(away.view.activeKey, null);
+  left.answer(chosen(`${DIR}/b.png`));
+  await polled(away);
+  assert.deepEqual([away.view.text, away.view.activeKey, away.view.field.selection, Boolean(floatOf(away))],
+    ['Intro\n\nSee ![a cat](b.png "T") here\n\nOther\n', keyAt(away, 1), { start: 4, end: 23 }, true], "the line left meanwhile: written, the picture picked there again");
+  reset();
+  noDialog();
+  const box = await inText();
+  await clickToken(box, 1, tokenShowing(box, 1, "cat"));
+  pictureButton(box, "change");
+  await flush();
+  assert.ok(find(box.tree(), "md-picture-box"));
+  assert.deepEqual([box.view.addressField.value(), box.view.addressField.selection, box.view.addressField.focused], ["cat.png", { start: 0, end: 7 }, true]);
+  box.view.addressField.set_value("my pic.png");
+  act(box, "mdb-note-save");
+  assert.deepEqual([box.view.text, box.view.field.selection, Boolean(floatOf(box))], ['Intro\n\nSee ![a cat](<my pic.png> "T") here\n\nOther\n', { start: 4, end: 30 }, true]);
+});
+
+test("Alt text on a picture in text: a box holding its alt text, all selected; Enter writes what was typed so that parseInline reads it back, one Cmd+Z that selects the picture again; Escape goes back to the float", async () => {
+  const m = await inText(), key = keyAt(m, 1);
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  pictureButton(m, "alt");
+  const box = must(m.tree(), "md-picture-box");
+  assert.deepEqual([floatOf(m), box.style.key_context, all(box, n => n.kind === "input")[0].state], [null, NOTE, m.view.altField]);
+  assert.deepEqual([m.view.altField.value(), m.view.altField.selection, m.view.altField.focused], ["a cat", { start: 0, end: 5 }, true]);
+  m.view.field.blur(m.cx);
+  assert.ok(find(m.tree(), "md-picture-box"), "the box keeps it when the field lets the keyboard go");
+  for (const alt of ["a *b* [c]", "x\\y"]) {
+    m.view.altField.set_value(alt);
+    act(m, "mdb-note-save");
+    const line = m.view.text.split("\n")[2];
+    assert.equal(parseInline(line).spans.find(sp => sp.kind === "image").alt, alt, line);
+    assert.deepEqual([Boolean(floatOf(m)), find(m.tree(), "md-picture-box"), m.view.activeKey, m.view.field.focused], [true, null, key, true], alt);
+    assert.equal(selectedText(m), line.slice(4, -5), "the picture selected");
+    assertNoPictureSource(m, "cat.png", alt);
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, m.view.field.selection], [PIC_LINE, { start: 4, end: 25 }], `${alt}: one entry`);
+    await pressIn(m, 1, 0);
+    await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+    pictureButton(m, "alt");
+  }
+  m.view.altField.set_value("other");
+  act(m, "mdb-note-cancel");
+  assert.deepEqual([m.view.text, Boolean(floatOf(m)), find(m.tree(), "md-picture-box"), m.view.field.selection], [PIC_LINE, true, null, { start: 4, end: 25 }], "Escape");
+  pictureButton(m, "alt");
+  m.view.altField.set_value("other");
+  fire(must(m.tree(), "md-picture-box"), "on_mouse_down_out", press({ x: 5, y: 5 }), m.cx);
+  await flush();
+  assert.deepEqual([m.view.text, floatOf(m), find(m.tree(), "md-picture-box")], [PIC_LINE, null, null], "a press outside writes nothing");
+});
+
+test("Alt text on a picture whose alt text is its label rewrites it inline first, with the definition's address; unchanged writes nothing", async () => {
+  const doc = 'Intro\n\nSee ![cat] here\n\nOther\n\n[cat]: cat.png "T"\n';
+  const m = await inText(doc);
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  pictureButton(m, "alt");
+  act(m, "mdb-note-save");
+  assert.deepEqual([m.view.text, m.view.history.entries.length, Boolean(floatOf(m))], [doc, 0, true], "unchanged");
+  pictureButton(m, "alt");
+  m.view.altField.set_value("a cat");
+  act(m, "mdb-note-save");
+  assert.equal(m.view.text, doc.replace("![cat]", '![a cat](cat.png "T")'));
+});
+
+test("Delete on a picture in text, and Backspace or Delete with it picked: the picture goes with one of the spaces around it, the caret where it was, the float closed; one entry whose undo selects it again", async () => {
+  const doc = "Intro\n\nsee ![a](a.png) here\n\nOther\n", gone = "Intro\n\nsee here\n\nOther\n";
+  const m = await inText(doc);
+  await clickToken(m, 1, tokenShowing(m, 1, "a"));
+  pictureButton(m, "delete");
+  assert.deepEqual([m.view.text, m.view.field.selection, floatOf(m), m.view.history.entries.length], [gone, { start: 4, end: 4 }, null, 1]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], [doc, { start: 4, end: 15 }]);
+  for (const key of ["backspace", "delete"]) {
+    await clickToken(m, 1, tokenShowing(m, 1, "a"));
+    m.view.field[key](m.cx);
+    assert.deepEqual([m.view.text, m.view.field.selection, floatOf(m)], [gone, { start: 4, end: 4 }, null], key);
+    assertNoPictureSource(m, "a.png", key);
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, m.view.field.selection], [doc, { start: 4, end: 15 }], `${key}: one entry`);
+  }
+});
+
+test("typing or pasting with a picture in text picked replaces it with what is typed; one entry whose undo brings it back selected", async () => {
+  const doc = "Intro\n\nsee ![a](a.png) here\n\nOther\n";
+  const m = await inText(doc);
+  await clickToken(m, 1, tokenShowing(m, 1, "a"));
+  m.view.field.type("X", m.cx);
+  assert.deepEqual([m.view.text, m.view.field.selection, floatOf(m)], ["Intro\n\nsee X here\n\nOther\n", { start: 5, end: 5 }, null]);
+  assertNoPictureSource(m, "a.png", "typed over");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], [doc, { start: 4, end: 15 }]);
+  await pressIn(m, 1, 0);
+  await clickToken(m, 1, tokenShowing(m, 1, "a"));
+  m.cx.write_to_clipboard("*XY*");
+  act(m, "mdb-paste");
+  assert.equal(m.view.text, "Intro\n\nsee *XY* here\n\nOther\n", "pasted over");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], [doc, { start: 4, end: 15 }]);
+  reset();
+  const bold = await inText("Intro\n\n**see ![a](a.png)** here\n\nOther\n");
+  await clickToken(bold, 1, tokenShowing(bold, 1, "a"));
+  bold.view.field.type("X", bold.cx);
+  assert.equal(bold.view.text, "Intro\n\n**see X** here\n\nOther\n", "with the formatting the picture had");
+});
+
+test("an <img> tag in text: its float has Copy address, Open and Delete only; Delete takes the tag away", async () => {
+  const m = await inText('Intro\n\nsee <img src="a.png" alt="a cat"> here\n\nOther\n');
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  assert.deepEqual([floatButtons(m), pictureAddressOf(m), m.view.field.selection], [["copy", "open", "delete"], "a.png", { start: 4, end: 33 }]);
+  assertNoPictureSource(m, "a.png", "an <img> tag picked");
+  pictureButton(m, "delete");
+  assert.equal(m.view.text, "Intro\n\nsee here\n\nOther\n");
+});
+
+test("Copy address and Open on a picture in text, as on a paragraph's: the file's full path, opened in the computer's app; the check until the float closes", async () => {
+  const m = await inText();
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  pictureButton(m, "copy");
+  const copy = must(m.tree(), "md-picture-copy");
+  assert.deepEqual([m.cx.read_from_clipboard(), copy.style.tooltip, iconOf(copy).path], [`${DIR}/cat.png`, "Copied", icon("check")]);
+  pictureButton(m, "open");
+  await flush();
+  assert.deepEqual(calls.exec.filter(c => c.command === "open").map(c => c.args), [[`${DIR}/cat.png`]]);
+  assert.deepEqual([m.view.text, m.view.field.selection], [PIC_LINE, { start: 4, end: 25 }], "nothing else changes");
+});
+
+test("the field's Cmd+C of a picture picked in text copies its markdown, a reference picture written inline; Cmd+X copies it and takes it away with a space, one entry", async () => {
+  const m = await inText();
+  await clickToken(m, 1, tokenShowing(m, 1, "cat"));
+  act(m, "mdb-copy");
+  assert.deepEqual([m.cx.read_from_clipboard(), m.view.text], ['![a cat](cat.png "T")', PIC_LINE]);
+  act(m, "mdb-cut");
+  assert.deepEqual([m.cx.read_from_clipboard(), m.view.text, m.view.field.selection, m.view.history.entries.length], ['![a cat](cat.png "T")', "Intro\n\nSee here\n\nOther\n", { start: 4, end: 4 }, 1]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], [PIC_LINE, { start: 4, end: 25 }]);
+  reset();
+  const ref = await inText('Intro\n\nSee ![a cat][cat] here\n\nOther\n\n[cat]: cat.png "T"\n');
+  await clickToken(ref, 1, tokenShowing(ref, 1, "cat"));
+  act(ref, "mdb-copy");
+  assert.equal(ref.cx.read_from_clipboard(), '![a cat](cat.png "T")');
+});

@@ -2,8 +2,10 @@
 // link is written in, an address as typed and as written, and the edits that set an address, take a link off or make
 // one. Offsets are UTF-16 indices into the value; `defs` are the document's link reference definitions as doc.defs holds
 // them. An edit -> { value, start, end }, the value after it and the range of the link (or of its text, once unlinked),
-// or null when what it would write does not read back as meant.
+// or null when what it would write does not read back as meant. The pictures of a text block are rewritten in the same
+// forms.
 import { destinationSpan, parseInline } from "./inline.js";
+import { escapeAlt } from "./lib.js";
 
 const WEB_OR_MAIL = /^(?:https?:\/\/|mailto:)[^\s<>]+$/i;
 // A web host typed without its scheme: dotted names, maybe a port, then a path, a query, a fragment or nothing.
@@ -166,4 +168,69 @@ export function addLink(value, range, address, { defs, text = address } = {}) {
   if (range.start === range.end) return inlineLink(value, range.start, range.end, address, text, defs);
   const { start, end } = uncut(parseInline(value, { defs }).spans, range.start, range.end);
   return linked(value, start, end, `[${value.slice(start, end)}](${destinationOf(address)})`, address, defs);
+}
+
+// -> "inline" (![alt](address)), "reference" (![alt][label], ![label][], ![label]) or "html" (<img …>), for an image span
+// of parseInline.
+export function pictureForm(value, span) {
+  if (value[span.start] === "<") return "html";
+  return linkForm(value, span) === "inline" ? "inline" : "reference";
+}
+
+const titled = title => (title === null ? "" : ` "${title.replace(/["\\]/g, "\\$&")}"`);
+
+// The picture `span` of `value` written as `written` in its place, when a picture then stands exactly there showing `alt`
+// (when given).
+function pictured(value, span, start, end, written, alt, defs) {
+  const next = value.slice(0, start) + written + value.slice(end), stop = span.end + next.length - value.length;
+  const sp = parseInline(next, { defs }).spans.find(x => x.kind === "image" && x.start === span.start && x.end === stop);
+  return sp && (alt === undefined || sp.alt === alt) ? { value: next, start: span.start, end: stop } : null;
+}
+
+// The stretch [start, end) of `value` that the picture `span` is written again in to take `alt` or `address`, and
+// `write(alt)`, what goes there for the alt text's source `alt`; null for an <img> tag.
+function pictureEdit(value, span, { alt, address }) {
+  const form = pictureForm(value, span);
+  if (form === "html") return null;
+  if (form === "inline") {
+    const dest = destinationSpan(value, span.to + 1);
+    return dest && { start: span.from, end: dest.end, write: text => text + value.slice(span.to, dest.start) + (address ?? value.slice(dest.start, dest.end)) };
+  }
+  const labelled = !value.startsWith("][", span.to) || value.startsWith("][]", span.to);
+  if (address === undefined && (alt === undefined || !labelled)) return { start: span.from, end: span.to, write: text => text };
+  return { start: span.start, end: span.end, write: text => `![${text}](${address ?? destinationOf(span.url)}${titled(span.title)})` };
+}
+
+const ALT_ESCAPES = [escapeAlt, text => text.replace(ASCII_PUNCTUATION, "\\$&")];
+
+// -> `value` with the picture `span` showing the alt text `alt`, typed (written escaped so that it reads back as typed),
+// and going to `address`, written as a picture's address is (writtenAddress, placePictures); what is not given stays. A
+// reference picture is written inline for that picture alone, with its definition's address and title, when its address
+// changes or when its alt text is its label (`![cat]`, `![cat][]`); its definition stays. Null for an <img> tag.
+export function setPicture(value, span, { alt, address }, { defs } = {}) {
+  const edit = pictureEdit(value, span, { alt, address });
+  if (!edit) return null;
+  for (const escape of alt === undefined ? [null] : ALT_ESCAPES) {
+    const out = pictured(value, span, edit.start, edit.end, edit.write(escape ? escape(alt) : value.slice(span.from, span.to)), alt, defs);
+    if (out) return out;
+  }
+  return null;
+}
+
+const SHOWS_SPACE = /^[ \t]$/;
+
+// -> { start, end }: the source the picture `span` of `value` takes when it goes: its markup, or the link around it when
+// that link shows nothing else; with `space`, also the space after it when spaces show on both sides, so that no two are
+// left side by side.
+export function pictureCut(value, span, { defs, space = true } = {}) {
+  const inline = parseInline(value, { defs });
+  const link = inline.spans.find(sp => sp.kind === "link" && sp.from === span.start && sp.to === span.end);
+  const start = link ? link.start : span.start, end = link ? link.end : span.end;
+  if (!space) return { start, end };
+  let before = null, after = null;
+  for (const c of inline.chars) {
+    if (c.end <= start) before = c;
+    else if (c.start >= end) { after = c; break; }
+  }
+  return { start, end: before && after && SHOWS_SPACE.test(before.text) && SHOWS_SPACE.test(after.text) ? after.end : end };
 }

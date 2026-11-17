@@ -121,8 +121,8 @@ gives way to the pane's header, which shows the same file name and toggle.
   `mailto` in the mail app; a link to another
   markdown file opens in a pane beside this one, on the same machine; `#anchor` does nothing; any other file gives a
   notice "Can't open <name> here".
-  A paragraph made only of images is drawn as pictures (see [Pictures](#pictures)); an image inside a line of text is
-  not.
+  A paragraph made only of images is drawn as pictures (see [Pictures](#pictures)); an image inside a line of text
+  shows as a picture icon and its alt text, and a click picks it with the same menu.
 - **Saving:** 700 ms after you stop typing, on a tick, on a switch between Reading and Markdown, on `cmd-s` and when
   its pane or tab closes. The footer says Saving…, Unsaved or Saved. Every write names the text it last read, so a
   file that changed on disk is never overwritten silently.
@@ -172,7 +172,7 @@ it did on the page, and keeps them in the file.
 | Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
 | Double-click a diagram | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
-| Click a picture | [Picks it](#pictures): a ring around it and its menu over it. A double-click or a right-click does the same, a linked picture included |
+| Click a picture | [Picks it](#pictures): a ring around it and its menu over it. A double-click or a right-click does the same, a linked picture included. A picture inside a line of text is selected whole with the same menu, and a second click puts the caret in its alt text |
 | Cmd+click a linked picture | Opens its link, as Cmd+click on a link in text does, also in a file you can't edit |
 | Click a checkbox | Ticks or unticks it |
 | Enter | At the end of a block: a new one below (a list continues). At the start: a new one above. In the middle: splits the block, and the formatting goes on on both sides: Enter inside a bold, coloured, highlighted, underlined or code run leaves both halves with it, inside a link both halves link to its address, and in commented text the first half keeps the comment. In a web address, an autolink or a picture the split goes after it, so it is never cut. On an empty item: out a level, then out of the list. In code: a new line |
@@ -218,10 +218,11 @@ leave empty disappears and writes nothing to the file.
 selecting across blocks selects whole blocks (the middle of one block to the middle of another needs the Markdown
 view); a drag inside a formatted word that the caret is not in selects the whole word; typing never re-wraps the
 source; input methods that compose characters (Japanese, Chinese) may misbehave with Enter, and inside or next to
-formatted words, while direct typing in any script is fine. **Left out on purpose:** drag handles,
-images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
-(a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
-the one toggle, a diagram's zoom, the format bar, a link's popover, a picture's menu and the comments' cards.
+formatted words, while direct typing in any script is fine. **Left out on purpose:** drag handles, drawing images
+inside text, HTML `<img>` and reference-style images as the picture (they show as an icon and their alt text; only a
+paragraph made of pictures is drawn), footnotes (a reference stays text, a definition shows as a dim source line),
+jumping to `#anchor` links, and any button besides the one toggle, a diagram's zoom, the format bar, a link's popover,
+a picture's menu and the comments' cards.
 
 ### The format bar
 
@@ -370,7 +371,8 @@ never under 75 % or over 100 % (mermaid's own size).
 
 A paragraph made only of images is drawn as pictures in Reading: `![alt](address)`, one or several, on one line or on
 several. A linked image, `[![alt](address)](https://…)`, counts too, so the row of badges at the top of a README is
-drawn. An image inside a line of text, an HTML `<img>` and a reference-style image (`![alt][ref]`) are not drawn.
+drawn. An image inside a line of text, an HTML `<img>` and a reference-style image (`![alt][ref]`) show as a picture
+icon and the alt text, and a click picks them too (see **Pictures in text** below).
 
 - **Adding pictures:** pick them or drop them, in a note on this computer that you can edit. **Image** in the
   [slash menu](#slash-menu) opens the macOS file dialog, which offers PNG, JPEG, GIF, WebP, BMP and SVG files (not
@@ -423,7 +425,20 @@ drawn. An image inside a line of text, an HTML `<img>` and a reference-style ima
   Each change is one Cmd+Z, which brings the picture back picked.
 - **Keys** while a picture is picked: Backspace or Delete deletes it, Enter starts a new paragraph below the pictures,
   Left and Right pick the picture before or after it and leave the paragraph at its ends, Up and Down leave it at
-  once, Escape lets it go. Page Up, Page Down, space, Home and End scroll and keep it picked; other keys do nothing.
+  once, Escape lets it go. Cmd+C copies its markdown as the file writes it (`![alt](address)`, with its link around it
+  when it has one) and Cmd+X cuts it as Delete does; pasted into a line of text it is a picture there, and pasted alone
+  into a new paragraph it makes a paragraph of pictures. Page Up, Page Down, space, Home and End scroll and keep it
+  picked; other keys do nothing.
+- **Pictures in text:** a click on the icon or the alt text of a picture inside a line of text picks it: the whole
+  picture is selected (its markdown never shows) and the same menu shows over it, where you clicked. A second click
+  puts the caret in its alt text, to type there; a right-click picks it too. Inside a link the picture is picked and
+  its menu has Open link; Cmd+click opens the link. Change picture and Alt text work as above; a reference-style
+  picture is written inline for that picture alone when its address changes, or its alt text when that is its label
+  (`![cat]`), and its definition stays. Delete picture removes it (a link holding only it too) and one of the spaces
+  around it, so `see ![a](a.png) here` becomes `see here`. An HTML `<img>` tag's menu has no Change or Alt text:
+  Copy address, Open picture, Delete picture, and Open link when a link holds it. With a picture picked, Backspace or Delete removes it as Delete picture does, typing
+  replaces it with what you type, Escape closes the menu, and Cmd+C and Cmd+X copy or cut its markdown (a
+  reference-style picture is copied inline). Each change is one Cmd+Z, which selects the picture again.
 - **Linked pictures:** a click picks one like any other picture; Cmd+click opens its link, also in a file you can't
   edit.
 - **Files you can't edit** (on another machine, read-only): a click picks a picture, and its menu has Copy address,

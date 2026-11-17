@@ -17,7 +17,7 @@ import { actedOn, colorOf, hasMark, highlightOf, setColor, setMark, toggleMark, 
 import { editOf, formatAt, mend } from "./mend.js";
 import { MARK_BITS } from "./restyle.js";
 import { copyOf, holdsBlocks, joinRuns, pasteInto, pasteParagraphs, splitRuns } from "./seams.js";
-import { addLink, clipboardAddress, linkAddress, setAddress, unlink } from "./links.js";
+import { addLink, clipboardAddress, linkAddress, pictureCut, pictureForm, setAddress, setPicture, unlink } from "./links.js";
 import { addComment, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, timeLabel } from "./comments.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
@@ -132,7 +132,9 @@ const clipMiddle = (text, n) => {
 // What a press on a token of a writable text block can pick, besides text: an element, which the press selects whole
 // and whose float shows in place of the format bar. Keyed by the kind of its parseInline span; `float` is the method
 // that draws it.
-const ELEMENTS = { link: { float: "linkPopover" }, comment: { float: "commentFloat" }, point: { float: "commentFloat" } };
+const ELEMENTS = {
+  link: { float: "linkPopover" }, comment: { float: "commentFloat" }, point: { float: "commentFloat" }, image: { float: "imageFloat" },
+};
 const COMMENT_KINDS = new Set(["comment", "point"]);
 const NEW_CARD = "md-card-new", FLOAT_CARD = "md-card-float";
 // Cards this far above and below the viewport are drawn too, so a short scroll shows no gap before the next draw.
@@ -146,11 +148,11 @@ const LINK_BUTTONS = [
   { name: "edit", icon: "pencil", tip: "Edit link" },
   { name: "remove", icon: "unlink", tip: "Remove link" },
 ];
-// The picked picture's float. `edits`: only on a file that can be edited; `linked`: only on a linked picture; `apart`:
-// a rule before it.
+// The picked picture's float. `edits`: only on a file that can be edited; `markdown`: not on an HTML <img> tag;
+// `linked`: only on a linked picture; `apart`: a rule before it.
 const PICTURE_BUTTONS = [
-  { name: "change", icon: "image-up", tip: "Change picture", edits: true },
-  { name: "alt", icon: "type", tip: "Alt text", edits: true },
+  { name: "change", icon: "image-up", tip: "Change picture", edits: true, markdown: true },
+  { name: "alt", icon: "type", tip: "Alt text", edits: true, markdown: true },
   { name: "copy", icon: "copy", tip: "Copy address", done: { icon: "check", tip: "Copied" } },
   { name: "open", icon: "external-link", tip: "Open picture" },
   { name: "link", icon: "link", tip: "Open link", linked: true },
@@ -159,6 +161,11 @@ const PICTURE_BUTTONS = [
 const PICTURE_CHANGED = "The picture changed meanwhile, so it wasn't replaced";
 const NO_PICTURE_FILE = "This picture has no file to open";
 const NO_ADDRESS = "No address";
+// A picture's float for the address `src` and `buttons`: a rule after the address and before each button set apart.
+const pictureFloatSize = (src, buttons) => {
+  const shown = clipMiddle(src, LINK_POP.addressChars) || NO_ADDRESS;
+  return popoverSize([...shown].length, buttons.length, 1 + buttons.filter(b => b.apart).length);
+};
 const LINK_REFUSED = "A link can't hold another link";
 // Whether a link can go somewhere does not depend on its address: this one stands in before one is typed.
 const ANY_ADDRESS = "#";
@@ -488,12 +495,13 @@ export class Editor {
     this.linkField.on("submit", (_e, cx) => this.applyLinkBox(cx));
     // Pictures: `picked` the one a click picked in a paragraph of pictures ({ key, index, copied, box }), shown by its
     // float while no block is edited; `box` names the field open in the float's place, the alt text's or the address's.
+    // A picture in a line of text is an element; `imageBox` is what the alt text's or address's field is open for there.
     // Herdr's input takes its placeholder only when it is made, so each box has a field of its own.
-    this.picked = null;
+    this.picked = null; this.imageBox = null;
     this.altField = InputState.new({ placeholder: "Describe the picture" });
-    this.altField.on("submit", (_e, cx) => this.applyPictureBox(cx));
+    this.altField.on("submit", (_e, cx) => this.savePictureBox(cx));
     this.addressField = InputState.new({ placeholder: "Paste a picture address or path" });
-    this.addressField.on("submit", (_e, cx) => this.applyPictureBox(cx));
+    this.addressField.on("submit", (_e, cx) => this.savePictureBox(cx));
 
     // Calibration: `cal` is in use while `calNext` collects a run's measurements; `look` is the theme, fonts and zoom
     // last drawn in (a change reruns calibration; `calGen` names each run, `calTimed` the last one whose give-up clock
@@ -1085,10 +1093,11 @@ export class Editor {
     if (name === "mdb-note-cancel") {
       this.typingStyle = null;
       if (this.pictureBoxOpen()) return this.cancelPictureBox(cx);
+      if (this.imageBoxOpen()) return this.cancelImageBox(cx);
       return this.linkBoxOpen() ? this.cancelLinkBox(cx) : this.cancelNote(cx);
     }
     if (name === "mdb-note-save") {
-      if (this.pictureBoxOpen()) return this.applyPictureBox(cx);
+      if (this.pictureBoxOpen() || this.imageBoxOpen()) return this.savePictureBox(cx);
       return this.linkBoxOpen() ? this.applyLinkBox(cx) : this.saveNote(cx);
     }
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
@@ -1152,6 +1161,7 @@ export class Editor {
           else if (this.noteOpen()) this.noteField.focus();
           else if (this.linkBoxOpen()) this.linkField.focus();
           else if (this.pictureBoxOpen()) this.pictureField().focus();
+          else if (this.imageBoxOpen()) this.pictureField(this.imageBox.kind).focus();
           else if (this.activeKey) this.field.focus();
           else this.handle.focus();
         }
@@ -2579,14 +2589,17 @@ export class Editor {
     cx.notify();
   }
 
-  // The element span the token at field range `range` shows part of (a point comment shows nothing of its own: its
-  // marker's token holds all of it); when it shows more than one, the innermost holding the press's letter edge `at`.
+  // The element span the token at field range `range` shows part of (a point comment, or a picture with no alt text,
+  // shows nothing of its own: its token holds all of it); when it shows more than one, the innermost holding the press's
+  // letter edge `at`. A picture the token shows wins over the element holding it, whose marks the letter edge can fall
+  // on (a link around the picture alone).
   elementPressed(range, at) {
     const shows = sp => (sp.from === sp.to ? range.start <= sp.start && sp.end <= range.end : sp.from < range.end && range.start < sp.to);
     const hit = parsedInline(this.seen, this.defsNow().map).spans.filter(sp => ELEMENTS[sp.kind] && shows(sp));
     let inner = null;
     for (const sp of hit) if (sp.from <= at && at <= sp.to) inner = sp;
-    return inner ?? hit[0] ?? null;
+    inner ??= hit[0] ?? null;
+    return hit.find(sp => sp.kind === "image" && inner.start <= sp.start && sp.end <= inner.end) ?? inner;
   }
 
   wasPicked(span) {
@@ -2642,9 +2655,10 @@ export class Editor {
     if (picked) this.post(cx => { if (this.element === picked) this.closeElement(cx); });
   }
 
-  // Drawn by the root, the link picked or the address box over it.
+  // Drawn by the root, the element picked's float or the box open over it.
   elementFloat(t) {
     if (this.linkBoxOpen()) return this.linkBoxView(t);
+    if (this.imageBoxOpen()) return this.imageBoxView(t);
     const picked = this.elementNow();
     return picked ? this[ELEMENTS[picked.kind].float](picked, t) : null;
   }
@@ -2694,7 +2708,7 @@ export class Editor {
     if (gone) this.f = null;
     this.commit(cx);
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
-    this.element = null; this.linkBox = null; this.typingStyle = null;
+    this.element = null; this.linkBox = null; this.imageBox = null; this.typingStyle = null;
     this.letField();
     if (pending) this.forget(pending.key);
     if (gone) this.setText(applySplice(base, gone), cx);
@@ -2730,7 +2744,7 @@ export class Editor {
   release() {
     const pending = this.pending;
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
-    this.element = null; this.linkBox = null; this.typingStyle = null;
+    this.element = null; this.linkBox = null; this.imageBox = null; this.typingStyle = null;
     this.letField();
     if (pending) this.forget(pending.key);
   }
@@ -2886,7 +2900,9 @@ export class Editor {
     const innerLine = this.f.value !== before ? type(this.f, before) : null;
     const from = !innerLine && madeAt(this.known, edit) ? docRange(this.f, this.known) : null;
     const stroke = !own && from && from.start === from.end ? strokeAt(edit, this.known.start) : null;
-    const mended = this.mends(own, edit, style) ? mend(before, edit, { defs: this.defsNow().map, style }) : null;
+    const keyed = own ? null : this.imageKeyed(before, edit);
+    const mended = keyed ?? (this.mends(own, edit, style) ? mend(before, edit, { defs: this.defsNow().map, style }) : null);
+    if (keyed) this.element = null;
     let change = edit;
     if (mended && mended.value !== value) {
       this.seen = mended.value;
@@ -2910,6 +2926,31 @@ export class Editor {
     this.updateRows(cx);
     this.revealCaret(cx);
     if (!own && this.known.start === this.known.end) this.keepStyleAt(this.known.end, mended?.style ?? null);
+  }
+
+  // A key the person made over all of the picture picked in the edited field: Backspace or Delete takes it as the
+  // float's Delete does, and typed text takes its place with the formatting the picture had. -> mend's answer for that,
+  // its `edit` the change from `before`, or null for any other change.
+  imageKeyed(before, edit) {
+    const picked = this.wholeImage({ start: edit.at, end: edit.at + edit.removed });
+    if (!picked) return null;
+    const left = this.imageRemoved(before, picked.span, !edit.inserted);
+    const next = edit.inserted ? mend(left.value, { at: left.caret, removed: 0, inserted: edit.inserted }, { defs: this.defsNow().map, style: left.style }) : left;
+    return { ...next, edit: diff(before, next.value) };
+  }
+
+  // The picture picked in the edited field, drawn formatted, when field range `r` is all of it: elementNow's answer, or
+  // null.
+  wholeImage(r) {
+    const picked = this.element?.kind === "image" && this.formatted() ? this.elementNow() : null;
+    return picked?.kind === "image" && picked.extent.start === r.start && picked.extent.end === r.end ? picked : null;
+  }
+
+  // Field value `value` without the picture `span`, as pictureCut takes it (with a space beside it when `space`), what
+  // is left keeping its formatting: mend's answer.
+  imageRemoved(value, span, space) {
+    const defs = this.defsNow().map, cut = pictureCut(value, span, { defs, space });
+    return mend(value, { at: cut.start, removed: cut.end - cut.start, inserted: "" }, { defs });
   }
 
   shortcutAt(k, cx) {
@@ -3239,15 +3280,18 @@ export class Editor {
     });
   }
 
-  // Herdr's field has already kept the selection under a right-click, or moved the caret there: the bar shows over the
-  // selection, or over the word at the caret.
+  // Herdr's field has already kept the selection under a right-click, or moved the caret there: on a picture, which its
+  // token holds whole, the caret is at its edge or in its alt text, and the picture is picked with its float; else the
+  // bar shows over the selection, or over the word at the caret.
   fieldRightUp(key) {
     this.post(cx => {
       if (key !== this.activeKey) this.takeField(key, cx);
       if (key !== this.activeKey || !this.editable()) return;
       this.syncField(cx);
       this.element = null;
-      const c = this.caretNow(), word = c && c.start === c.end ? wordAround(this.seen, c.start) : null;
+      const c = this.caretNow(), picture = c && this.formatted() ? this.elementHolding("image", c) : null;
+      if (picture) return this.pickElement(picture.span, cx);
+      const word = c && c.start === c.end ? wordAround(this.seen, c.start) : null;
       if (word) this.selectField(word);
       this.retoken();
       this.openBar(cx);
@@ -3639,14 +3683,17 @@ export class Editor {
 
   // Cmd+C and Cmd+X in a text block: the selection as markdown that stands alone (seams.js), each character with its
   // formatting; a field that shows its source copies that. Soft line breaks, which the field shows as spaces, are copied
-  // as line breaks. Cut then deletes the selection as a key does, one entry whose undo selects it again. A caret copies
-  // nothing.
+  // as line breaks. Cut then deletes the selection as a key does, one entry whose undo selects it again; a picture
+  // picked whole goes as its float's Delete takes it. A caret copies nothing.
   copyText(cut, cx) {
     const r = this.caretNow();
     if (!r || r.start === r.end) return;
     const value = this.f && !this.pending && this.f.value === this.seen ? softBreaksIn(this.f) : this.seen;
     cx.write_to_clipboard(this.formatted() ? copyOf(value, r, { defs: this.defsNow().map }) : value.slice(r.start, r.end));
-    if (cut) this.deleteSelection(r, cx);
+    if (!cut) return;
+    const picture = this.wholeImage(r);
+    if (picture) this.deleteImage(picture.span, r, cx);
+    else this.deleteSelection(r, cx);
   }
 
   // The line breaks that end the clipboard's text are left out of a text block, so that the text after the caret stays
@@ -3683,21 +3730,25 @@ export class Editor {
 
   // Clipboard text pasted where the field draws its block formatted (seams.js), read as markdown on its own and given
   // what text typed there gets: one paragraph stays in the block; text that makes more blocks splits it there as Enter
-  // does, its first and last paragraphs joining the halves and its other lines between them as it writes them. One entry
-  // of the history, whose undo selects a selection pasted over again. -> false to paste the text as it is.
+  // does, its first and last paragraphs joining the halves and its other lines between them as it writes them. A picture
+  // picked whole gives way to what is pasted, as to typed text. One entry of the history, whose undo selects a selection
+  // pasted over again. -> false to paste the text as it is.
   pasteFormatted(text, cx) {
     const r = this.caretNow(), defs = this.defsNow().map, lines = text.split("\n");
     if (!r) return false;
     const style = r.start === r.end ? this.styleFor({ at: r.start, removed: 0 }) : null;
     if (this.pending || !this.seen.trim()) return this.pasteAlone(text, r, style, cx);
     if (!this.formatted()) return false;
+    const picture = this.wholeImage(r), seen = this.seen;
     this.commit(cx);
     const b = this.blockByKey(this.activeKey);
     if (!b || !isText(b) || this.mode !== "reading") return false;
     const f = fieldOf(this.doc, b), before = docRange(f, r), into = out => out && pasteLines(this.doc, b, out.value, r.start, out.caret);
+    const left = picture && f.value === seen ? this.imageRemoved(f.value, picture.span, false) : null;
+    const [value, at, typed] = left ? [left.value, { start: left.caret, end: left.caret }, left.style] : [f.value, r, style];
     const s = lines.length > 1 && opensBlock(lines[0]) ? this.splitWith(b, r, (d, nb, at) => insertLines(d, nb, at.start, at.end, lines))
-      : holdsBlocks(text) ? into(pasteParagraphs(f.value, r, text, { defs, style }))
-        : into(pasteInto(f.value, r, text, { defs, style }));
+      : holdsBlocks(text) ? into(pasteParagraphs(value, at, text, { defs, style: typed }))
+        : into(pasteInto(value, at, text, { defs, style: typed }));
     if (!s) return false;
     this.pasted(s, cx);
     if (r.start < r.end) this.history.select(this.text, before);
@@ -4423,7 +4474,7 @@ export class Editor {
 
   // A box over the page that holds the keyboard: the comment box, the link's address box or a picture's box.
   boxOpen() {
-    return this.noteOpen() || this.linkBoxOpen() || this.pictureBoxOpen();
+    return this.noteOpen() || this.linkBoxOpen() || this.pictureBoxOpen() || this.imageBoxOpen();
   }
 
   // A float at `place` in the link popover's look. Presses on it go no further, so what is under it keeps the keyboard
@@ -4667,6 +4718,7 @@ export class Editor {
     if (!p || p.box) return false;
     if (k === "escape") this.unpick(cx);
     else if (k === "backspace" || k === "delete") this.deletePicture(p, cx);
+    else if (k === "cmd-c" || k === "cmd-x") this.copyPictureSource(p, k === "cmd-x", cx);
     else if (k === "enter") this.paragraphBelow(p.b, this.pickedSource(p).at, cx);
     else if (k === "left" || k === "right") this.stepPicture(p, k === "left" ? -1 : 1, cx);
     else if (k === "up" || k === "down") this.leavePictures(p, k === "up" ? -1 : 1, cx);
@@ -4722,38 +4774,59 @@ export class Editor {
     this.pictureChange(s, all[p.index].start, kept && (kept.start >= s.end ? kept.start + shift : kept.start), cx);
   }
 
-  // A file's full path, which pastes into Finder or a terminal; any other address as written.
+  // Cmd+C and Cmd+X: the picture's markdown as the file writes it, with its link; Cut then deletes it as Delete does.
+  copyPictureSource(p, cut, cx) {
+    const s = this.pickedSource(p);
+    cx.write_to_clipboard(this.doc.text.slice(s.start, s.end));
+    if (cut) this.deletePicture(p, cx);
+  }
+
   copyPicture(p, cx) {
-    const source = pictureSource(p.item.src, this.file);
-    cx.write_to_clipboard(source.kind === "file" ? source.path : p.item.src);
+    this.writeAddress(p.item.src, cx);
     this.picked = { ...this.picked, copied: true };
     cx.notify();
   }
 
+  // A file's full path, which pastes into Finder or a terminal; any other address as written.
+  writeAddress(src, cx) {
+    const source = pictureSource(src, this.file);
+    cx.write_to_clipboard(source.kind === "file" ? source.path : src);
+  }
+
   // A web picture in the browser, a file in the app the computer opens it with; a file on another machine can't be.
-  openPicture(p, cx) {
-    if (/^https?:/i.test(p.item.src)) return cx.open_url(p.item.src);
-    const source = pictureSource(p.item.src, this.file);
+  openPicture(src, cx) {
+    if (/^https?:/i.test(src)) return cx.open_url(src);
+    const source = pictureSource(src, this.file);
     if (source.kind !== "file") return notify({ title: NO_PICTURE_FILE, level: "info" });
     const failed = `Can't open ${basename(source.path)}`;
     if (this.remote) return notify({ title: failed, level: "info" });
     this.openWithSystem(source.path, failed, cx);
   }
 
-  // The dialog for one picture, opened where the picture's file is, else where Image opens it; what it answers replaces
-  // the picture's address (replacePicture). Without osascript the address box opens instead.
+  // Change on a paragraph's picture: the file chosen replaces its address (replacePicture), and without osascript its
+  // address box opens.
   changePicture(p, cx) {
+    const { key, index } = p, src = p.item.src;
+    this.choosePicture(src, {
+      chosen: (placed, cx) => this.replacePicture(key, index, src, placed, cx),
+      noDialog: cx => this.addressBoxFor(key, index, src, cx),
+    }, cx);
+  }
+
+  // The dialog for one picture, opened where the picture at `src` is a file, else where Image opens it. The file chosen,
+  // placed as Image places it, goes to `chosen(placed, cx)`; without osascript `noDialog(cx)` runs instead.
+  choosePicture(src, { chosen, noDialog }, cx) {
     if (this.picking) return;
-    const { key, index } = p, src = p.item.src, source = pictureSource(src, this.file);
+    const source = pictureSource(src, this.file);
     this.picking = true;
     cx.spawn(async cx => {
       const { paths, problem } = await this.dialogAnswer(source.kind === "file" ? dirname(source.path) : imageStart(), { one: true }, cx);
       if (this.closed) return;
-      if (problem instanceof DialogUnavailable) return this.addressBoxFor(key, index, src, cx);
+      if (problem instanceof DialogUnavailable) return noDialog(cx);
       if (problem) return notify({ title: "Can't choose a picture", body: why(problem), level: "error" });
       if (!paths?.length || !this.placeable()) return;
-      const [chosen] = await placePictures(paths.slice(0, 1), this.file);
-      if (chosen && this.mode === "reading" && this.placeable()) this.replacePicture(key, index, src, chosen, cx);
+      const [placed] = await placePictures(paths.slice(0, 1), this.file);
+      if (placed && this.mode === "reading" && this.placeable()) chosen(placed, cx);
     });
   }
 
@@ -4827,7 +4900,7 @@ export class Editor {
     const p = this.pickedNow();
     if (!p) return;
     if (name === "copy") return this.copyPicture(p, cx);
-    if (name === "open") return this.openPicture(p, cx);
+    if (name === "open") return this.openPicture(p.item.src, cx);
     if (name === "link") return this.link(p.item.href, cx);
     if (!this.editable()) return;
     if (name === "change") this.changePicture(p, cx);
@@ -4844,15 +4917,176 @@ export class Editor {
       const place = this.editable() && this.placePicture(p, LINK_BOX);
       return place ? this.boxFrame("md-picture-box", place, this.pictureField(p.box), t).on_mouse_down_out((_e, cx) => this.unpick(cx)) : null;
     }
-    const buttons = this.pictureButtons(p), shown = clipMiddle(p.item.src, LINK_POP.addressChars) || NO_ADDRESS;
-    const place = this.placePicture(p, popoverSize([...shown].length, buttons.length, 1 + buttons.filter(b => b.apart).length));
-    if (!place) return null;
-    const button = b => this.popoverButton(`md-picture-${b.name}`, p.copied && b.done ? b.done : b, cx => this.pictureAction(b.name, cx), t);
+    const buttons = this.pictureButtons(p), place = this.placePicture(p, pictureFloatSize(p.item.src, buttons));
+    return place && this.pictureFloatAt(place, p.item.src, { buttons, copied: p.copied, run: (name, cx) => this.pictureAction(name, cx) }, t);
+  }
+
+  // A picture's float at `place`: its address `src`, then `buttons` (some of PICTURE_BUTTONS), which `run(name, cx)`.
+  pictureFloatAt(place, src, { buttons, copied, run }, t) {
+    const button = b => this.popoverButton(`md-picture-${b.name}`, copied && b.done ? b.done : b, cx => run(b.name, cx), t);
     return this.popoverFrame("md-picture", place, t)
       .on_mouse_down("right", (_e, cx) => cx.stop_propagation())
-      .child(this.popoverAddress("md-picture-address", p.item.src, t))
+      .child(this.popoverAddress("md-picture-address", src, t))
       .child(this.popoverRule(t))
       .children(buttons.flatMap(b => (b.apart ? [this.popoverRule(t), button(b)] : [button(b)])));
+  }
+
+  // Drawn by the root over the picture picked in the edited text, under it when there is no room: a paragraph's
+  // picture's float, less what an <img> tag can't do.
+  imageFloat({ span, extent }, t) {
+    const buttons = this.imageButtons(span), place = this.placeBar(extent, pictureFloatSize(span.url, buttons), popoverPlace);
+    if (!place) return null;
+    return this.pictureFloatAt(place, span.url, { buttons, copied: Boolean(this.element.copied), run: (name, cx) => this.imageAction(name, cx) }, t)
+      .on_mouse_down_out(() => this.elementPressOut());
+  }
+
+  imageButtons(span) {
+    const tag = pictureForm(this.seen, span) === "html", linked = Boolean(this.linkAround(span));
+    return PICTURE_BUTTONS.filter(b => (!tag || !b.markdown) && (linked || !b.linked));
+  }
+
+  // The link whose text holds the picture `span` of the edited field, or null.
+  linkAround(span) {
+    return parsedInline(this.seen, this.defsNow().map).spans.find(sp => sp.kind === "link" && sp.from <= span.start && span.end <= sp.to) ?? null;
+  }
+
+  // The float's buttons on the picture picked in the edited field, as on a paragraph's (pictureAction).
+  imageAction(name, cx) {
+    const picked = this.elementNow();
+    if (picked?.kind !== "image") return;
+    const { span } = picked;
+    if (name === "copy") {
+      this.writeAddress(span.url, cx);
+      this.element = { ...this.element, copied: true };
+      cx.notify();
+    } else if (name === "open") this.openPicture(span.url, cx);
+    else if (name === "link") this.link(this.linkAround(span).url, cx);
+    else if (name === "change") this.changeImage(span, cx);
+    else if (name === "alt") this.showImageBox("alt", picked, cx);
+    else if (name === "delete") this.deleteImage(span, this.known, cx);
+  }
+
+  // The picture `span` of the edited field goes as pictureCut takes it, what is left keeping its formatting, as one entry
+  // of the history whose undo selects `range` again; the caret stays where it began, and its float closes.
+  deleteImage(span, range, cx) {
+    const value = this.seen, left = this.imageRemoved(value, span, true);
+    this.element = null;
+    this.typeChange(value, range, { value: left.value, start: left.caret, end: left.caret }, cx);
+    cx.notify();
+  }
+
+  // The picture picked in the edited field, which held `range`, becomes `next` (setPicture's answer) as one entry of the
+  // history whose undo selects `range` again; it stays picked.
+  writeImage(range, next, cx) {
+    this.typeChange(this.seen, range, next, cx);
+    this.element = { act: this.act, kind: "image", start: next.start };
+    cx.notify();
+  }
+
+  // Change on the picture `span` of the edited field, as on a paragraph's. The answer finds it again by its block, the
+  // field's value, its start and its address (`at`).
+  changeImage(span, cx) {
+    const at = { key: this.activeKey, value: this.seen, start: span.start, src: span.url };
+    this.choosePicture(span.url, { chosen: (placed, cx) => this.replaceImage(at, placed, cx), noDialog: cx => this.imageBoxFor(at, cx) }, cx);
+  }
+
+  // The picture `at` names takes the address of `placed` (placePictures' { alt, address }), its title kept and an alt
+  // text that named the old file naming the new one, while its block still holds the value Change was pressed on; the
+  // block is edited again with the picture picked if it no longer was. Else nothing is written, and a notice says why.
+  replaceImage(at, placed, cx) {
+    const span = this.imageAgain(at, cx);
+    if (!span) return notify({ title: PICTURE_CHANGED, level: "info" });
+    const old = pictureSource(span.url, this.file), named = altNames(span.alt, old.kind === "file" ? old.path : span.url);
+    const next = setPicture(this.seen, span, named ? placed : { address: placed.address }, { defs: this.defsNow().map });
+    if (!next) return;
+    this.writeImage(this.known, next, cx);
+    this.focusField(cx);
+  }
+
+  // The picture span `at` names (block, value, start and address) while its block still holds that value, picked in that
+  // block's field, which is edited again if it no longer was; null when anything changed.
+  imageAgain(at, cx) {
+    const b = this.blockByKey(at.key), value = at.key === this.activeKey ? this.seen : b && isText(b) && fieldOf(this.doc, b).value;
+    const found = value === at.value && parsedInline(value, this.defsNow().map).spans.find(sp => sp.kind === "image" && sp.start === at.start && sp.url === at.src);
+    if (!found || (at.key !== this.activeKey && !this.activate(at.key, { start: found.start, end: found.end }, cx))) return null;
+    const span = this.seen === at.value ? found : null;
+    if (span) this.pickElement(span, cx);
+    return span;
+  }
+
+  // Change without a dialog: the address box, while the picture `at` names is still the one picked.
+  imageBoxFor(at, cx) {
+    const picked = this.elementNow();
+    if (picked?.kind === "image" && this.activeKey === at.key && this.seen === at.value && picked.span.start === at.start) this.showImageBox("address", picked, cx);
+  }
+
+  // The float of the picture picked in the edited field gives its place to the box of its alt text or its address
+  // (`kind`), which takes the keyboard holding it all selected while the field keeps its selection.
+  showImageBox(kind, { span, extent }, cx) {
+    const field = this.pictureField(kind), text = kind === "alt" ? span.alt : span.url;
+    this.imageBox = { act: this.act, value: this.seen, range: this.known, start: span.start, kind, place: extent };
+    this.guard(() => {
+      field.set_value(text);
+      field.set_selected_range({ start: 0, end: text.length });
+    });
+    field.focus();
+    cx.notify();
+  }
+
+  // The box belongs to one activation of a writable block, over the field value it was opened on.
+  imageBoxOpen() {
+    const b = this.imageBox;
+    return Boolean(b) && b.act === this.act && Boolean(this.activeKey) && this.editable() && b.value === this.seen;
+  }
+
+  // Enter in a picture's box, of a paragraph's picture or of one picked in text.
+  savePictureBox(cx) {
+    if (this.imageBoxOpen()) this.applyImageBox(cx);
+    else this.applyPictureBox(cx);
+  }
+
+  // Enter in the box of a picture in text: the alt text exactly as typed, or the address typed, trimmed (an empty one
+  // writes nothing), as one entry of the history whose undo puts the selection back. What is unchanged writes nothing.
+  // The picture stays picked, and its float comes back.
+  applyImageBox(cx) {
+    const b = this.imageBox, defs = this.defsNow().map, span = parsedInline(this.seen, defs).spans.find(sp => sp.kind === "image" && sp.start === b.start);
+    const change = span && this.imageBoxChange(b.kind, span), next = change && setPicture(this.seen, span, change, { defs });
+    if (!next) return this.cancelImageBox(cx);
+    this.imageBox = null;
+    this.writeImage(b.range, next, cx);
+    this.focusField(cx);
+  }
+
+  // What the box of `kind` asks of the picture `span`: { alt } or { address } as setPicture takes them, or null.
+  imageBoxChange(kind, span) {
+    const typed = this.pictureField(kind).value(), address = typed.trim();
+    if (kind === "alt") return typed === span.alt ? null : { alt: typed };
+    return !address || address === span.url ? null : { address: writtenAddress(address) };
+  }
+
+  // Escape in the box: nothing changes, the field gets the keyboard back with its selection, and the float shows again.
+  cancelImageBox(cx) {
+    const b = this.imageBox;
+    if (!this.imageBoxOpen()) return this.closeImageBox(cx);
+    this.imageBox = null;
+    this.selectField(b.range);
+    this.retoken();
+    this.focusField(cx);
+    cx.notify();
+  }
+
+  closeImageBox(cx) {
+    if (!this.imageBox) return;
+    this.imageBox = null;
+    cx?.notify();
+  }
+
+  // Drawn by the root where the picture's float goes. One press outside closes box and float, writing nothing.
+  imageBoxView(t) {
+    const place = this.placeBar(this.imageBox.place, LINK_BOX, popoverPlace);
+    if (!place) return null;
+    return this.boxFrame("md-picture-box", place, this.pictureField(this.imageBox.kind), t)
+      .on_mouse_down_out((_e, cx) => { this.closeImageBox(cx); this.elementPressOut(); });
   }
 
   openCard(key, cx) {
