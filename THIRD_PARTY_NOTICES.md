@@ -6,17 +6,18 @@
 
 The line icons in `mods/herdr-inline-markdown/` are Lucide icons (https://lucide.dev) reduced to a bare `<svg>` element:
 `bold`, `check`, `chevron-down`, `code`, `copy`, `external-link`, `file-plus`, `heading`, `heading-1`, `heading-2`,
-`heading-3`, `image`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `markdown` (Lucide's `file-text`),
-`message-square`, `message-square-plus`, `minus`, `palette`, `pencil`, `plus`, `search`, `strikethrough`, `table`,
-`text-quote`, `type`, `underline`, `unlink` and `workflow`. `bold`, `code`, `heading-1` to `heading-3`,
-`image`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `message-square`, `message-square-plus`, `minus`,
-`search`, `strikethrough`, `table`, `text-quote`, `type` and `workflow` were taken from lucide-static 1.69.0;
-`chevron-down`, `copy`, `external-link`, `heading`, `palette`, `pencil`, `underline` and `unlink` from lucide-static
-1.73.0. `check`, `file-plus`, `markdown` and `plus` have the path data of the current Lucide icons; the release they
-were copied from was not recorded.
+`heading-3`, `image`, `image-up`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `markdown` (Lucide's
+`file-text`), `message-square`, `message-square-plus`, `minus`, `palette`, `pencil`, `plus`, `search`, `strikethrough`,
+`table`, `text-quote`, `trash-2`, `type`, `underline`, `unlink` and `workflow`. `bold`, `code`, `heading-1` to
+`heading-3`, `image`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `message-square`, `message-square-plus`,
+`minus`, `search`, `strikethrough`, `table`, `text-quote`, `type` and `workflow` were taken from lucide-static 1.69.0;
+`chevron-down`, `copy`, `external-link`, `heading`, `image-up`, `palette`, `pencil`, `trash-2`, `underline` and
+`unlink` from lucide-static 1.73.0. `check`, `file-plus`, `markdown` and `plus` have the path data of the current
+Lucide icons; the release they were copied from was not recorded.
 
-`check`, `chevron-down`, `code`, `external-link`, `italic`, `link`, `minus`, `plus`, `search` and `type` are among the
-Lucide icons derived from Feather (as lucide-static 1.73.0's license lists them), which is under the MIT license below.
+`check`, `chevron-down`, `code`, `external-link`, `italic`, `link`, `minus`, `plus`, `search`, `trash-2` and `type` are
+among the Lucide icons derived from Feather (as lucide-static 1.73.0's license lists them), which is under the MIT
+license below.
 
 `spinner.svg` and `dots.svg` are not Lucide icons: both were drawn for this package.
 

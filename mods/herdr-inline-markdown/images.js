@@ -201,9 +201,19 @@ export class Images {
 
 // `items[i]` is { state, path, alt, src, error, href } as get() answered with the paragraph's own alt, src and href, and
 // `boxes[i]` its place from pictureLayout; they sit in a box `height` high. A linked item has the hand in every state.
-export function pictureBlock({ id, items, boxes, height, selected, t }) {
+// Item `picked` (none: -1) has a ring around it.
+export function pictureBlock({ id, items, boxes, height, selected, picked = -1, t }) {
   const parts = items.flatMap((item, i) => pictureParts(item, boxes[i], `${id}-${i}`, selected, t));
+  if (boxes[picked]) parts.push(pickedRing(boxes[picked], `${id}-${picked}-picked`, t));
   return div().id(id).relative().w_full().h(height).children(parts);
+}
+
+const RING = { gap: 3, width: 2, radius: 6 };
+
+function pickedRing(box, id, t) {
+  const out = RING.gap + RING.width;
+  return div().id(id).absolute().left(box.x - out).top(box.y - out).w(box.w + 2 * out).h(box.h + 2 * out)
+    .rounded(RING.radius).border(RING.width).border_color(t.accent);
 }
 
 function pictureParts(item, box, key, selected, t) {

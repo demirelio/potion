@@ -30,8 +30,8 @@ The package holds:
 - `git` on the machine of the folder you open files from: the picker lists markdown files with `git ls-files`,
   or with `find` outside a repository.
 - `curl`, for pictures from the web (macOS ships it). Without it those pictures show an error box and the rest works.
-- `osascript`, for the picture dialog (macOS ships it). Without it Image writes `![]()` for you to type the address in,
-  and dropping pictures still works.
+- `osascript`, for the picture dialog (macOS ships it). Without it Image writes an empty picture and opens its address
+  box for you to type the address in, Change picture opens that box too, and dropping pictures still works.
 
 ## Install
 
@@ -145,7 +145,8 @@ gives way to the pane's header, which shows the same file name and toggle.
   pictures (macOS), because Herdr stops a command after 30 s and a dialog can stay open longer; the mod waits for it
   by checking, every 0.3 s, for the files `osascript` writes into the picture cache folder (`pick-*`, deleted once
   read), looks with `kill -0` every 2 s that it is still running, and ends it with `kill` when its pane closes.
-  `mkdir -p` and `cp` put a picture from outside the note's folder into `images/` beside it. Files are written only on
+  `mkdir -p` and `cp` put a picture from outside the note's folder into `images/` beside it, and Open picture runs
+  `open` (macOS) or `xdg-open` with a picture's file. Files are written only on
   this computer: the one you edit, a new note, the diagram and picture caches (the dialog's answer too), and the
   pictures copied beside a note. Herdr's own folder (`~/.config/herdr-app`) is watched for changes to `keys.json`:
   Herdr drops the keys a mod bound each time it reads that file again, so the editor binds its keys again half a
@@ -160,9 +161,9 @@ comment's text stays highlighted, and escapes and entities show as their charact
 ever shows in Reading, its `#`, `-`, `1.`, `[ ]` or `>` included; the marks stay in the file, and the Markdown view
 shows them. A word with formatting moves as one piece until the caret is in it: click into it or arrow up to it, and
 the caret stops between its letters. A code block, table, HTML block, front matter or diagram shows its source, fences
-included, in the terminal font, and a diagram is drawn again when you leave it; a paragraph of pictures shows its source
-in a smaller terminal font and is drawn again the same way. A hard-wrapped paragraph shows its line breaks as spaces,
-so it wraps as it did on the page, and keeps them in the file.
+included, in the terminal font, and a diagram is drawn again when you leave it. A paragraph of pictures never shows its
+source: a click [picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as spaces, so it wraps as
+it did on the page, and keeps them in the file.
 
 | Key or click | What it does |
 |---|---|
@@ -170,8 +171,9 @@ so it wraps as it did on the page, and keeps them in the file.
 | Click a link | Selects the whole link and shows its [popover](#links) over it; a second click puts the caret in its text |
 | Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
-| Double-click a diagram or a picture | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
-| Click a linked picture | Opens its link, as Cmd+click on a link in text does; the picture itself is never opened for editing by a click |
+| Double-click a diagram | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
+| Click a picture | [Picks it](#pictures): a ring around it and its menu over it. A double-click or a right-click does the same, a linked picture included |
+| Cmd+click a linked picture | Opens its link, as Cmd+click on a link in text does, also in a file you can't edit |
 | Click a checkbox | Ticks or unticks it |
 | Enter | At the end of a block: a new one below (a list continues). At the start: a new one above. In the middle: splits the block, and the formatting goes on on both sides: Enter inside a bold, coloured, highlighted, underlined or code run leaves both halves with it, inside a link both halves link to its address, and in commented text the first half keeps the comment. In a web address, an autolink or a picture the split goes after it, so it is never cut. On an empty item: out a level, then out of the list. In code: a new line |
 | Shift+Enter | A line break inside the block, written as `\` at the end of the line; in inline code the code closes before the break and opens again after it, as code can't hold one. In a heading it is Enter |
@@ -179,15 +181,15 @@ so it wraps as it did on the page, and keeps them in the file.
 | Backspace / Delete | In a paragraph, heading, item or quote what is left keeps its formatting: a bold run keeps its marks while a letter of it is left and they go with its last letter; a link keeps its address and commented text its comment the same way, and a link or comment whose text all went goes whole. A letter typed where you deleted takes the formatting of the first letter deleted, so a typo at the end of a bold word is retyped bold. Option+Backspace and a selection deleted or cut work the same |
 | Typing over a selection | The typed text takes the formatting of the selection's first letter. Typing over a clicked link renames it and keeps its address; the same in commented text |
 | Typing | Text typed inside a formatted word has its formatting, typed right after or before it is plain, and typed markdown works as a shortcut (`**bold**` turns bold as you close it). A character that would make hidden marks show is written so that it shows as typed |
-| Backspace at the start | A heading or quote becomes a paragraph; an item moves out a level, then becomes a paragraph; a paragraph joins the one above. An empty block goes |
-| Delete at the end | Joins the next paragraph, heading or item to this one, or removes the rule after it |
+| Backspace at the start | A heading or quote becomes a paragraph; an item moves out a level, then becomes a paragraph; a paragraph joins the one above, or picks the last picture of a paragraph of pictures above it. An empty block goes |
+| Delete at the end | Joins the next paragraph, heading or item to this one, removes the rule after it, or picks the first picture of a paragraph of pictures after it |
 | Joining blocks | Every letter of both keeps its formatting and shows as before: a bold word at the end of one and another at the start of the next become one bold word, and a `*` that showed as a character still does. The caret lands at the join |
 | Tab / Shift+Tab | Nests / un-nests a list item with its sub-items; in a table, selects the next / previous cell; in code, Tab types four spaces |
 | Option+Up / Down | Moves the block (an item with its sub-items) above or below its neighbour |
-| Arrow keys | Move inside the block, and on to the block above or below at its edge |
+| Arrow keys | Move inside the block, and on to the block above or below at its edge; into a paragraph of pictures they pick its first picture from above, its last from below |
 | Page Up / Page Down | Scrolls a page and takes the caret along |
 | Escape | Closes a link's popover, else the format bar's open menu, else the format bar when it shows, else stops editing; Enter picks up where you were. In the address box it goes back to the popover |
-| Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them. Undo puts the caret back where it was before the key, and a deleted or typed-over selection comes back selected |
+| Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them. Undo puts the caret back where it was before the key, and a deleted or typed-over selection comes back selected; a picture changed or deleted comes back picked |
 | Cmd+C / Cmd+X | In a paragraph, heading, item or quote: copies the selection as markdown that keeps its formatting and stands on its own (part of a bold word is copied bold, part of a link as a link to its address, a picture whole, line breaks kept); comments are left out, their text kept. Cmd+X then deletes the selection as Backspace does. In a code block or table they copy the source |
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code. Pasted into a paragraph, heading, item or quote, text keeps its own formatting and takes the formatting of where it lands, as typing does: inside a bold word it is bold too, and over a selection it takes its first letter's. A mark that pairs with nothing on the clipboard (`**wo`) is pasted as the characters it shows. Paragraphs or blocks pasted in the middle of a block split it there as Enter does: the first pasted paragraph joins the text before, the last joins the text after, and lists, rules and code in between arrive as the blocks they write |
 | Cmd+B / Cmd+I / Cmd+U / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic, underline or strikethrough on the selection, all or nothing. If every letter of the selection has it already, the key takes it off all of them; otherwise it puts it on all of them, so a selection that is partly bold becomes all bold first. Text outside the selection keeps its formatting: a bold run the selection cuts is split, and runs that end up touching join into one. Every other formatting stays (bold-italic text that loses bold stays italic; a link keeps its address, a comment its note). The same letters stay selected, so the key again undoes it. Spaces at the ends of the selection stay outside. On a caret in a word they act on the word; elsewhere they write nothing and set the formatting of what you type next there, which stays one run as you type on (Cmd+B, `word`, Cmd+B, `s` gives **word**s) |
@@ -219,7 +221,7 @@ source; input methods that compose characters (Japanese, Chinese) may misbehave 
 formatted words, while direct typing in any script is fine. **Left out on purpose:** drag handles,
 images inside text, HTML `<img>` and reference-style images (only a paragraph made of pictures is drawn), footnotes
 (a reference stays text, a definition shows as a dim source line), jumping to `#anchor` links, and any button besides
-the one toggle, a diagram's zoom, the format bar, a link's popover and the comments' cards.
+the one toggle, a diagram's zoom, the format bar, a link's popover, a picture's menu and the comments' cards.
 
 ### The format bar
 
@@ -332,10 +334,11 @@ you typed. A text style changes the block you are in and keeps its words; the ot
 (a table with "Column 1" selected, a diagram with a starter flowchart), or take the block's place when it held nothing
 else. Image opens the macOS file dialog: choose one picture or several, and they are written as one paragraph where the
 slash was, with the caret in a new paragraph below (see [Pictures](#pictures)); Cancel writes nothing. Where the dialog
-can't run (no `osascript`, so not on macOS), Image writes `![]()` with the caret between the parentheses for you to
-type an address, and the picture is drawn when you leave the paragraph. Cmd+Z right after a pick gives back the `/h2`
-you typed, and a second Cmd+Z removes it; after the dialog one Cmd+Z removes the pictures and leaves the copies. A pick
-writes the same markdown as typing it. There is no menu in code, tables or diagram source, where a slash is text.
+can't run (no `osascript`, so not on macOS), Image writes an empty picture, picks it and opens its address box: type an
+address or a path and press Enter, and the picture is drawn; Escape leaves it empty. Cmd+Z right after a pick gives
+back the `/h2` you typed, and a second Cmd+Z removes it; after the dialog one Cmd+Z removes the pictures and leaves the
+copies. A pick writes the same markdown as typing it. There is no menu in code, tables or diagram source, where a slash
+is text.
 
 ### Diagrams
 
@@ -392,9 +395,39 @@ drawn. An image inside a line of text, an HTML `<img>` and a reference-style ima
   picture over 50 megapixels shows an error box.
 - **Size:** a picture keeps its own size, shrunk to the width of the text when it is wider, never enlarged. Pictures
   that fit sit side by side and the rest wrap to the next row, so badges make a row and screenshots stack.
-- **Clicks:** a single click does nothing; a double-click shows the paragraph's source to edit, and leaving it draws
-  the pictures again. A click on a linked picture opens its link instead, as Cmd+click on a link in text does, also on
-  a file you can't edit, and never edits: arrow into the paragraph, or use the Markdown view.
+- **Picking:** a click on a picture picks it: a ring in the accent colour goes around it and its menu shows over it
+  (under it at the top of the pane), and its markdown never shows. A double-click or a right-click does the same, and a
+  picture still loading or one that can't be shown is picked too. A click elsewhere, Escape or the Markdown view lets
+  it go. The arrow keys into a paragraph of pictures, Backspace at the start of the paragraph under it, Delete at the
+  end of the one over it and an undo that lands in it pick a picture there instead of showing its source; the Markdown
+  view still shows the source.
+- **The menu** shows the picture's address as written in the file (cut in the middle when long, all of it in its
+  tooltip) and these buttons:
+  - **Change picture:** the macOS file dialog for one picture, opened in the picture's folder (where Image opens it
+    for a web picture). The file you choose takes the picture's place, linked where it is or copied into `images/` as
+    Image does; the alt text, title and link stay, except an alt text that was the old file's name, which becomes the
+    new one's. While a dialog is open, Change picture and Image do nothing; if the picture changed meanwhile, nothing is
+    replaced and a notice says so. Without `osascript` it opens the address box instead: Enter writes the address you
+    typed, in `<…>` when it holds a space and with `(` and `)` as `%28` and `%29`. In a path, `#`, `?` and a `%` that
+    starts no `%XX` escape are written as `%23`, `%3F` and `%25` too; a web address keeps them.
+  - **Alt text:** the menu becomes a box holding the alt text. Enter writes what you typed, escaped so that it reads
+    back exactly so (`*`, `_`, brackets and backticks too); Escape goes back to the menu, and a click outside closes
+    both, writing nothing.
+  - **Copy address:** a file's full path, so it pastes into Finder or a terminal; any other address as written. The
+    button shows a check until the menu closes.
+  - **Open picture:** the file in your default app, a web picture in the browser; a `data:` picture has no file to open.
+  - **Open link**, on a linked picture: follows its link.
+  - **Delete picture:** removes the picture (a linked one with its link), its whole line when it stood alone on one,
+    and the paragraph when it was the only one. The picture before it is picked, else the one after it.
+
+  Each change is one Cmd+Z, which brings the picture back picked.
+- **Keys** while a picture is picked: Backspace or Delete deletes it, Enter starts a new paragraph below the pictures,
+  Left and Right pick the picture before or after it and leave the paragraph at its ends, Up and Down leave it at
+  once, Escape lets it go. Page Up, Page Down, space, Home and End scroll and keep it picked; other keys do nothing.
+- **Linked pictures:** a click picks one like any other picture; Cmd+click opens its link, also in a file you can't
+  edit.
+- **Files you can't edit** (on another machine, read-only): a click picks a picture, and its menu has Copy address,
+  Open picture and Open link only.
 - **Updates:** when the folder watcher reports a picture's file, the page reads it again and swaps the new picture in
   when it is loaded, so a picture an agent writes after the markdown appears without reopening. Where the folder
   isn't watched (your home folder, `/`, a file on another machine) pictures are read when they are first drawn and
@@ -447,7 +480,7 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
   rewritten the way a clone does it (simulated, not cloned by Herdr), and by loading the mod against test mocks;
   nothing here has been run inside the app or in another version. The keys rely on `mod.open` showing each mod as
   its `mod.json` overlay says (the companion's 2 px frameless popup included). Say so in the compatibility notes.
-- **Icon provenance.** Twenty icons are from lucide-static 1.69.0 and eight from 1.73.0; four more match the path
+- **Icon provenance.** Twenty icons are from lucide-static 1.69.0 and ten from 1.73.0; four more match the path
   data of current Lucide icons, but the release they were copied from was not recorded. `spinner.svg` and `dots.svg` were drawn for
   this package, and `file-markdown.svg` is the Material Icon Theme's markdown icon.
 - **Opening a file can fetch https pictures.** A markdown file can name pictures on the web, and the mod downloads

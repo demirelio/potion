@@ -436,10 +436,13 @@ export function barPlace({ firstTop, lastTop, rowH, size, viewW, viewH, x }) {
 export const LINK_POP = { addressChars: 40, charW: 6.6, addressPad: 8, buttons: 4 };
 export const LINK_BOX = { w: 340, h: 40, pad: 6 };
 
-export function linkPopoverSize(chars) {
+// A float in the link popover's look: an address `chars` long, then `buttons` buttons with `rules` rules among them.
+export function popoverSize(chars, buttons, rules) {
   const edge = BAR.pad + 1, address = Math.max(1, chars) * LINK_POP.charW + 2 * LINK_POP.addressPad;
-  return { w: Math.ceil(address + BAR.sep + LINK_POP.buttons * BAR.button + 2 * edge), h: BAR.button + 2 * edge };
+  return { w: Math.ceil(address + rules * BAR.sep + buttons * BAR.button + 2 * edge), h: BAR.button + 2 * edge };
 }
+
+export const linkPopoverSize = chars => popoverSize(chars, LINK_POP.buttons, 1);
 
 // Over the first row of a range (row tops in pane y) with its left edge at pane x `x`, else under its last row when
 // there is no room above, as low as the pane keeps it, for a float of `size` { w, h } narrowed to the pane. -> { side,

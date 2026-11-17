@@ -3,15 +3,15 @@
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
-import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap } from "./lib.js";
-import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, remove, removeRange, reparse, retype, sameDefs, separators, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, CARD, CARDS, COLUMN, FRAME, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
+import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
+import { BAR, BAR_MENU, CARD, CARDS, COLUMN, FRAME, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
 import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
-import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
+import { DialogUnavailable, PictureDialog, altNames, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, KEYS_SETTLE_MS, NOTE, SOURCE, claimRebind, installKeys } from "./keys.js";
 import { actedOn, colorOf, hasMark, highlightOf, setColor, setMark, toggleMark, wordAround } from "./format.js";
 import { editOf, formatAt, mend } from "./mend.js";
@@ -146,6 +146,18 @@ const LINK_BUTTONS = [
   { name: "edit", icon: "pencil", tip: "Edit link" },
   { name: "remove", icon: "unlink", tip: "Remove link" },
 ];
+// The picked picture's float. `edits`: only on a file that can be edited; `linked`: only on a linked picture; `apart`:
+// a rule before it.
+const PICTURE_BUTTONS = [
+  { name: "change", icon: "image-up", tip: "Change picture", edits: true },
+  { name: "alt", icon: "type", tip: "Alt text", edits: true },
+  { name: "copy", icon: "copy", tip: "Copy address", done: { icon: "check", tip: "Copied" } },
+  { name: "open", icon: "external-link", tip: "Open picture" },
+  { name: "link", icon: "link", tip: "Open link", linked: true },
+  { name: "delete", icon: "trash-2", tip: "Delete picture", edits: true, apart: true },
+];
+const PICTURE_CHANGED = "The picture changed meanwhile, so it wasn't replaced";
+const NO_PICTURE_FILE = "This picture has no file to open";
 const NO_ADDRESS = "No address";
 const LINK_REFUSED = "A link can't hold another link";
 // Whether a link can go somewhere does not depend on its address: this one stands in before one is typed.
@@ -342,8 +354,8 @@ const withInnerLine = (b, value) => {
 };
 
 // What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, its text blocks drawn
-// by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a picture,
-// and the quote's comment on its card in the margin while a new comment's card is being written.
+// by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a picture
+// picked with its float, and the quote's comment on its card in the margin while a new comment's card is being written.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
@@ -474,6 +486,14 @@ export class Editor {
     this.element = null; this.pressedOn = null; this.linkBox = null;
     this.linkField = InputState.new({ placeholder: "Paste or type a link" });
     this.linkField.on("submit", (_e, cx) => this.applyLinkBox(cx));
+    // Pictures: `picked` the one a click picked in a paragraph of pictures ({ key, index, copied, box }), shown by its
+    // float while no block is edited; `box` names the field open in the float's place, the alt text's or the address's.
+    // Herdr's input takes its placeholder only when it is made, so each box has a field of its own.
+    this.picked = null;
+    this.altField = InputState.new({ placeholder: "Describe the picture" });
+    this.altField.on("submit", (_e, cx) => this.applyPictureBox(cx));
+    this.addressField = InputState.new({ placeholder: "Paste a picture address or path" });
+    this.addressField.on("submit", (_e, cx) => this.applyPictureBox(cx));
 
     // Calibration: `cal` is in use while `calNext` collects a run's measurements; `look` is the theme, fonts and zoom
     // last drawn in (a change reruns calibration; `calGen` names each run, `calTimed` the last one whose give-up clock
@@ -517,7 +537,9 @@ export class Editor {
     this.note = { act: this.act, kind: "add", value: this.seen, range: { start: 2, end: 11 }, comment: null };
     const diagram = this.doc.blocks.find(b => b.kind === "mermaid");
     this.shown.set(diagram.key, FIXTURE_DIAGRAM); this.good.set(diagram.key, FIXTURE_DIAGRAM);
-    this.setPictures(this.doc.blocks.find(b => b.image), () => FIXTURE_PICTURE);
+    const pictures = this.doc.blocks.find(b => b.image);
+    this.setPictures(pictures, () => FIXTURE_PICTURE);
+    this.picked = { key: pictures.key, index: 0, copied: false, box: null };
     this.hoverFrame = diagram.key;
     this.rebuild(null, null);
   }
@@ -986,6 +1008,7 @@ export class Editor {
   // drawn in Markdown, so the pointer is unknown.
   toMarkdown(cx) {
     this.setSel(null, cx);
+    this.unpick(cx);
     this.pointer = null;
     let at = null;
     this.writeHeld(cx);
@@ -1039,8 +1062,10 @@ export class Editor {
     if (k === "cmd-s") { cx.stop_propagation(); this.saveNow(cx); return; }
     if (k === "cmd-e") { cx.stop_propagation(); this.toggle(cx); return; }
     if (k === "escape" && this.card) { cx.stop_propagation(); this.closeCard(cx); return; }
-    if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey) return;
+    // Keys typed into a picture's box reach this root too, and one stopped here never reaches the box's field.
+    if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey || this.pictureBoxOpen()) return;
     if (this.sel && this.selectionKey(e, cx)) return;
+    if (this.picked && this.pictureKey(k, cx)) return;
     if (k === "enter" && this.editable()) { cx.stop_propagation(); this.resume(cx); return; }
     if (UNDO_KEYS[k]) { cx.stop_propagation(); this.undo(UNDO_KEYS[k], cx); return; }
     const page = pageStep(this.viewH());
@@ -1059,9 +1084,13 @@ export class Editor {
     }
     if (name === "mdb-note-cancel") {
       this.typingStyle = null;
+      if (this.pictureBoxOpen()) return this.cancelPictureBox(cx);
       return this.linkBoxOpen() ? this.cancelLinkBox(cx) : this.cancelNote(cx);
     }
-    if (name === "mdb-note-save") return this.linkBoxOpen() ? this.applyLinkBox(cx) : this.saveNote(cx);
+    if (name === "mdb-note-save") {
+      if (this.pictureBoxOpen()) return this.applyPictureBox(cx);
+      return this.linkBoxOpen() ? this.applyLinkBox(cx) : this.saveNote(cx);
+    }
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
     this.syncField(cx);
     if (name === "mdb-escape") this.typingStyle = null;
@@ -1122,6 +1151,7 @@ export class Editor {
           if (this.mode === "markdown" && !this.remote && !this.readWhenParsed) this.source.focus();
           else if (this.noteOpen()) this.noteField.focus();
           else if (this.linkBoxOpen()) this.linkField.focus();
+          else if (this.pictureBoxOpen()) this.pictureField().focus();
           else if (this.activeKey) this.field.focus();
           else this.handle.focus();
         }
@@ -1132,13 +1162,17 @@ export class Editor {
   // The browser gets web pages; a mail link goes to the computer's own opener (a mod's cx can only open web pages).
   web(url, cx) {
     if (/^https?:/i.test(url)) return cx.open_url(url);
-    if (!/^mailto:/i.test(url)) return;
+    if (/^mailto:/i.test(url)) this.openWithSystem(url, "Can't open this link", cx);
+  }
+
+  // `target` (a file, a mail address) in the app the computer opens it with; `failed` is the notice when it can't.
+  openWithSystem(target, failed, cx) {
     cx.spawn(async () => {
       try {
-        const r = await exec(window()?.platform === "macos" ? "open" : "xdg-open", [url]);
+        const r = await exec(window()?.platform === "macos" ? "open" : "xdg-open", [target]);
         if (r.code === 0) return;
       } catch { /* told below */ }
-      notify({ title: "Can't open this link", level: "info" });
+      notify({ title: failed, level: "info" });
     });
   }
 
@@ -1231,11 +1265,12 @@ export class Editor {
     return { at: d.at + Math.max(0, d.inserted.length - 1), kind: h.kind, caretDoc: null, from: d.inserted ? d.at : Infinity };
   }
 
-  // After a re-parse the block at document offset `at` is the edited one if it is of `kind` (any when null) and starts
-  // at `from` or later. Its field is set only when its value differs: the caret goes to `caretDoc`, else follows its text.
+  // After a re-parse the block at document offset `at` is the edited one if it is of `kind` (any when null), starts at
+  // `from` or later and is no paragraph of pictures. Its field is set only when its value differs: the caret goes to
+  // `caretDoc`, else follows its text.
   refind({ at, kind, caretDoc, from = -Infinity }, cx) {
     const b = this.holding(at);
-    if (!b || b.start > at || (kind && b.kind !== kind) || b.start < from || !this.editable()) return this.drop();
+    if (!b || b.start > at || (kind && b.kind !== kind) || b.start < from || b.image || !this.editable()) return this.drop();
     const f = fieldOf(this.doc, b), value = withInnerLine(b, f.value);
     this.activeKey = b.key; this.f = f;
     this.adoptField(b);
@@ -1609,13 +1644,14 @@ export class Editor {
     return { items: kept.items, boxes: kept.layout.boxes, height: kept.layout.height };
   }
 
-  // Primitive fields only, so that a block whose pictures stand as before is not drawn again.
+  // Primitive fields only, so that a block whose pictures stand as before is not drawn again. `picked`: the index of
+  // its picked picture, -1 for none.
   pictureData(b, width) {
-    const pictureW = Math.max(1, width - b.depth * INDENT);
-    if (b.key === this.activeKey || !this.pictures.has(b.key)) return { pictureSig: "", pictureW, pictureH: 0 };
+    const pictureW = Math.max(1, width - b.depth * INDENT), picked = this.picked?.key === b.key ? this.picked.index : -1;
+    if (b.key === this.activeKey || !this.pictures.has(b.key)) return { pictureSig: "", pictureW, pictureH: 0, picked };
     const { items, height } = this.pictureOf(b.key, pictureW);
     const pictureSig = JSON.stringify(items.map(i => [i.state, i.path, i.width, i.height, i.error, i.href]));
-    return { pictureSig, pictureW, pictureH: height };
+    return { pictureSig, pictureW, pictureH: height, picked };
   }
 
   // The index of the picture whose box holds the point (x, y) in the paragraph's content box, else -1.
@@ -1951,7 +1987,7 @@ export class Editor {
 
   // A press beside the edited block's field would take the keyboard from it: it is given back at once, and again on the
   // mouse-up if the root took it anyway. `beside` is that block's key, `key` the block pressed, from which a drag
-  // selects blocks.
+  // selects blocks. A press anywhere but on the picked picture lets it go.
   viewportDown(e, cx) {
     this.closeSlash(cx);
     this.closeBar(cx);
@@ -1960,12 +1996,12 @@ export class Editor {
     this.endPan(cx);
     this.linked = false;
     if (!e?.modifiers?.shift) this.setSel(null, cx);
+    const p = this.point(e), hit = p ? this.hit(p) : null;
+    if (!this.onPicked(hit)) this.unpick(cx);
     if (this.tookPress(e, "down")) { this.press = null; return; }
     this.fieldHeld = null;
     this.dragFrom = windowPoint(e);
-    const p = this.point(e);
-    if (p && e.modifiers?.shift) { this.press = null; return this.shiftTo(this.hit(p)?.block, cx); }
-    const hit = p ? this.hit(p) : null;
+    if (p && e.modifiers?.shift) { this.press = null; return this.shiftTo(hit?.block, cx); }
     this.press = p ? { ...p, beside: null, key: hit?.block?.key ?? null, on: hit?.on ?? null } : null;
     const v = hit?.on === "frame" && this.dragFrom ? this.viewOf(hit.block.key) : null;
     if (v) this.pan = { key: hit.block.key, from: this.dragFrom, x0: v.x, y0: v.y, moved: false };
@@ -1991,7 +2027,7 @@ export class Editor {
       this.fieldReleased(held, cx);
     }
     const pressed = down && !linked ? down : null;
-    if (pressed && p && e.click_count >= 1 && Math.hypot(p.x - pressed.x, p.y - pressed.y) <= CLICK_SLOP) this.clickAt(p, cx, e.click_count);
+    if (pressed && p && e.click_count >= 1 && Math.hypot(p.x - pressed.x, p.y - pressed.y) <= CLICK_SLOP) this.clickAt(p, cx, e.click_count, Boolean(e.modifiers?.platform));
     else if (pressed?.key && this.activeKey && pressed.key !== this.activeKey && !this.sel) return cx.stop_propagation();
     this.keepKeyboard();
   }
@@ -2003,14 +2039,15 @@ export class Editor {
   }
 
   // A frame fills much of the pane, so a single click on it (a tap, a click to focus the window) opens nothing: a
-  // double-click opens the diagram's source. The − % + group works on files that cannot be edited too.
-  clickAt(p, cx, count = 1) {
+  // double-click opens the diagram's source. The − % + group works on files that cannot be edited too. `cmd`: a
+  // Cmd+click.
+  clickAt(p, cx, count = 1, cmd = false) {
     const hit = this.hit(p);
     if (!hit) return;
     if (hit.on === "tool") return this.toolClick(hit.block.key, hit.tool, cx);
     if (hit.on === "task") return this.tick(hit.block, cx);
     if (hit.on === "notes") return this.openCard(hit.block.key, cx);
-    if (hit.on === "picture") return this.pictureClick(hit, p, cx, count);
+    if (hit.on === "picture") return this.pictureClick(hit, cx, cmd);
     if (!this.editable()) return;
     if (hit.on === "frame") {
       if (count >= 2) this.clickBlock(hit.block.key, p, cx);
@@ -2021,13 +2058,27 @@ export class Editor {
     if (hit.block.key !== this.activeKey) this.clickBlock(hit.block.key, p, cx);
   }
 
-  // A picture is big and a stray click must not turn it into a source line, so as on a diagram only a double-click edits
-  // it. A linked picture follows its link on a click instead (on files that cannot be edited too) and is never edited here.
-  pictureClick(hit, p, cx, count) {
+  // A click on a picture picks it, a double-click too, and the block being edited is left; Cmd+click follows a linked
+  // picture's link instead, on files that cannot be edited too. The space between pictures picks none.
+  pictureClick(hit, cx, cmd) {
     const href = this.pictures.get(hit.block.key)?.items[hit.item]?.href;
-    if (href) {
-      if (count === 1) this.link(href, cx);
-    } else if (count >= 2 && this.editable()) this.clickBlock(hit.block.key, p, cx);
+    if (cmd && href) return this.link(href, cx);
+    if (hit.item < 0) return;
+    if (this.activeKey) this.deactivate(cx);
+    this.setSel(null, cx);
+    this.pick(hit.block.key, hit.item, cx);
+  }
+
+  // A right-click on a picture picks it, its float standing for a menu; anywhere else it lets the picked one go.
+  viewportRightDown(e, cx) {
+    const p = this.point(e), hit = p ? this.hit(p) : null;
+    if (hit?.on === "picture" && hit.item >= 0) return this.pictureClick(hit, cx, false);
+    this.unpick(cx);
+  }
+
+  onPicked(hit) {
+    const p = this.picked;
+    return Boolean(p) && hit?.on === "picture" && hit.block.key === p.key && hit.item === p.index;
   }
 
   // A move event says nothing of the buttons: while a press is under way, on the page or in a field, a drag that
@@ -2230,6 +2281,7 @@ export class Editor {
   }
 
   setSel(sel, cx) {
+    if (sel) this.unpick(cx);
     if (!sel && !this.sel) return;
     const before = this.selKeys, range = sel && this.selRange(sel);
     this.sel = range ? sel : null;
@@ -2332,6 +2384,7 @@ export class Editor {
 
   // Block `key` becomes the edited one, the caret at field offset `caret` (a number or a range). `shift` moves the page
   // down by that much; `reveal` keeps the caret row in view, which a press does not want: the page does not move on a click.
+  // A paragraph of pictures is never edited: the picture at the caret is picked instead. -> whether a block is edited.
   activate(key, caret, cx, { shift = 0, reveal = true } = {}) {
     if (!this.editable()) return false;
     this.setSel(null, cx);
@@ -2339,6 +2392,13 @@ export class Editor {
     else if (this.activeKey) this.commit(cx);
     const b = this.blockByKey(key);
     if (!b) return false;
+    if (b.image) {
+      const f = fieldOf(this.doc, b), at = typeof caret === "number" ? caret : caret?.start ?? 0;
+      this.pickNear(b, fieldToDoc(f, at), cx);
+      if (reveal) this.revealPicked(cx);
+      return false;
+    }
+    this.unpick(cx);
     const anchor = this.anchor(), f = fieldOf(this.doc, b), value = withInnerLine(b, f.value), n = value.length;
     const r = typeof caret === "number" ? { start: caret, end: caret } : caret ?? { start: 0, end: 0 };
     this.f = f; this.opened = value;
@@ -2688,6 +2748,7 @@ export class Editor {
     const p = { key: `p${++this.pendings}`, base, steps, origin, atEnd: end };
     if (!this.simulate(p)) return false;
     this.setSel(null, cx);
+    this.unpick(cx);
     const anchor = this.anchor();
     this.pending = p;
     this.f = null; this.opened = "";
@@ -2736,8 +2797,8 @@ export class Editor {
 
   // Whether the change `edit` typed in the field is checked, and repaired if need be, so that it keeps the formatting it
   // did not delete: the person's own typing in a paragraph, heading, item or quote whose field draws it formatted. A
-  // field that shows its source (its tokens refused, a paragraph of pictures) is the person's to edit, marks and all:
-  // only text typed with a typing style is written there, with that style's marks.
+  // field that shows its source (its tokens refused) is the person's to edit, marks and all: only text typed with a
+  // typing style is written there, with that style's marks.
   mends(own, edit, style) {
     if (own || this.mode !== "reading" || !this.takesMarks()) return false;
     return (!this.tokensOff && this.richNow() !== null) || (style !== null && !edit.removed);
@@ -3009,13 +3070,14 @@ export class Editor {
   }
 
   // The field caret for a press at (x, y) on block b, x from the column's left edge and y from the block's top,
-  // estimated from the block as currently drawn: rendered, or a field (the edited block's, or a text block's own). A
-  // press only the page heard (beside a text block's field: its marker, the space above it) and Page Up / Down use it.
+  // estimated from the block as currently drawn: rendered, or a field (the edited block's, or a text block's own); in a
+  // paragraph of pictures, where the picture at y begins. A press only the page heard (beside a text block's field: its
+  // marker, the space above it) and Page Up / Down use it.
   pressCaret(b, x, y) {
     const d = this.data.get(b.key), active = b.key === this.activeKey, asField = active || d.mode === "field";
     const c = this.chromeOf(d, asField), cal = this.calOf(d.style), value = active ? this.seen : this.openedValue(b);
     if (b.kind === "mermaid" && !active) return this.entry(b, value, 1, null);
-    if (d.look === "picture" && !active) return value.length;
+    if (d.look === "picture" && !active) return this.pictureStartAt(b, d, y);
     const height = (this.heights.get(b.key) ?? this.estimate(b)) - c.y - c.below - (asField ? d.padActive : d.padRendered);
     const fenced = !active && (Boolean(b.fence) || b.kind === "frontmatter");
     return pressToField({ kind: b.kind, value, fenced, closed: b.closed, rows: this.rowsOf(d, asField), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance });
@@ -3027,8 +3089,9 @@ export class Editor {
 
   // Where the caret lands in block b, whose field shows `value`, coming from above (dir > 0) or below: inside a
   // fence, never on its fence lines; at `column`, counted in characters as drawn, when the block is one row, else at
-  // its start or end.
+  // its start or end, which in a paragraph of pictures is its first or last picture.
   entry(b, value, dir, column) {
+    if (b.image) return dir > 0 ? 0 : value.length;
     const lines = value.split("\n");
     if (b.fence || b.kind === "frontmatter") {
       const lastInner = b.closed !== false ? lines.length - 2 : lines.length - 1;
@@ -3036,7 +3099,7 @@ export class Editor {
       return value.length - lines.slice(lastInner + 1).reduce((n, l) => n + l.length + 1, 0);
     }
     if (column === null || lines.length !== 1) return dir > 0 ? 0 : value.length;
-    const shown = isText(b) && !b.image ? visibleMap(value) : null, count = shown ? shown.length - 1 : value.length;
+    const shown = isText(b) ? visibleMap(value) : null, count = shown ? shown.length - 1 : value.length;
     if (!this.fitsOneRow(b, count)) return dir > 0 ? 0 : value.length;
     return shown ? shown[Math.min(column, count)] : Math.min(column, value.length);
   }
@@ -3138,7 +3201,8 @@ export class Editor {
   // task. The press is marked so the viewport, if it hears it too, leaves it to the field. With Shift the press selects
   // blocks and the field's focus is not taken; with Cmd it may open a link (openLinkIn). A press in the edited field
   // leaves its caret unknown until it is read after the mouse-up, so that a key-up meanwhile crosses no edge. The
-  // element picked is let go: only a click on a token picks one (pressToken), so a drag shows the bar.
+  // element picked is let go: only a click on a token picks one (pressToken), so a drag shows the bar. So is a picked
+  // picture.
   fieldDown(key, e) {
     this.fieldPress = { kind: "down", x: e?.position?.x, y: e?.position?.y };
     this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e);
@@ -3148,6 +3212,7 @@ export class Editor {
     const picked = key === this.activeKey ? this.elementNow() : null;
     this.pressedOn = picked && { key, value: this.seen, kind: picked.kind, start: picked.span.start };
     this.element = null;
+    if (this.picked) this.post(cx => this.unpick(cx));
     if (this.sel && !e?.modifiers?.shift) this.post(cx => this.setSel(null, cx));
     if (key === this.activeKey) {
       this.known = { ...this.known, valid: false }; this.ownKeyUp = null;
@@ -3214,6 +3279,7 @@ export class Editor {
   // mouse-up, whichever comes first, does this.
   takeField(key, cx) {
     if (key === this.activeKey || !this.blockFields.has(key) || !this.editable()) return;
+    this.unpick(cx);
     this.leave(cx, key);
     const b = this.blockByKey(key), state = this.blockField(key);
     if (!b || !state) return;
@@ -3291,9 +3357,13 @@ export class Editor {
       if (this.deleteSelection(r, cx)) this.enter(cx);
       return;
     }
+    const caretAt = this.caretDoc();
     this.commit(cx);
     const now = this.blockByKey(this.activeKey);
-    if (!now) return;
+    if (!now) {
+      if (r.start === value.length) this.paragraphAfterPictures(caretAt, cx);
+      return;
+    }
     const kind = now.kind === "item" ? "item" : "paragraph", origin = { key: now.key, caret: { start: r.start, end: r.end } };
     if (now.kind === "quote") {
       if (r.end === value.length && value.endsWith("\n")) return this.leaveQuote(now, cx);
@@ -3434,7 +3504,8 @@ export class Editor {
     this.openPendingWith({ base: afterKey(b.key, "paragraph"), origin: { key: b.key, caret: { start: r.start, end: r.end } } }, cx);
   }
 
-  // The field gives Backspace away only at its start.
+  // The field gives Backspace away only at its start. A paragraph joins nothing into a paragraph of pictures above it:
+  // its last picture is picked.
   backspaceStart(cx) {
     if (this.pending) return this.pendingKey("backspace", cx);
     const key = this.activeKey, b = this.blockByKey(key), i = this.at.get(key);
@@ -3453,6 +3524,7 @@ export class Editor {
     if (now.kind !== "paragraph") return this.op(toParagraph(this.doc, now), cx, { caret: 0 });
     const p = prev && byKey(this.doc, prev.key);
     if (!p) return;
+    if (p.image) return this.cross(-1, cx);
     if (p.kind === "hr") {
       const s = remove(this.doc, p);
       return this.op(s, cx, { at: s && s.start + s.insert.length, caret: 0 });
@@ -3494,7 +3566,8 @@ export class Editor {
   }
 
   // Forward Delete at the end of a block, which the field reports as a change that left its value alone: when the
-  // caret is there, the next text block joins this one or the rule after it goes.
+  // caret is there, the next text block joins this one or the rule after it goes; a paragraph of pictures after it
+  // joins nothing, its first picture is picked.
   deleteAtEnd(cx) {
     if (this.pending || !this.activeKey) return;
     const c = this.caretNow(), end = this.seen.length;
@@ -3504,6 +3577,7 @@ export class Editor {
     const n = next && byKey(this.doc, next.key);
     if (!n) return;
     if (n.kind === "hr") return this.op(remove(this.doc, n), cx, { at: this.caretDoc(), caret: end });
+    if (n.image) return this.cross(1, cx);
     if (isText(b) && isText(n)) this.op(this.joined(mergeNext(this.doc, b, n)), cx);
   }
 
@@ -3766,6 +3840,7 @@ export class Editor {
       return;
     }
     this.release();
+    this.picked = null;
     this.setText(text, cx, false);
     this.openAt(u.caret, cx, null, u.select);
   }
@@ -3942,18 +4017,17 @@ export class Editor {
     this.askForPictures(belowBlock(b.key), c, cx);
   }
 
-  // One dialog at a time, kept open as long as the person needs; closing the pane ends it. Without osascript the
-  // command's own lines are written, as for any command with lines.
+  // Without osascript the command's own lines are written, as for any command with lines: an empty picture, picked
+  // with the address box open.
   askForPictures(target, c, cx) {
     this.picking = true;
     cx.spawn(async cx => {
-      let paths = null, problem = null;
-      const dialog = this.dialog = new PictureDialog(ms => new Promise(done => cx.timer.after(ms, () => done())));
-      try { paths = await dialog.pick(imageStart()); } catch (e) { problem = e; }
-      this.dialog = null;
-      this.picking = false;
+      const { paths, problem } = await this.dialogAnswer(imageStart(), {}, cx);
       if (this.closed) return;
-      if (problem instanceof DialogUnavailable) return this.writePictures(target, c.lines, cx, { caret: c.caret });
+      if (problem instanceof DialogUnavailable) {
+        if (this.writePictures(target, c.lines, cx, { caret: c.caret })) this.showPictureBox("address", cx);
+        return;
+      }
       if (problem) {
         notify({ title: "Can't choose pictures", body: why(problem), level: "error" });
         return;
@@ -3962,6 +4036,17 @@ export class Editor {
       const items = await placePictures(paths, this.file);
       if (items.length) this.writePictures(target, pictureMarkdown(items).split("\n"), cx);
     });
+  }
+
+  // One dialog at a time (`picking`, set before the task that waits here starts), kept open as long as the person
+  // needs; closing the pane ends it. `options` go to PictureDialog. -> { paths, problem } once it has answered.
+  async dialogAnswer(startFolder, options, cx) {
+    let paths = null, problem = null;
+    const dialog = this.dialog = new PictureDialog(ms => new Promise(done => cx.timer.after(ms, () => done())), options);
+    try { paths = await dialog.pick(startFolder); } catch (e) { problem = e; }
+    this.dialog = null;
+    this.picking = false;
+    return { paths, problem };
   }
 
   placeable() {
@@ -4336,35 +4421,49 @@ export class Editor {
       .child(Textarea.new(this.noteField).flex_1().text_size(13).text_color(t.foreground));
   }
 
-  // A box over the page that holds the keyboard: the comment box or the address box.
+  // A box over the page that holds the keyboard: the comment box, the link's address box or a picture's box.
   boxOpen() {
-    return this.noteOpen() || this.linkBoxOpen();
+    return this.noteOpen() || this.linkBoxOpen() || this.pictureBoxOpen();
   }
 
-  // Drawn by the root under the link picked, over it when there is no room. Presses on it go no further, so the field
-  // keeps the keyboard and the selection.
+  // A float at `place` in the link popover's look. Presses on it go no further, so what is under it keeps the keyboard
+  // and the selection.
+  popoverFrame(id, place, t) {
+    return h_flex().id(id).absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(BAR.pad).items_center()
+      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().text_size(12.5)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_move((_e, cx) => cx.stop_propagation());
+  }
+
+  // A float's address, clipped in the middle, the whole of it as its tooltip.
+  popoverAddress(id, address, t) {
+    return div().id(id).flex_1().min_w(0).px(LINK_POP.addressPad).truncate().text_color(address ? t.muted : t.dim)
+      .tooltip(address || NO_ADDRESS).child(clipMiddle(address, LINK_POP.addressChars) || NO_ADDRESS);
+  }
+
+  popoverRule(t) {
+    return div().flex_none().w(1).h(BAR_RULE_H).mx((BAR.sep - 1) / 2).bg(t.border);
+  }
+
+  popoverButton(id, look, run, t) {
+    return h_flex().id(id).size(BAR.button).flex_none().items_center().justify_center().rounded(6).cursor_pointer()
+      .tooltip(look.tip)
+      .hover(s => s.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run(cx); })
+      .child(svg(ICON(look.icon)).size(16).flex_none().text_color(t.muted));
+  }
+
+  // Drawn by the root over the link picked, under it when there is no room.
   linkPopover({ span, extent }, t) {
     const shown = clipMiddle(span.url, LINK_POP.addressChars), place = this.placeBar(extent, linkPopoverSize([...shown].length), popoverPlace);
     if (!place) return null;
     const copied = Boolean(this.element.copied);
-    return h_flex().id("md-link").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(BAR.pad).items_center()
-      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().text_size(12.5)
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
-      .on_mouse_move((_e, cx) => cx.stop_propagation())
+    return this.popoverFrame("md-link", place, t)
       .on_mouse_down_out(() => this.elementPressOut())
-      .child(div().id("md-link-address").flex_1().min_w(0).px(LINK_POP.addressPad).truncate().text_color(span.url ? t.muted : t.dim)
-        .tooltip(span.url || NO_ADDRESS).child(shown || NO_ADDRESS))
-      .child(div().flex_none().w(1).h(BAR_RULE_H).mx((BAR.sep - 1) / 2).bg(t.border))
-      .children(LINK_BUTTONS.map(b => this.linkButton(b, copied && b.done ? b.done : b, t)));
-  }
-
-  linkButton(b, look, t) {
-    return h_flex().id(`md-link-${b.name}`).size(BAR.button).flex_none().items_center().justify_center().rounded(6).cursor_pointer()
-      .tooltip(look.tip)
-      .hover(s => s.bg(t.hover))
-      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.linkAction(b.name, cx); })
-      .child(svg(ICON(look.icon)).size(16).flex_none().text_color(t.muted));
+      .child(this.popoverAddress("md-link-address", span.url, t))
+      .child(this.popoverRule(t))
+      .children(LINK_BUTTONS.map(b => this.popoverButton(`md-link-${b.name}`, copied && b.done ? b.done : b, cx => this.linkAction(b.name, cx), t)));
   }
 
   // The popover's buttons. Open goes where Cmd+click goes; Copy puts the address on the clipboard; Edit opens the
@@ -4461,17 +4560,299 @@ export class Editor {
     cx?.notify();
   }
 
-  // Drawn by the root where the link's popover goes. Presses on it go no further; one outside closes it, writing nothing.
+  // Drawn by the root where the link's popover goes. One press outside closes it, writing nothing.
   linkBoxView(t) {
     const place = this.placeBar(this.linkBox.place, LINK_BOX, popoverPlace);
     if (!place) return null;
-    return div().id("md-link-box").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(LINK_BOX.pad).flex()
+    return this.boxFrame("md-link-box", place, this.linkField, t)
+      .on_mouse_down_out((_e, cx) => { this.closeLinkBox(cx); this.elementPressOut(); });
+  }
+
+  // A one-line field `state` at `place` over the page, in the link's address box look, its Enter and Escape the note
+  // keys. Presses on it go no further.
+  boxFrame(id, place, state, t) {
+    return div().id(id).absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(LINK_BOX.pad).flex()
       .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().key_context(NOTE)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_down("right", (_e, cx) => cx.stop_propagation())
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_move((_e, cx) => cx.stop_propagation())
-      .on_mouse_down_out((_e, cx) => { this.closeLinkBox(cx); this.elementPressOut(); })
-      .child(Input.new(this.linkField).flex_1().h_full().text_size(13).text_color(t.foreground));
+      .child(Input.new(state).flex_1().h_full().text_size(13).text_color(t.foreground));
+  }
+
+  // The picture picked while its paragraph still holds it: { key, index, copied, box, b, item }, `item` as picturesOf
+  // reads it with what Images answered; null for none.
+  pickedNow() {
+    const p = this.picked;
+    if (!p || this.mode !== "reading" || !this.doc) return null;
+    const b = this.blockByKey(p.key), item = b?.image ? this.pictures.get(p.key)?.items[p.index] : null;
+    return item ? { ...p, b, item } : null;
+  }
+
+  // Picture `index` of the paragraph of pictures `key` is picked, with its ring and its float, and the page holds the
+  // keyboard. The one picked already keeps its float as it is.
+  pick(key, index, cx) {
+    const was = this.picked;
+    if (!this.blockByKey(key)?.image || !this.pictures.get(key)?.items[index]) return;
+    if (was?.key !== key || was.index !== index) this.picked = { key, index, copied: false, box: null };
+    this.handle.focus();
+    this.redraw([...new Set([was?.key, key])], cx);
+    cx.notify();
+  }
+
+  unpick(cx) {
+    const was = this.picked;
+    if (!was) return;
+    this.picked = null;
+    if (was.box) this.handle.focus();
+    this.redraw([was.key], cx);
+    cx?.notify();
+  }
+
+  // Picks the picture of paragraph of pictures b whose markdown holds or follows document offset `at`, else its last.
+  pickNear(b, at, cx) {
+    const all = picturesIn(this.doc, b), i = all.findIndex(p => at < p.end);
+    this.pick(b.key, i < 0 ? all.length - 1 : i, cx);
+  }
+
+  // -> whether a paragraph of pictures holds document offset `at`, its picture there now picked.
+  pickAt(at, cx) {
+    const b = this.holding(at);
+    if (!b?.image) return false;
+    this.pickNear(b, at, cx);
+    return true;
+  }
+
+  // The picked picture's markdown: { start, end } in the document, and `at`, its start in its paragraph's field.
+  pickedSource(p) {
+    const s = picturesIn(this.doc, p.b)[p.index];
+    return s ? { ...s, at: docToField(fieldOf(this.doc, p.b), s.start) } : null;
+  }
+
+  // The field offset where the picture of paragraph of pictures b at y (from the block's top) begins: the first whose
+  // row reaches below y, else the last.
+  pictureStartAt(b, d, y) {
+    const boxes = this.pictureOf(b.key, d.pictureW).boxes, all = picturesIn(this.doc, b);
+    const i = boxes.findIndex(box => d.space + box.y + box.h > y), p = all[i < 0 ? all.length - 1 : i];
+    return p ? docToField(fieldOf(this.doc, b), p.start) : 0;
+  }
+
+  // The picked picture's box in pane coordinates, or null while its block has no place on the page.
+  pickedBox(p) {
+    const i = this.at.get(p.key), d = this.data.get(p.key), box = d && this.pictureOf(p.key, d.pictureW).boxes[p.index];
+    if (i === undefined || !box || this.sums.length !== this.blocks.length + 1) return null;
+    const x = columnLeft(this.paneW(), this.margin) + d.depth * INDENT + box.x;
+    return { x, y: COLUMN.padTop + this.sums[i] + d.space + box.y - this.offset, w: box.w, h: box.h };
+  }
+
+  // A float of `size` over the picked picture's top edge from its left edge, else under its bottom edge, as low as the
+  // pane keeps it; null while the picture is off the pane. Worked out at each draw, so it follows the page.
+  placePicture(p, size) {
+    const box = this.pickedBox(p);
+    return box && popoverPlace({ firstTop: box.y, lastTop: box.y, rowH: box.h, size, x: box.x, viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H });
+  }
+
+  // The page scrolls the least that shows the picked picture's top, as much of it as half the pane.
+  revealPicked(cx) {
+    const p = this.pickedNow(), box = p && this.pickedBox(p);
+    if (!box || !this.viewport) return;
+    const next = keepInView({ offset: this.offset, viewportH: this.viewH(), y: box.y + this.offset, rowPx: Math.min(box.h, this.viewH() / 2), contentH: this.contentH() });
+    if (next !== this.offset) this.scrollTo(next, cx);
+  }
+
+  // A key while a picture is picked, which the page hears. -> whether it was the picture's; Cmd+Z, Page Up / Down,
+  // space, Home and End undo and scroll as they would.
+  pictureKey(k, cx) {
+    const p = this.pickedNow();
+    if (!p || p.box) return false;
+    if (k === "escape") this.unpick(cx);
+    else if (k === "backspace" || k === "delete") this.deletePicture(p, cx);
+    else if (k === "enter") this.paragraphBelow(p.b, this.pickedSource(p).at, cx);
+    else if (k === "left" || k === "right") this.stepPicture(p, k === "left" ? -1 : 1, cx);
+    else if (k === "up" || k === "down") this.leavePictures(p, k === "up" ? -1 : 1, cx);
+    else return false;
+    cx.stop_propagation();
+    return true;
+  }
+
+  stepPicture(p, dir, cx) {
+    const next = p.index + dir;
+    if (next < 0 || next >= this.pictures.get(p.key).items.length) return this.leavePictures(p, dir, cx);
+    this.pick(p.key, next, cx);
+    this.revealPicked(cx);
+  }
+
+  // The block before (dir < 0) or after the picked picture's paragraph opens as crossing opens it, rules skipped: at its
+  // end or its start, or its last or first picture picked.
+  leavePictures(p, dir, cx) {
+    const target = this.blocks[this.crossedTo(this.at.get(p.key), dir)];
+    if (!target) return;
+    if (!target.image) return this.activate(target.key, this.entry(target, this.openedValue(target), dir, null), cx);
+    this.pickNear(target, dir > 0 ? -Infinity : Infinity, cx);
+    this.revealPicked(cx);
+  }
+
+  // A new empty paragraph below paragraph of pictures b, being edited; Cmd+Z there goes back to the picture at field
+  // offset `at`.
+  paragraphBelow(b, at, cx) {
+    this.openPendingWith({ base: afterKey(b.key, "paragraph"), origin: { key: b.key, caret: { start: at, end: at } } }, cx);
+  }
+
+  // Enter at the end of text that the commit made a paragraph of pictures, which then stopped being edited.
+  paragraphAfterPictures(at, cx) {
+    const b = at === null ? null : this.holding(at);
+    if (b?.image) this.paragraphBelow(b, fieldOf(this.doc, b).value.length, cx);
+  }
+
+  // A change of a paragraph of pictures as one entry of the history, whose undo and redo pick the picture at document
+  // offset `before` and `after`; the one at `after` is picked now, and with none the page keeps the keyboard.
+  pictureChange(s, before, after, cx) {
+    if (this.activeKey) this.release();
+    this.picked = null;
+    this.change(s, cx, { caretBefore: before, caretAfter: after ?? s.start });
+    if (after === null || !this.pickAt(after, cx)) this.handle.focus();
+  }
+
+  // The picked picture goes as removePicture takes it; the one before it is picked, else the one after it.
+  deletePicture(p, cx) {
+    if (!this.editable()) return;
+    const all = picturesIn(this.doc, p.b), s = removePicture(this.doc, p.b, p.index);
+    if (!s) return;
+    const kept = all[p.index - 1] ?? all[p.index + 1] ?? null, shift = s.insert.length - (s.end - s.start);
+    this.pictureChange(s, all[p.index].start, kept && (kept.start >= s.end ? kept.start + shift : kept.start), cx);
+  }
+
+  // A file's full path, which pastes into Finder or a terminal; any other address as written.
+  copyPicture(p, cx) {
+    const source = pictureSource(p.item.src, this.file);
+    cx.write_to_clipboard(source.kind === "file" ? source.path : p.item.src);
+    this.picked = { ...this.picked, copied: true };
+    cx.notify();
+  }
+
+  // A web picture in the browser, a file in the app the computer opens it with; a file on another machine can't be.
+  openPicture(p, cx) {
+    if (/^https?:/i.test(p.item.src)) return cx.open_url(p.item.src);
+    const source = pictureSource(p.item.src, this.file);
+    if (source.kind !== "file") return notify({ title: NO_PICTURE_FILE, level: "info" });
+    const failed = `Can't open ${basename(source.path)}`;
+    if (this.remote) return notify({ title: failed, level: "info" });
+    this.openWithSystem(source.path, failed, cx);
+  }
+
+  // The dialog for one picture, opened where the picture's file is, else where Image opens it; what it answers replaces
+  // the picture's address (replacePicture). Without osascript the address box opens instead.
+  changePicture(p, cx) {
+    if (this.picking) return;
+    const { key, index } = p, src = p.item.src, source = pictureSource(src, this.file);
+    this.picking = true;
+    cx.spawn(async cx => {
+      const { paths, problem } = await this.dialogAnswer(source.kind === "file" ? dirname(source.path) : imageStart(), { one: true }, cx);
+      if (this.closed) return;
+      if (problem instanceof DialogUnavailable) return this.addressBoxFor(key, index, src, cx);
+      if (problem) return notify({ title: "Can't choose a picture", body: why(problem), level: "error" });
+      if (!paths?.length || !this.placeable()) return;
+      const [chosen] = await placePictures(paths.slice(0, 1), this.file);
+      if (chosen && this.mode === "reading" && this.placeable()) this.replacePicture(key, index, src, chosen, cx);
+    });
+  }
+
+  addressBoxFor(key, index, src, cx) {
+    const p = this.pickedNow();
+    if (p?.key === key && p.index === index && p.item.src === src) this.showPictureBox("address", cx);
+  }
+
+  // Picture `index` of paragraph `key`, still at address `src`, takes the address of `chosen` (placePictures' { alt,
+  // address }), its title and link kept; an alt text that named the old file names the new one.
+  replacePicture(key, index, src, chosen, cx) {
+    this.commit(cx);
+    const b = this.blockByKey(key), at = b?.image ? picturesIn(this.doc, b)[index] : null;
+    const source = at ? this.doc.text.slice(at.start, at.end) : "", was = picturesOf(source)[0];
+    if (was?.src !== src) return notify({ title: PICTURE_CHANGED, level: "info" });
+    const old = pictureSource(src, this.file), named = altNames(was.alt, old.kind === "file" ? old.path : src);
+    const next = pictureWithAddress(named ? pictureWithAlt(source, chosen.alt) : source, chosen.address);
+    this.pictureChange({ start: at.start, end: at.end, insert: next }, at.start, at.start, cx);
+  }
+
+  pictureField(box = this.picked?.box) {
+    return box === "alt" ? this.altField : this.addressField;
+  }
+
+  // The float gives its place to the box of the picked picture's alt text or address (`box`), which holds it all
+  // selected and takes the keyboard.
+  showPictureBox(box, cx) {
+    const p = this.pickedNow();
+    if (!p || !this.editable()) return;
+    const field = this.pictureField(box), text = box === "alt" ? p.item.alt : p.item.src;
+    this.picked = { ...this.picked, box };
+    this.guard(() => {
+      field.set_value(text);
+      field.set_selected_range({ start: 0, end: text.length });
+    });
+    field.focus();
+    cx.notify();
+  }
+
+  pictureBoxOpen() {
+    return Boolean(this.pickedNow()?.box) && this.editable();
+  }
+
+  // Enter in the box: the alt text exactly as typed, or the address typed, trimmed (an empty one writes nothing), as one
+  // entry of the history. What is unchanged writes nothing. The float comes back.
+  applyPictureBox(cx) {
+    const p = this.pickedNow(), s = p?.box && this.editable() ? this.pickedSource(p) : null;
+    if (!s) return this.cancelPictureBox(cx);
+    const typed = this.pictureField(p.box).value(), source = this.doc.text.slice(s.start, s.end), address = typed.trim();
+    const next = p.box === "alt" ? (typed === p.item.alt ? source : pictureWithAlt(source, typed))
+      : !address || address === p.item.src ? source : pictureWithAddress(source, writtenAddress(address));
+    if (next === source) return this.cancelPictureBox(cx);
+    this.pictureChange({ start: s.start, end: s.end, insert: next }, s.start, s.start, cx);
+  }
+
+  // Escape in the box: nothing is written, and the float comes back.
+  cancelPictureBox(cx) {
+    if (this.picked?.box) this.picked = { ...this.picked, box: null };
+    this.handle.focus();
+    cx.notify();
+  }
+
+  // Edits only on a file that can be edited (and in the check fixture, which draws them all), Open link only on a
+  // linked picture.
+  pictureButtons(p) {
+    const edits = !this.file || this.editable();
+    return PICTURE_BUTTONS.filter(b => (edits || !b.edits) && (Boolean(p.item.href) || !b.linked));
+  }
+
+  pictureAction(name, cx) {
+    const p = this.pickedNow();
+    if (!p) return;
+    if (name === "copy") return this.copyPicture(p, cx);
+    if (name === "open") return this.openPicture(p, cx);
+    if (name === "link") return this.link(p.item.href, cx);
+    if (!this.editable()) return;
+    if (name === "change") this.changePicture(p, cx);
+    else if (name === "alt") this.showPictureBox("alt", cx);
+    else if (name === "delete") this.deletePicture(p, cx);
+  }
+
+  // Drawn by the root after the bar: the picked picture's address and buttons, or its box; a press outside the box
+  // closes it and the float, writing nothing.
+  pictureFloat(t) {
+    const p = this.pickedNow();
+    if (!p) return null;
+    if (p.box) {
+      const place = this.editable() && this.placePicture(p, LINK_BOX);
+      return place ? this.boxFrame("md-picture-box", place, this.pictureField(p.box), t).on_mouse_down_out((_e, cx) => this.unpick(cx)) : null;
+    }
+    const buttons = this.pictureButtons(p), shown = clipMiddle(p.item.src, LINK_POP.addressChars) || NO_ADDRESS;
+    const place = this.placePicture(p, popoverSize([...shown].length, buttons.length, 1 + buttons.filter(b => b.apart).length));
+    if (!place) return null;
+    const button = b => this.popoverButton(`md-picture-${b.name}`, p.copied && b.done ? b.done : b, cx => this.pictureAction(b.name, cx), t);
+    return this.popoverFrame("md-picture", place, t)
+      .on_mouse_down("right", (_e, cx) => cx.stop_propagation())
+      .child(this.popoverAddress("md-picture-address", p.item.src, t))
+      .child(this.popoverRule(t))
+      .children(buttons.flatMap(b => (b.apart ? [this.popoverRule(t), button(b)] : [button(b)])));
   }
 
   openCard(key, cx) {
@@ -4911,6 +5292,7 @@ export class Editor {
       .on_scroll_wheel((e, cx) => this.wheel(e, cx))
       .on_mouse_down("left", (e, cx) => this.viewportDown(e, cx))
       .on_mouse_up("left", (e, cx) => this.viewportUp(e, cx))
+      .on_mouse_down("right", (e, cx) => this.viewportRightDown(e, cx))
       .on_mouse_move((e, cx) => this.viewportMove(e, cx))
       .on_hover((hovered, cx) => this.viewportHover(hovered, cx))
       .on_drop((e, cx) => this.dropped(e, cx));
@@ -4942,6 +5324,8 @@ export class Editor {
     if (bar?.menu) vp.child(this.barMenuOf(bar, t));
     const float = this.elementFloat(t);
     if (float) vp.child(float);
+    const picture = this.pictureFloat(t);
+    if (picture) vp.child(picture);
     if (this.calibrating) {
       vp.child(this.calStrip(t));
       this.giveUpLater(cx);

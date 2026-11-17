@@ -5,7 +5,7 @@ import {
   estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
-  barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, PICTURE, pictureLayout,
+  barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
@@ -499,6 +499,14 @@ test("a link's popover is as tall as the bar and as wide as its address, a rule 
   assert.equal(linkPopoverSize(30).w - linkPopoverSize(20).w, Math.ceil(10 * LINK_POP.charW), "ten characters more");
   assert.equal(linkPopoverSize(0).w, linkPopoverSize(1).w, "an empty address keeps a short one's width");
   assert.ok(LINK_BOX.w > linkPopoverSize(LINK_POP.addressChars).w / 2 && LINK_BOX.h > 0);
+});
+
+test("a popover in the link popover's look is as wide as its address, its buttons and its rules; the link's is one with four buttons and a rule", () => {
+  const edge = BAR.pad + 1;
+  assert.deepEqual(popoverSize(20, 6, 2), { w: Math.ceil(20 * LINK_POP.charW + 2 * LINK_POP.addressPad + 2 * BAR.sep + 6 * BAR.button + 2 * edge), h: BAR.button + 2 * edge });
+  assert.equal(popoverSize(20, 3, 1).w, popoverSize(20, 6, 2).w - 3 * BAR.button - BAR.sep);
+  assert.deepEqual(popoverSize(20, LINK_POP.buttons, 1), linkPopoverSize(20));
+  assert.equal(popoverSize(0, 3, 1).w, popoverSize(1, 3, 1).w);
 });
 
 test("a bar menu's height counts its rows, its section titles, its padding and its border", () => {

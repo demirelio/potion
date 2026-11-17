@@ -10,9 +10,10 @@ import {
   filterFiles, newFileName, uniqueName, fileKey, stats, modeOf, toggleMode, remember, trimMap,
   markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, isLight, mix, mermaidConfig, diagramKey, DIAGRAM_COLORS, sharpName,
   toSource, sourceToDoc, docToSource, sourceSplice, eolOf, picturesOf, pictureSource, touches,
-  isPictureName, copyName, pictureLink, pictureMarkdown,
+  isPictureName, copyName, pictureLink, pictureMarkdown, escapeAlt, writtenAddress, pictureWithAlt, pictureWithAddress,
 } from "../mods/herdr-inline-markdown/lib.js";
 import { diff, parse } from "../mods/herdr-inline-markdown/blocks.js";
+import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
 import { corpus } from "./markdown-corpus.mjs";
 
 const sh = promisify(execFile);
@@ -599,4 +600,51 @@ test("what pictureLink and pictureMarkdown write is read back as the same pictur
     assert.equal(picture.alt, alt, name);
     assert.deepEqual(pictureSource(picture.src, NOTE), { kind: "file", path }, name);
   }
+});
+
+const altRead = markdown => [picturesOf(markdown)[0]?.alt, parseInline(markdown).spans.find(sp => sp.kind === "image")?.alt];
+
+test("escapeAlt: what it writes reads back as typed in picturesOf and in parseInline, marks, backticks, tags and entities too", () => {
+  for (const alt of ["plain", "", "[b]", "c\\d", "*e*", "f_g_", "a `tick`", "~~s~~", "<b>x</b>", "&amp; & &#38;", "my_shot [1]", "a\\*b", "!x"]) {
+    const markdown = `![${escapeAlt(alt)}](x.png)`;
+    assert.ok(parse(`${markdown}\n`).blocks[0].image, markdown);
+    assert.deepEqual(altRead(markdown), [alt, alt], markdown);
+  }
+  assert.equal(escapeAlt("plain words & more"), "plain words & more", "nothing that reads as itself is escaped");
+});
+
+test("picturesOf: every backslash escape of ASCII punctuation in the alt is undone, as CommonMark reads it; one before a letter stays", () => {
+  assert.equal(picturesOf("![a\\*b\\_c\\`d\\~e\\<f\\&g\\!h\\#](x.png)")[0].alt, "a*b_c`d~e<f&g!h#");
+  assert.equal(picturesOf("![a\\qb](x.png)")[0].alt, "a\\qb");
+});
+
+test("writtenAddress: trimmed, ( and ) as %28 and %29, in <…> when it holds a space; picturesOf and pictureSource read it back", () => {
+  assert.equal(writtenAddress("  my pic.png "), "<my pic.png>");
+  assert.equal(writtenAddress("a(1).png"), "a%281%29.png");
+  assert.equal(writtenAddress("https://e.com/a b(2).png"), "<https://e.com/a b%282%29.png>");
+  assert.equal(writtenAddress("images/a.png"), "images/a.png");
+  for (const typed of ["my pic.png", "a(1).png", "sub/a (2) b.png"]) {
+    const [picture] = picturesOf(`![x](${writtenAddress(typed)})`);
+    assert.deepEqual(pictureSource(picture.src, NOTE), { kind: "file", path: `/n/docs/${typed}` }, typed);
+  }
+});
+
+test("writtenAddress: a path's ?, # and a lone % are escaped so pictureSource finds the file typed; an escape it holds and a web address stay as typed", () => {
+  for (const typed of ["shot #2.png", "what?.png", "100%.png", "50%off (1).png", "#top.png", "a<b>.png"]) {
+    const [picture] = picturesOf(`![x](${writtenAddress(typed)})`);
+    assert.deepEqual(pictureSource(picture.src, NOTE), { kind: "file", path: `/n/docs/${typed}` }, typed);
+  }
+  assert.equal(writtenAddress("shot #2.png"), "<shot %232.png>");
+  assert.equal(writtenAddress("a%281%29.png"), "a%281%29.png", "an address as the box shows it");
+  assert.equal(writtenAddress("https://e.com/a.png?w=2#top"), "https://e.com/a.png?w=2#top");
+});
+
+test("pictureWithAlt and pictureWithAddress: only the alt or the address changes; the title, the <…> form and the link stay", () => {
+  assert.equal(pictureWithAlt("![a](x.png)", "b *c*"), "![b \\*c\\*](x.png)");
+  assert.equal(pictureWithAlt('[![a \\[1\\]](x.png "t")](https://e.com)', ""), '[![](x.png "t")](https://e.com)');
+  assert.equal(pictureWithAddress("![a](x.png)", "images/y.png"), "![a](images/y.png)");
+  assert.equal(pictureWithAddress('![a](<my x.png> "A title")', "y.png"), '![a](y.png "A title")');
+  assert.equal(pictureWithAddress('[![a](  x.png  "t")](https://e.com)', "<b c.png>"), '[![a](  <b c.png>  "t")](https://e.com)');
+  assert.equal(pictureWithAddress("![]()", "a.png"), "![](a.png)");
+  assert.equal(pictureWithAddress("![a](x.png)", ""), "![a]()");
 });

@@ -4,7 +4,7 @@ import {
   parse, reparse, field, fieldToDoc, docToField, type, separators, applySplice, diff, counters, isText, split, insertAfter,
   insertBefore, insertAt, mergeIntoPrevious, mergeNext, remove, removeRange, toParagraph, indent, outdent, nest, unnest,
   move, toggleTask, paste, closeFence, fenceGuard, shortcut, codeIndent, FENCE, CLOSE, closes, parseInSteps,
-  retype, insertLines,
+  retype, insertLines, picturesIn, removePicture,
 } from "../mods/herdr-inline-markdown/blocks.js";
 import { visibleMap } from "../mods/herdr-inline-markdown/inline.js";
 import { originals, corpus, docs, htmlKinds, docKinds, random, bigDocument, VARIANTS } from "./markdown-corpus.mjs";
@@ -145,6 +145,44 @@ test("a badge row of images and linked images, on one line or several, is an ima
 test("text around an image, an unfinished link and a destination holding ) keep the paragraph text", () => {
   for (const text of ["see ![a](x)\n", "![a](x) caption\n", "[![a](x)](y) tail\n", "[text](y)\n", "[![a](x)]\n", "[![a](x)](y\n", "![a](x(1).png)\n", "[![a](x)](y(1))\n"]) {
     assert.deepEqual(imageFlags(text).filter(Boolean), [], JSON.stringify(text));
+  }
+});
+
+const sourcesIn = (d, b) => picturesIn(d, b).map(r => d.text.slice(r.start, r.end));
+
+test("picturesIn: each picture's markdown in a paragraph of pictures as document offsets, a linked one with its link, also in a list item", () => {
+  const d = parse("# T\n\n![a](a.png) [![b](b.png)](https://e.com)\n ![c](c.png)\n");
+  assert.deepEqual(sourcesIn(d, d.blocks[1]), ["![a](a.png)", "[![b](b.png)](https://e.com)", "![c](c.png)"]);
+  const nested = parse("- item\n\n  ![a](a.png)\n  ![b](b.png)\n");
+  assert.deepEqual([nested.blocks[1].image, sourcesIn(nested, nested.blocks[1])], [true, ["![a](a.png)", "![b](b.png)"]]);
+  const crlf = parse("![a](a.png)\r\n![b](b.png)\r\n");
+  assert.deepEqual(sourcesIn(crlf, crlf.blocks[0]), ["![a](a.png)", "![b](b.png)"]);
+});
+
+const withoutPicture = (text, i, n = 0) => {
+  const d = parse(text), b = d.blocks.filter(x => x.image)[n];
+  return run(text, removePicture(d, b, i));
+};
+
+test("removePicture: one of several on a line goes with the spaces after it, or before it when it is the line's last", () => {
+  const row = "![a](a.png) ![b](b.png)\t![c](c.png)\n";
+  assert.deepEqual([0, 1, 2].map(i => withoutPicture(row, i)), ["![b](b.png)\t![c](c.png)\n", "![a](a.png) ![c](c.png)\n", "![a](a.png) ![b](b.png)\n"]);
+  assert.equal(withoutPicture("[![a](a.png)](https://e.com) ![b](b.png)\n", 0), "![b](b.png)\n", "a linked picture goes with its link");
+});
+
+test("removePicture: a picture alone on its line goes with its line, line break and indent included", () => {
+  const stack = "![a](a.png)\n![b](b.png)\n![c](c.png)\n\nEnd\n";
+  assert.deepEqual([0, 1, 2].map(i => withoutPicture(stack, i)), ["![b](b.png)\n![c](c.png)\n\nEnd\n", "![a](a.png)\n![c](c.png)\n\nEnd\n", "![a](a.png)\n![b](b.png)\n\nEnd\n"]);
+  const item = "- item\n\n  ![a](a.png)\n  ![b](b.png)\n";
+  assert.deepEqual([0, 1].map(i => withoutPicture(item, i)), ["- item\n\n  ![b](b.png)\n", "- item\n\n  ![a](a.png)\n"]);
+  assert.equal(withoutPicture("- item\n\n  ![a](a.png)\n![b](b.png)\n", 0), "- item\n\n  ![b](b.png)\n", "a lazy line stays in the item");
+  assert.equal(withoutPicture("![a](a.png) ![b](b.png)\n![c](c.png)\n", 2), "![a](a.png) ![b](b.png)\n");
+});
+
+test("removePicture: the only picture takes its paragraph as remove does", () => {
+  for (const text of ["# T\n\n![a](a.png)\n\nEnd\n", "# T\n\n![a](a.png)\n", "- item\n\n  [![a](a.png)](x)\n- next\n"]) {
+    const d = parse(text), b = d.blocks.find(x => x.image);
+    assert.equal(withoutPicture(text, 0), run(text, remove(d, b)), JSON.stringify(text));
   }
 });
 

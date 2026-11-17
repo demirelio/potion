@@ -161,7 +161,7 @@ function rendered(owner, d, t) {
     const frame = view && { key: d.key, w: d.frameW, h: d.frameH, ml: d.frameMl, natW: d.natW, natH: d.natH, image: d.imgKey, dim: d.imgDim, selected: d.selected, view };
     return diagramBlock({ id: `md-diagram-${d.key}`, source: d.text, d: owner.shown.get(d.key) ?? { state: "pending" }, frame, t, mono });
   }
-  if (d.look === "picture") return pictureBlock({ id: `md-pictures-${d.key}`, ...owner.pictureOf(d.key, d.pictureW), selected: d.selected, t });
+  if (d.look === "picture") return pictureBlock({ id: `md-pictures-${d.key}`, ...owner.pictureOf(d.key, d.pictureW), selected: d.selected, picked: d.picked, t });
   return div().w_full().h(RULE_H).flex().items_center().child(div().w_full().h(1).bg(t.border));
 }
 

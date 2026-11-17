@@ -4,7 +4,7 @@ import { state, calls, reset } from "./mocks/herdr.mjs";
 import { files, failing, log } from "./mocks/fs.mjs";
 import { png } from "./pictures.mjs";
 
-const { DialogUnavailable, IMAGE_FOLDER_KEY, PictureDialog, imageStart, placePictures } = await import("../mods/herdr-inline-markdown/pick.js");
+const { DialogUnavailable, IMAGE_FOLDER_KEY, PictureDialog, altNames, altOf, imageStart, placePictures } = await import("../mods/herdr-inline-markdown/pick.js");
 
 beforeEach(() => reset());
 
@@ -96,6 +96,27 @@ test("the dialog starts detached: sh -c with the script, a base name in the pict
   assert.ok(SCRIPT.indexOf("activate") < SCRIPT.findIndex(line => line.includes("choose file")), "it comes to the front before the dialog is shown");
   assert.deepEqual(log.mkdir.at(-1), [IMAGES, { recursive: true }], "the folder the answer is written in is there");
   assert.deepEqual(calls.exec.map(c => c.command), ["sh"], "an answer that is there at the first look needs no look at the process");
+});
+
+test("a dialog for one picture asks 'Change the picture', allows no multiple selection and answers the one path it chose", async () => {
+  const run = detached();
+  const one = SCRIPT.slice(0, 8).concat([
+    'set picked to choose file with prompt "Change the picture" of type {"public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp", "com.microsoft.bmp", "public.svg-image"} default location startAt',
+    "return POSIX path of picked",
+    "end run",
+  ]);
+  const paths = await new PictureDialog(async () => finish(run.base, { stdout: "/Users/me/pics/b c.png\n" }), { one: true }).pick("/Users/me/pics");
+  assert.deepEqual(paths, ["/Users/me/pics/b c.png"]);
+  assert.deepEqual(calls.exec[0].args.slice(4), [...one.flatMap(line => ["-e", line]), "/Users/me/pics"]);
+});
+
+test("altNames: whether an alt text is the name Image gave a file, as written or with the copy's dashes for its spaces", () => {
+  assert.equal(altOf("/Users/me/Desktop/shot 1.png"), "shot 1");
+  for (const [alt, path, names] of [
+    ["shot 1", "/n/docs/images/shot-1.png", true], ["shot-1", "/n/docs/images/shot-1.png", true], ["a", "/n/docs/a.png", true],
+    ["a b", "/n/docs/a b.png", true], ["", "", true], ["", "/n/docs/a.png", false], ["My chart", "/n/docs/a.png", false],
+    ["w", "https://e.com/w.png", true],
+  ]) assert.equal(altNames(alt, path), names, `${alt} / ${path}`);
 });
 
 test("each dialog has a base name of its own", async () => {

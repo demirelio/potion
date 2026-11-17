@@ -613,6 +613,21 @@ test("pictureBlock: a web address with no alt text is named by the last part of 
   assert.equal(textOf(find(el, "pic-1-0")), "a-b.svg?style=flat: Timed out");
 });
 
+test("pictureBlock: the picked picture has a 2 px accent ring a few px outside its box, over it; a loading or failed one too", () => {
+  const items = [READY, PENDING_ITEM, ERROR_ITEM], boxes = [{ x: 0, y: 0, w: 100, h: 50 }, { x: 108, y: 0, w: 300, h: 40 }, { x: 0, y: 58, w: 300, h: 40 }];
+  assert.deepEqual(all(block(items, boxes), n => n.id?.endsWith("-picked")), [], "none picked");
+  for (const i of [0, 1, 2]) {
+    const el = block(items, boxes, { picked: i }), rings = all(el, n => n.id?.endsWith("-picked")), [ring] = rings, b = boxes[i];
+    assert.deepEqual(rings.map(n => n.id), [`pic-1-${i}-picked`]);
+    const out = b.x - ring.style.left;
+    assert.ok(out >= 3 && out <= 6, `${out} px outside`);
+    assert.deepEqual([ring.style.absolute, ring.style.top, ring.style.w, ring.style.h, ring.style.border, ring.style.border_color],
+      [true, b.y - out, b.w + 2 * out, b.h + 2 * out, 2, "accent"]);
+    const order = all(el, n => n.id !== null).map(n => n.id);
+    assert.ok(order.indexOf(`pic-1-${i}-picked`) > order.indexOf(`pic-1-${i}`), "drawn over the picture");
+  }
+});
+
 test("pictureBlock: ready, waiting and failed pictures mix, each in its own box", () => {
   const boxes = [{ x: 0, y: 0, w: 100, h: 50 }, { x: 0, y: 58, w: 300, h: 40 }, { x: 0, y: 106, w: 300, h: 40 }];
   const el = block([READY, PENDING_ITEM, ERROR_ITEM], boxes, { height: 146 });

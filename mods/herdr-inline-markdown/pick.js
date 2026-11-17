@@ -11,7 +11,7 @@ const TYPES = ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproje
 const CANCELLED = /-128\b|User canceled/i;
 
 // The folder arrives as argv: a path is never part of the script. An unknown folder opens the dialog at home.
-const SCRIPT = [
+const START = [
   "on run argv",
   "set fallback to path to home folder",
   "try",
@@ -20,7 +20,11 @@ const SCRIPT = [
   "set startAt to fallback",
   "end try",
   "activate",
-  `set picked to choose file with prompt "Insert an image" of type {${TYPES.map(t => `"${t}"`).join(", ")}} default location startAt with multiple selections allowed`,
+];
+const choose = prompt => `set picked to choose file with prompt "${prompt}" of type {${TYPES.map(t => `"${t}"`).join(", ")}} default location startAt`;
+const SCRIPT = [
+  ...START,
+  `${choose("Insert an image")} with multiple selections allowed`,
   "set paths to {}",
   "repeat with item_ in picked",
   "set end of paths to POSIX path of item_",
@@ -29,6 +33,7 @@ const SCRIPT = [
   "return paths as text",
   "end run",
 ];
+const ONE_SCRIPT = [...START, choose("Change the picture"), "return POSIX path of picked", "end run"];
 
 const why = e => String(e?.message ?? e);
 
@@ -81,10 +86,12 @@ async function answerOf(base) {
   throw new Error(stderr.trim() || `osascript exited with ${status}`);
 }
 
-// One dialog. `wait(ms)` resolves after ms milliseconds; it is what a test replaces to have minutes pass at once.
+// One dialog, for pictures to insert or, with `one`, for the one that replaces a picture. `wait(ms)` resolves after ms
+// milliseconds; it is what a test replaces to have minutes pass at once.
 export class PictureDialog {
-  constructor(wait) {
+  constructor(wait, { one = false } = {}) {
     this.wait = wait;
+    this.script = one ? ONE_SCRIPT : SCRIPT;
     this.pid = null;
     this.stopped = false;
     this.stopping = new Promise(done => { this.stopNow = done; });
@@ -108,7 +115,7 @@ export class PictureDialog {
   async start(base, startFolder) {
     let ran;
     try {
-      ran = await exec("sh", ["-c", DETACH, "sh", base, ...SCRIPT.flatMap(line => ["-e", line]), startFolder]);
+      ran = await exec("sh", ["-c", DETACH, "sh", base, ...this.script.flatMap(line => ["-e", line]), startFolder]);
     } catch (e) {
       throw new DialogUnavailable(why(e));
     }
@@ -143,10 +150,14 @@ export class PictureDialog {
   }
 }
 
-const altOf = path => {
+export const altOf = path => {
   const name = basename(path), dot = name.lastIndexOf(".");
   return (dot > 0 ? name.slice(0, dot) : name).replace(/\s+/g, " ").trim();
 };
+
+// Whether `alt` is the alt text Image wrote for the file at `path`: its name, or the name it was copied from, whose
+// spaces the copy's name has as dashes.
+export const altNames = (alt, path) => copyName(alt) === copyName(altOf(path));
 
 const failed = (ran, command) => new Error(String(ran.stderr).trim() || `${command} exited with ${ran.code}`);
 

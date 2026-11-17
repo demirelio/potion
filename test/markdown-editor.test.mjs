@@ -9,7 +9,8 @@ import { png } from "./pictures.mjs";
 
 const { Editor } = await import("../mods/herdr-inline-markdown/editor.js");
 const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
-const { stats, fileKey, diagramKey, mermaidConfig, sharpName } = await import("../mods/herdr-inline-markdown/lib.js");
+const { stats, fileKey, diagramKey, mermaidConfig, sharpName, picturesOf } = await import("../mods/herdr-inline-markdown/lib.js");
+const { parseInline } = await import("../mods/herdr-inline-markdown/inline.js");
 const { owners, STYLES, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { theme } = await import("./mocks/herdr.mjs");
 const { echoTokenSets, liveFields, TextareaState } = await import("./mocks/gpui-base.mjs");
@@ -2431,38 +2432,72 @@ test("pictures: a pending box, then the picture from the cache folder at the siz
   audit(t);
 });
 
-test("pictures: a single click changes nothing, a double-click shows the source with the caret at its end, leaving draws the picture again", async () => {
-  const m = await pictured(), key = keyAt(m, 1);
-  assert.deepEqual([m.view.hit(onPicture(m)).on, m.view.hit(onPicture(m)).item, m.view.hit(onPicture(m, 300)).item], ["picture", 0, -1]);
-  await clickAt(m, onPicture(m));
-  assert.equal(m.view.activeKey, null);
-  await doubleClickAt(m, onPicture(m));
-  assert.equal(m.view.activeKey, key);
-  assert.equal(m.view.field.value(), "![x](a.png)");
-  assert.deepEqual(m.view.field.selection, { start: 11, end: 11 });
-  assert.equal(find(m.tree(), picsOf(m)), null, "the source is shown in its place");
-  escape(m);
-  assert.equal(imageOf(m.tree(), picsOf(m)).path, cached(SHOT));
+test("pictures: a click on the second of three picks it: the ring on it alone, its float over its top edge, no block edited, no source drawn; a double-click and a right-click pick too", async () => {
+  const m = await picturedAll(ROW), key = keyAt(m, 1);
+  assert.deepEqual([m.view.hit(onNth(m, 1)).on, m.view.hit(onNth(m, 1)).item, m.view.hit(onPicture(m, 300)).item], ["picture", 1, -1]);
+  m.view.handle.focused = false;
+  await clickAt(m, onNth(m, 1));
+  const t = m.tree(), box = pictureBox(m, 1), float = must(t, "md-picture");
+  assert.deepEqual([pickedNow(m), m.view.activeKey, m.view.handle.focused], [[key, 1], null, true], "the page holds the keyboard");
+  assert.deepEqual(ringsOf(m, t), [`md-pictures-${key}-1-picked`]);
+  assert.deepEqual([float.style.left, float.style.top + float.style.h + BAR.gap], [X + box.x, topOf(m, 1) + m.view.data.get(key).space + box.y], "over its top edge, from its left edge");
+  assert.equal(textOf(must(t, "md-picture-address")).trim(), "b.png");
+  assert.equal(all(blockAt(m, 1, t), n => n.kind === "textarea").length, 0, "the paragraph is never a field");
+  assert.ok(!/!\[|\]\(/.test(textOf(t)) && !all(t, n => n.kind === "textarea").some(n => /!\[|\]\(/.test(n.state.value())), "no source drawn");
+  audit(t);
+  await doubleClickAt(m, onNth(m, 2));
+  assert.deepEqual([pickedNow(m), m.view.activeKey], [[key, 2], null], "a double-click is a click");
+  rightClickAt(m, onNth(m, 0));
+  assert.deepEqual([pickedNow(m), Boolean(floatOf(m))], [[key, 0], true]);
+  rightClickAt(m, { x: X + 10, y: topOf(m, 2) + 10 });
+  assert.deepEqual([m.view.picked, floatOf(m), ringsOf(m)], [null, null, []], "a right-click elsewhere lets it go");
 });
 
-test("pictures: a click on a picture opens nothing while another block is being edited, and the keyboard stays there", async () => {
+test("pictures: a press on another block, beside the page or between pictures lets the picture go; one on another picture picks that one", async () => {
+  const m = await picturedAll(ROW), key = keyAt(m, 1), y = onNth(m, 0).y;
+  await clickAt(m, onNth(m, 0));
+  await clickAt(m, onNth(m, 2));
+  assert.deepEqual(pickedNow(m), [key, 2]);
+  await clickAt(m, { x: X + pictureBox(m, 0).w + 3, y });
+  assert.equal(m.view.picked, null, "between two pictures");
+  await clickAt(m, onNth(m, 1));
+  await clickAt(m, { x: 20, y });
+  assert.equal(m.view.picked, null, "beside the page");
+  await clickAt(m, onNth(m, 1));
+  await clickAt(m, { x: X + 5, y: topOf(m, 2) + 10 });
+  assert.deepEqual([m.view.picked, m.view.activeKey, floatOf(m)], [null, keyAt(m, 2), null], "another block");
+  escape(m);
+  await clickAt(m, onNth(m, 1));
+  fire(must(m.tree(), `md-field-${keyAt(m, 0)}`), "on_mouse_down:left", fieldPress(m, keyAt(m, 0), { x: 4, y: 4 }), m.cx);
+  await flush();
+  assert.equal(m.view.picked, null, "a press in a field");
+});
+
+test("pictures: a click on a picture while a paragraph is edited stops that editing and picks it, the page taking the keyboard", async () => {
   const m = await pictured();
   await clickAt(m, { x: X + 20, y: topOf(m, 2) + 10 });
   assert.equal(m.view.activeKey, keyAt(m, 2));
-  m.view.field.focused = false;
+  m.view.handle.focused = false;
   await clickAt(m, onPicture(m));
-  assert.deepEqual([m.view.activeKey, m.view.field.focused], [keyAt(m, 2), true]);
+  assert.deepEqual([m.view.activeKey, pickedNow(m), m.view.handle.focused], [null, [keyAt(m, 1), 0], true]);
 });
 
-test("pictures: a click on a linked picture opens its link, on a file that cannot be edited too, and a double-click never edits it", async () => {
+test("pictures: a click picks a linked picture and opens nothing; Cmd+click opens its link, on a file that cannot be edited too; its float has Open link", async () => {
   const m = await pictured(LINKED);
   assert.equal(m.view.hit(onPicture(m)).item, 0);
   await clickAt(m, onPicture(m));
-  assert.deepEqual([m.cx.opened, m.view.activeKey], [["https://e.com/page"], null]);
+  assert.deepEqual([m.cx.opened, pickedNow(m)], [[], [keyAt(m, 1), 0]]);
   await doubleClickAt(m, onPicture(m));
-  assert.deepEqual([m.cx.opened.length, m.view.activeKey], [2, null], "the first click of a double-click opens it, the second does nothing");
+  assert.deepEqual([m.cx.opened, m.view.activeKey], [[], null]);
+  assert.deepEqual(floatButtons(m), ["change", "alt", "copy", "open", "link", "delete"]);
+  assert.deepEqual(["change", "alt", "copy", "open", "link", "delete"].map(name => must(m.tree(), `md-picture-${name}`).style.tooltip),
+    ["Change picture", "Alt text", "Copy address", "Open picture", "Open link", "Delete picture"]);
+  pictureButton(m, "link");
+  assert.deepEqual(m.cx.opened, ["https://e.com/page"]);
+  await cmdClickAt(m, onPicture(m));
+  assert.equal(m.cx.opened.length, 2);
   m.view.locked = "Read-only: unusual characters";
-  await clickAt(m, onPicture(m));
+  await cmdClickAt(m, onPicture(m));
   assert.equal(m.cx.opened.length, 3);
   assert.equal(imageOf(m.tree(), picsOf(m)).style.cursor_pointer, true);
 });
@@ -2536,8 +2571,10 @@ test("pictures: on a file of another machine local pictures show the error box a
   m.view.blocks.forEach((b, i) => { const d = m.view.data.get(b.key); sizes[i] = d.look === "picture" ? d.space + d.pictureH : 30; });
   await heights(m, sizes);
   await doubleClickAt(m, onPicture(m));
-  assert.equal(m.view.activeKey, null);
+  assert.deepEqual([m.view.activeKey, pickedNow(m)], [null, [keyAt(m, 1), 0]]);
   await clickAt(m, onPicture(m, 10, 2));
+  assert.deepEqual([m.cx.opened, pickedNow(m), floatButtons(m)], [[], [keyAt(m, 2), 0], ["copy", "open", "link"]]);
+  await cmdClickAt(m, onPicture(m, 10, 2));
   assert.deepEqual(m.cx.opened, ["https://e.com/page"], "its link opens on a read-only file");
 });
 
@@ -2906,8 +2943,8 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.deepEqual([field.state, view.blockField(active.key)], [view.field, view.field], "the edited block's own field");
   assert.equal(view.field.value(), "A paragraph with **bold**, _emphasis_, `code` and a [link](https://example.com). /");
   assert.equal(must(t, `md-field-${active.key}`).style.key_context, `${TEXT} rows=many menu=open`, "its slash menu open");
-  const menu = must(t, "md-slash");
-  assert.equal(must(t, "md-viewport").kids.indexOf(menu), must(t, "md-viewport").kids.findIndex(k => k.id?.startsWith("md-cal")) - 1, "drawn last on the page, before the calibration strip");
+  const menu = must(t, "md-slash"), drawn = must(t, "md-viewport").kids.map(k => k.id);
+  assert.deepEqual(drawn.slice(drawn.indexOf("md-slash"), drawn.findIndex(id => id?.startsWith("md-cal"))), ["md-slash", "md-picture"], "drawn last on the page but for the picked picture's float, before the calibration strip");
   assert.deepEqual(all(menu, n => n.kind === "svg").map(n => n.path.split("/").at(-1)), COMMANDS.map(c => `${c.icon}.svg`), "each command's icon, in the table's order");
   assert.ok(menu.style.shadow_lg && typeof menu.handlers.on_mouse_down_out === "function");
   assert.deepEqual([field.style.font_family, field.style.text_size, field.style.line_height], [SANS, 15, 1.6]);
@@ -2916,8 +2953,10 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.equal(must(t, `md-field-${item.key}`).style.key_context, undefined, "only the edited field has the block keys");
   assert.ok(find(t, "md-cal"), "the calibration strip");
   assert.ok(find(t, `md-diagram-${view.doc.blocks.find(b => b.kind === "mermaid").key}`));
-  const picture = imageOf(t, `md-pictures-${view.doc.blocks.find(b => b.image).key}`);
+  const pictureKey = view.doc.blocks.find(b => b.image).key, picture = imageOf(t, `md-pictures-${pictureKey}`);
   assert.deepEqual([picture.path, picture.style.w, picture.style.h], ["mods/herdr-inline-markdown/file-markdown.svg", 32, 32], "a real picture, so check draws an image");
+  assert.ok(find(t, `md-pictures-${pictureKey}-0-picked`), "picked, with its ring");
+  assert.deepEqual(all(must(t, "md-picture"), n => n.kind === "svg").map(n => n.path.split("/").at(-1)), ["image-up.svg", "type.svg", "copy.svg", "external-link.svg", "trash-2.svg"], "and its float, every button a file can have");
   const quote = view.doc.blocks.find(b => b.kind === "quote");
   const remark = view.blockField(quote.key).tokens().filter(x => x.token.id.startsWith("h:")).map(x => x.token.label);
   assert.deepEqual(remark, ["a ", "remark."], "a comment, its words tokens drawn highlighted");
@@ -6113,7 +6152,7 @@ test("/mermaid writes the starter flowchart, the block shows its source with the
 
 const noDialog = () => { state.exec = async () => { throw new Error("spawn osascript ENOENT"); }; };
 
-test("without osascript /img writes an empty image with the caret between the parentheses; the address typed there is drawn once the block is left", async () => {
+test("without osascript /img writes an empty picture, picks it and opens the address box; the address typed there is drawn", async () => {
   noDialog();
   files.set(`${DIR}/a.png`, SHOT);
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
@@ -6123,26 +6162,29 @@ test("without osascript /img writes an empty image with the caret between the pa
   act(m, "mdb-enter");
   await flush();
   assert.equal(m.view.text, "Intro\n\n![]()\n\nOutro\n");
-  const key = m.view.activeKey;
-  assert.equal(m.view.blockByKey(key).image, true);
-  assert.deepEqual(editing(m), [key, "![]()", { start: 4, end: 4 }]);
-  typed(m, "a.png");
-  assert.equal(m.view.text, "Intro\n\n![](a.png)\n\nOutro\n");
-  escape(m);
+  const key = keyAt(m, 1);
+  assert.deepEqual([m.view.blockByKey(key).image, m.view.activeKey, pickedNow(m)], [true, null, [key, 0]]);
+  assert.ok(find(m.tree(), "md-picture-box"));
+  assert.deepEqual([m.view.addressField.value(), m.view.addressField.focused], ["", true]);
+  m.view.addressField.set_value("a.png");
+  act(m, "mdb-note-save");
   await flush();
+  assert.equal(m.view.text, "Intro\n\n![](a.png)\n\nOutro\n");
+  assert.deepEqual([pickedNow(m), find(m.tree(), "md-picture-box")], [[key, 0], null]);
   assert.equal(imageOf(m.tree(), `md-pictures-${key}`).path, cached(SHOT));
 });
 
-test("an image left without an address is drawn as a box called Picture", async () => {
+test("an image left without an address is drawn as a box called Picture: Escape in the address box leaves it picked", async () => {
   noDialog();
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   typed(m, "/image");
   act(m, "mdb-enter");
   await flush();
-  const key = m.view.activeKey;
-  escape(m);
+  const key = keyAt(m, 1);
+  act(m, "mdb-note-cancel");
   await flush();
+  assert.deepEqual([m.view.text, pickedNow(m), Boolean(floatOf(m)), find(m.tree(), "md-picture-box")], ["Intro\n\n![]()\n\nOutro\n", [key, 0], true, null]);
   assert.equal(textOf(must(m.tree(), `md-pictures-${key}`)).trim(), "Picture: No picture address");
 });
 
@@ -6255,13 +6297,13 @@ test("cancelling in a block that has other text leaves it as it was before the s
   assert.deepEqual(calls.notify, []);
 });
 
-test("with no osascript Image still writes an empty image, the caret between the parentheses, and says nothing", async () => {
+test("with no osascript Image still writes an empty image, picked with the address box open, and says nothing", async () => {
   noDialog();
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   await pickImage(m);
   assert.equal(m.view.text, "Intro\n\n![]()\n\nOutro\n");
-  assert.deepEqual(editing(m), [keyAt(m, 1), "![]()", { start: 4, end: 4 }]);
+  assert.deepEqual([m.view.activeKey, pickedNow(m), Boolean(find(m.tree(), "md-picture-box"))], [null, [keyAt(m, 1), 0], true]);
   assert.deepEqual(calls.notify, []);
 });
 
@@ -9414,17 +9456,12 @@ test("the format keys' own two-step writing and the editor's own edits are never
   assert.ok(valueSets(m) - sets <= 2, "only the format key's own token sets");
 });
 
-test("a paragraph of pictures shows its source while edited, and its keys edit that source as typed", async () => {
+test("a paragraph of pictures is never a field to type in: a double-click picks the picture, and Backspace deletes it whole", async () => {
   const m = await pictured();
   await doubleClickAt(m, onPicture(m));
-  assert.equal(m.view.field.value(), "![x](a.png)");
-  await placeIn(m, 10);
-  hit(m, "backspace");
-  assert.deepEqual([m.view.field.value(), m.view.text], ["![x](a.pn)", "# Title\n\n![x](a.pn)\n\nBye\n"], "a letter of the address");
-  hit(m, "g");
-  await placeIn(m, 3);
-  hit(m, "backspace");
-  assert.deepEqual([m.view.field.value(), m.view.text], ["![](a.png)", "# Title\n\n![](a.png)\n\nBye\n"], "the alt's only letter");
+  assert.deepEqual([m.view.activeKey, pickedNow(m)], [null, [keyAt(m, 1), 0]]);
+  rootKey(m, "backspace");
+  assert.equal(m.view.text, "# Title\n\nBye\n");
 });
 
 test("Escape ends the typing style, also when all it does is close a link's popover", async () => {
@@ -9805,4 +9842,429 @@ test("the List menu and /todo from a numbered item write one space after the mar
   assert.equal(m.view.text, "- [ ] first \n  - sub\n\n- ten\n  more\n");
   act(m, "mdb-undo");
   assert.equal(m.view.text, "- [ ] first \n  - sub\n\n10. ten\n    more\n");
+});
+
+// A picked picture: the page holds the keyboard, its float stands over it, and its keys go to the root.
+const ROW = "# Title\n\n![a](a.png) ![b](b.png) ![c](c.png)\n\nBye\n";
+const STACK = "# Title\n\n![a](a.png)\n![b](b.png)\n![c](c.png)\n\nBye\n";
+const AROUND = "# Title\n\nAbove\n\n![a](a.png) ![b](b.png) ![c](c.png)\n\nBelow\n";
+async function picturedAll(disk, options = {}) {
+  for (const name of ["b", "c"]) files.set(`${DIR}/${name}.png`, SHOT);
+  return pictured(disk, options);
+}
+const pictureBox = (m, n, i = 1) => m.view.pictureOf(keyAt(m, i), m.view.data.get(keyAt(m, i)).pictureW).boxes[n];
+// A point inside picture n of block i.
+const onNth = (m, n, i = 1) => {
+  const d = m.view.data.get(keyAt(m, i)), box = pictureBox(m, n, i);
+  return { x: X + d.depth * INDENT + box.x + 5, y: topOf(m, i) + d.space + box.y + 5 };
+};
+const pickedNow = m => (m.view.picked ? [m.view.picked.key, m.view.picked.index] : null);
+const floatOf = m => find(m.tree(), "md-picture");
+const ringsOf = (m, t = m.tree()) => all(t, n => /-picked$/.test(n.id ?? "")).map(n => n.id);
+const floatButtons = m => all(must(m.tree(), "md-picture"), n => /^md-picture-/.test(n.id ?? "") && n.id !== "md-picture-address").map(n => n.id.slice("md-picture-".length));
+const pictureButton = (m, name) => fire(must(m.tree(), `md-picture-${name}`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+const rightClickAt = (m, p) => fire(must(m.tree(), "md-viewport"), "on_mouse_down:right", press(p, { button: "right" }), m.cx);
+async function cmdClickAt(m, p) {
+  const cmd = { modifiers: { ...MODS, platform: true } };
+  down(m, p, cmd);
+  up(m, p, cmd);
+  await flush();
+}
+const floatTop = m => must(m.tree(), "md-picture").style.top;
+const pictureTop = (m, n, i = 1) => topOf(m, i) + m.view.data.get(keyAt(m, i)).space + pictureBox(m, n, i).y;
+async function changeTo(m, answer) {
+  dialogShows(answer);
+  pictureButton(m, "change");
+  await flush();
+  await polled(m);
+}
+
+test("the picture's float: over its top edge; under its bottom edge at the top of the pane; as low as the pane keeps it for one taller than the pane; inside a narrow pane", async () => {
+  const m = await picturedAll(ROW);
+  await clickAt(m, onNth(m, 2));
+  const size = must(m.tree(), "md-picture").style;
+  assert.equal(floatTop(m), pictureTop(m, 2) - BAR.gap - size.h, "over");
+  assert.equal(size.left, X + pictureBox(m, 2).x);
+  viewportOf(m, 200, 600);
+  const narrow = must(m.tree(), "md-picture").style;
+  assert.ok(narrow.left >= BAR.margin && narrow.left + narrow.w <= 200 - BAR.margin, `${narrow.left} + ${narrow.w}`);
+  const first = await pictured("![x](a.png)\n\nBye\n");
+  await clickAt(first, onPicture(first, 10, 0));
+  assert.equal(floatTop(first), pictureTop(first, 0, 0) + 30 + BAR.gap, "under, with no room above");
+  const tall = await pictured("![x](a.png)\n\nBye\n", { bytes: png(400, 2000) });
+  await clickAt(tall, onPicture(tall, 10, 0));
+  assert.equal(floatTop(tall), 600 - BAR.margin - must(tall.tree(), "md-picture").style.h, "as low as the pane keeps it");
+});
+
+test("the picture's float follows the page as it scrolls and goes when the picture leaves the pane; Page Down and the arrows that scroll keep the pick", async () => {
+  const m = await picturedAll(ROW);
+  viewportOf(m, 900, 200);
+  await heights(m, { 0: 100, 1: 8 + 30, 2: 300 });
+  await clickAt(m, onNth(m, 1));
+  const before = floatTop(m);
+  m.view.scrollTo(40, m.cx);
+  assert.equal(floatTop(m), before - 40);
+  rootKey(m, "pagedown");
+  assert.deepEqual([m.view.offset > 40, pickedNow(m), floatOf(m)], [true, [keyAt(m, 1), 1], null], "scrolled off: picked, no float");
+  rootKey(m, "home");
+  assert.deepEqual([m.view.offset, pickedNow(m), Boolean(floatOf(m))], [0, [keyAt(m, 1), 1], true]);
+});
+
+test("Change: a dialog for one picture, opened in the picture's folder; the file chosen replaces the address, linked where it is or copied into images/, alt, title and link kept; Cmd+Z puts it back, picked", async () => {
+  files.set(`${DIR}/b.png`, OTHER);
+  files.set(`${DESKTOP}/shot 1.png`, OTHER);
+  const doc = '# Title\n\n[![My chart](a.png "t")](https://e.com/page)\n\nBye\n';
+  const m = await pictured(doc), key = keyAt(m, 1);
+  await clickAt(m, onPicture(m));
+  await changeTo(m, chosen(`${DIR}/b.png`));
+  const [sh] = ran("sh");
+  assert.equal(sh.args.at(-1), DIR, "opens where the picture is");
+  assert.ok(sh.args.some(a => a.includes('"Change the picture"')) && !sh.args.some(a => a.includes("multiple selections")));
+  assert.equal(m.view.text, '# Title\n\n[![My chart](b.png "t")](https://e.com/page)\n\nBye\n');
+  assert.deepEqual([pickedNow(m), m.view.history.entries.length, ran("cp")], [[key, 0], 1, []]);
+  await flush();
+  assert.equal(imageOf(m.tree(), picsOf(m)).path, cached(OTHER), "it loads");
+  await changeTo(m, chosen(`${DESKTOP}/shot 1.png`));
+  assert.equal(m.view.text, '# Title\n\n[![My chart](images/shot-1.png "t")](https://e.com/page)\n\nBye\n');
+  assert.deepEqual(ran("cp").map(c => c.args), [[`${DESKTOP}/shot 1.png`, `${DIR}/images/shot-1.png`]]);
+  rootKey(m, "cmd-z");
+  assert.equal(m.view.text, '# Title\n\n[![My chart](b.png "t")](https://e.com/page)\n\nBye\n');
+  assert.deepEqual([pickedNow(m), m.view.activeKey], [[key, 0], null], "the old address back, picked");
+});
+
+test("Change: an alt text that is the old file's name follows the new file; Cancel writes nothing; without osascript it opens the address box", async () => {
+  files.set(`${DESKTOP}/new shot.png`, OTHER);
+  const doc = "# Title\n\n![a](a.png)\n\nBye\n";
+  const m = await pictured(doc);
+  await clickAt(m, onPicture(m));
+  await changeTo(m, CANCELLED);
+  assert.deepEqual([m.view.text, calls.notify, pickedNow(m)], [doc, [], [keyAt(m, 1), 0]]);
+  await changeTo(m, chosen(`${DESKTOP}/new shot.png`));
+  assert.equal(m.view.text, "# Title\n\n![new shot](images/new-shot.png)\n\nBye\n");
+  noDialog();
+  pictureButton(m, "change");
+  await flush();
+  assert.ok(find(m.tree(), "md-picture-box"));
+  assert.deepEqual([m.view.addressField.value(), m.view.addressField.selection, m.view.addressField.focused], ["images/new-shot.png", { start: 0, end: 19 }, true]);
+});
+
+test("Change: an answer that comes after the picture changed writes nothing and says so; a second Change while the dialog is open does nothing", async () => {
+  files.set(`${DIR}/b.png`, OTHER);
+  const held = dialogHeld();
+  const m = await pictured();
+  await clickAt(m, onPicture(m));
+  pictureButton(m, "change");
+  await flush();
+  pictureButton(m, "change");
+  await flush();
+  assert.equal(ran("sh").length, 1, "one dialog");
+  const theirs = PICDOC.replace("a.png", "c.png");
+  state.disk.set(FILE, theirs);
+  await m.touch([FILE]);
+  held.answer(chosen(`${DIR}/b.png`));
+  await polled(m);
+  assert.equal(m.view.text, theirs);
+  assert.deepEqual(calls.notify.map(n => n.title), ["The picture changed meanwhile, so it wasn't replaced"]);
+});
+
+test("Alt text: the float becomes a box holding the alt, all selected; Enter writes what was typed so that both readers give it back, as one Cmd+Z; the float comes back", async () => {
+  const m = await pictured(), key = keyAt(m, 1);
+  await clickAt(m, onPicture(m));
+  pictureButton(m, "alt");
+  const box = must(m.tree(), "md-picture-box");
+  assert.equal(floatOf(m), null);
+  assert.deepEqual([box.style.key_context, box.style.w, box.style.h], [NOTE, LINK_BOX.w, LINK_BOX.h]);
+  assert.equal(all(box, n => n.kind === "input")[0].state, m.view.altField);
+  assert.deepEqual([m.view.altField.value(), m.view.altField.selection, m.view.altField.focused], ["x", { start: 0, end: 1 }, true]);
+  const alt = "[b] c\\d *e* f_g_ `h`";
+  m.view.altField.set_value(alt);
+  act(m, "mdb-note-save");
+  const source = m.view.text.split("\n")[2];
+  assert.deepEqual([picturesOf(source)[0].alt, parseInline(source).spans.find(sp => sp.kind === "image").alt], [alt, alt]);
+  assert.deepEqual([pickedNow(m), Boolean(floatOf(m)), find(m.tree(), "md-picture-box"), m.view.history.entries.length], [[key, 0], true, null, 1]);
+  rootKey(m, "cmd-z");
+  assert.deepEqual([m.view.text, pickedNow(m)], [PICDOC, [key, 0]]);
+});
+
+test("Alt text: unchanged writes nothing, empty writes ![](…); Escape goes back to the float, and a press outside closes box and float, writing nothing", async () => {
+  const m = await pictured(), key = keyAt(m, 1);
+  await clickAt(m, onPicture(m));
+  pictureButton(m, "alt");
+  act(m, "mdb-note-save");
+  assert.deepEqual([m.view.text, m.view.history.entries.length, Boolean(floatOf(m))], [PICDOC, 0, true]);
+  pictureButton(m, "alt");
+  m.view.altField.set_value("other");
+  act(m, "mdb-note-cancel");
+  assert.deepEqual([m.view.text, Boolean(floatOf(m)), pickedNow(m), m.view.handle.focused], [PICDOC, true, [key, 0], true]);
+  pictureButton(m, "alt");
+  m.view.altField.set_value("other");
+  fire(must(m.tree(), "md-picture-box"), "on_mouse_down_out", press({ x: 5, y: 5 }), m.cx);
+  assert.deepEqual([m.view.text, floatOf(m), m.view.picked], [PICDOC, null, null]);
+  await clickAt(m, onPicture(m));
+  pictureButton(m, "alt");
+  m.view.altField.set_value("");
+  m.view.altField.submit(m.cx);
+  assert.equal(m.view.text, "# Title\n\n![](a.png)\n\nBye\n");
+});
+
+test("the alt text and address boxes keep the keys typed into them: the page neither scrolls, undoes nor opens a block, so a space reaches the field", async () => {
+  noDialog();
+  const m = await picturedAll(ROW), key = keyAt(m, 1);
+  viewportOf(m, 900, 200);
+  await heights(m, { 0: 100, 1: 8 + 30, 2: 300 });
+  await clickAt(m, onNth(m, 1));
+  pictureButton(m, "alt");
+  m.view.altField.set_value("b2");
+  act(m, "mdb-note-save");
+  for (const button of ["alt", "change"]) {
+    pictureButton(m, button);
+    await flush();
+    const stopped = m.cx.stopped, text = m.view.text;
+    for (const k of ["space", "shift-space", "up", "down", "pageup", "pagedown", "home", "end", "cmd-z", "enter", "backspace", "left"]) rootKey(m, k);
+    const open = [m.cx.stopped - stopped, m.view.offset, m.view.text, m.view.activeKey, pickedNow(m), Boolean(find(m.tree(), "md-picture-box"))];
+    assert.deepEqual(open, [0, 0, text, null, [key, 1], true], button);
+    act(m, "mdb-note-cancel");
+  }
+});
+
+test("presses on the alt text box go no further, a right-press too, so the box stays open with what was typed", async () => {
+  const m = await pictured(), key = keyAt(m, 1);
+  await clickAt(m, onPicture(m));
+  pictureButton(m, "alt");
+  m.view.altField.set_value("typed");
+  const stopped = m.cx.stopped, box = must(m.tree(), "md-picture-box");
+  fire(box, "on_mouse_down:left", press({ x: 2, y: 2 }), m.cx);
+  fire(box, "on_mouse_down:right", press({ x: 2, y: 2 }, { button: "right" }), m.cx);
+  fire(box, "on_mouse_up:left", press({ x: 2, y: 2 }), m.cx);
+  assert.equal(m.cx.stopped - stopped, 3, "none of them reaches the page");
+  assert.deepEqual([pickedNow(m), m.view.picked.box, m.view.altField.value()], [[key, 0], "alt", "typed"]);
+});
+
+test("Image writes a file's name as an alt text that reads back as that name: my_shot [1]", async () => {
+  files.set(`${DIR}/my_shot [1].png`, SHOT);
+  dialogShows(chosen(`${DIR}/my_shot [1].png`));
+  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(m, 1);
+  await pickImage(m);
+  const source = "![my\\_shot \\[1\\]](<my_shot [1].png>)";
+  assert.equal(m.view.text, `Intro\n\n${source}\n\nOutro\n`);
+  assert.deepEqual([picturesOf(source)[0].alt, parseInline(source).spans.find(sp => sp.kind === "image").alt], ["my_shot [1]", "my_shot [1]"]);
+});
+
+test("the address box: an address with a space is written in <…>, one with parentheses as %28 and %29, and both are drawn; an empty one writes nothing", async () => {
+  files.set(`${DIR}/my pic.png`, OTHER);
+  files.set(`${DIR}/a(1).png`, png(42, 32));
+  noDialog();
+  const m = await pictured(), key = keyAt(m, 1);
+  await clickAt(m, onPicture(m));
+  for (const [typed, written, bytes] of [["  my pic.png ", "<my pic.png>", OTHER], ["a(1).png", "a%281%29.png", png(42, 32)]]) {
+    pictureButton(m, "change");
+    await flush();
+    m.view.addressField.set_value(typed);
+    act(m, "mdb-note-save");
+    await flush();
+    assert.equal(m.view.text, `# Title\n\n![x](${written})\n\nBye\n`);
+    assert.deepEqual(pickedNow(m), [key, 0]);
+    assert.equal(imageOf(m.tree(), picsOf(m)).path, cached(bytes), typed);
+  }
+  pictureButton(m, "change");
+  await flush();
+  m.view.addressField.set_value("   ");
+  act(m, "mdb-note-save");
+  assert.deepEqual([m.view.text, m.view.history.entries.length], ["# Title\n\n![x](a%281%29.png)\n\nBye\n", 2]);
+});
+
+test("Copy address: a file's full path, an https address as written; the button shows a check and 'Copied' until the float closes", async () => {
+  serveDownloads(png(80, 20));
+  const m = await pictured("# Title\n\n![x](a.png) ![w](https://e.com/w.png)\n\nBye\n");
+  await clickAt(m, onNth(m, 0));
+  pictureButton(m, "copy");
+  const copy = must(m.tree(), "md-picture-copy");
+  assert.deepEqual([m.cx.clipboard.at(-1), copy.style.tooltip, iconOf(copy).path], [`${DIR}/a.png`, "Copied", icon("check")]);
+  rootKey(m, "escape");
+  await clickAt(m, onNth(m, 1));
+  const again = must(m.tree(), "md-picture-copy");
+  assert.deepEqual([again.style.tooltip, iconOf(again).path], ["Copy address", icon("copy")]);
+  pictureButton(m, "copy");
+  assert.equal(m.cx.clipboard.at(-1), "https://e.com/w.png");
+});
+
+test("Open: a file in the computer's default app, a failure naming it; an https address in the browser; a data: picture has no file to open", async () => {
+  serveDownloads(png(80, 20));
+  const m = await pictured("# Title\n\n![x](a.png) ![w](https://e.com/w.png) ![d](data:image/png;base64,AAAA)\n\nBye\n");
+  await clickAt(m, onNth(m, 0));
+  pictureButton(m, "open");
+  await flush();
+  assert.deepEqual(calls.exec.filter(c => c.command === "open").map(c => c.args), [[`${DIR}/a.png`]]);
+  state.exec = async () => ({ code: 1, stdout: "", stderr: "" });
+  pictureButton(m, "open");
+  await flush();
+  assert.deepEqual(calls.notify.map(n => n.title), ["Can't open a.png"]);
+  await clickAt(m, onNth(m, 1));
+  pictureButton(m, "open");
+  assert.deepEqual(m.cx.opened, ["https://e.com/w.png"]);
+  await clickAt(m, onNth(m, 2));
+  pictureButton(m, "open");
+  assert.equal(calls.notify.at(-1).title, "This picture has no file to open");
+});
+
+test("a right-click on a picture while blocks are selected lets the selection go: Backspace deletes the picture, not the blocks", async () => {
+  const m = await picturedAll(ROW), key = keyAt(m, 1);
+  m.view.setSel({ from: keyAt(m, 0), to: keyAt(m, 0) }, m.cx);
+  assert.ok(m.view.sel, "the heading is selected");
+  rightClickAt(m, onNth(m, 1));
+  assert.deepEqual([m.view.sel, pickedNow(m)], [null, [key, 1]]);
+  rootKey(m, "backspace");
+  assert.equal(m.view.text, "# Title\n\n![a](a.png) ![c](c.png)\n\nBye\n");
+});
+
+test("Delete: one of three on a line goes with its space and the one before it is picked; one alone on its line goes with its line; Cmd+Z brings each back, picked", async () => {
+  const m = await picturedAll(ROW), key = keyAt(m, 1);
+  await clickAt(m, onNth(m, 1));
+  pictureButton(m, "delete");
+  assert.deepEqual([m.view.text, pickedNow(m), m.view.history.entries.length], ["# Title\n\n![a](a.png) ![c](c.png)\n\nBye\n", [key, 0], 1]);
+  rootKey(m, "cmd-z");
+  assert.deepEqual([m.view.text, pickedNow(m)], [ROW, [key, 1]]);
+  rootKey(m, "cmd-shift-z");
+  assert.equal(m.view.text, "# Title\n\n![a](a.png) ![c](c.png)\n\nBye\n");
+  reset();
+  const s = await picturedAll(STACK), stacked = keyAt(s, 1);
+  await clickAt(s, onNth(s, 2));
+  rootKey(s, "backspace");
+  assert.deepEqual([s.view.text, pickedNow(s)], ["# Title\n\n![a](a.png)\n![b](b.png)\n\nBye\n", [stacked, 1]]);
+  rootKey(s, "delete");
+  assert.deepEqual([s.view.text, pickedNow(s)], ["# Title\n\n![a](a.png)\n\nBye\n", [stacked, 0]]);
+  rootKey(s, "backspace");
+  assert.deepEqual([s.view.text, s.view.picked, s.view.activeKey, s.view.handle.focused], ["# Title\n\nBye\n", null, null, true], "the only one takes its paragraph");
+  rootKey(s, "cmd-z");
+  assert.deepEqual([s.view.text, pickedNow(s)], ["# Title\n\n![a](a.png)\n\nBye\n", [keyAt(s, 1), 0]]);
+});
+
+test("Delete: a linked picture goes with its link and the one after it is picked; in a list item the item keeps its other picture", async () => {
+  const m = await picturedAll("# Title\n\n[![x](a.png)](https://e.com/page) ![b](b.png)\n\nBye\n");
+  await clickAt(m, onNth(m, 0));
+  rootKey(m, "delete");
+  assert.deepEqual([m.view.text, pickedNow(m)], ["# Title\n\n![b](b.png)\n\nBye\n", [keyAt(m, 1), 0]]);
+  reset();
+  const item = await picturedAll("- item\n\n  ![a](a.png)\n  ![b](b.png)\n\nEnd\n");
+  await clickAt(item, onNth(item, 1));
+  rootKey(item, "backspace");
+  assert.deepEqual([item.view.text, pickedNow(item)], ["- item\n\n  ![a](a.png)\n\nEnd\n", [keyAt(item, 1), 0]]);
+  rootKey(item, "cmd-z");
+  assert.deepEqual([item.view.text, pickedNow(item)], ["- item\n\n  ![a](a.png)\n  ![b](b.png)\n\nEnd\n", [keyAt(item, 1), 1]]);
+});
+
+test("keys with a picture picked: Left and Right walk the pictures and leave at both ends, Up and Down at once, Escape lets it go, a letter does nothing", async () => {
+  const m = await picturedAll(AROUND), key = keyAt(m, 2), pick = n => clickAt(m, onNth(m, n, 2));
+  await pick(1);
+  rootKey(m, "right");
+  assert.deepEqual(pickedNow(m), [key, 2]);
+  rootKey(m, "right");
+  assert.deepEqual([m.view.picked, ...editing(m)], [null, keyAt(m, 3), "Below", { start: 0, end: 0 }], "past the last: the block after, at its start");
+  escape(m);
+  await pick(1);
+  rootKey(m, "left");
+  assert.deepEqual(pickedNow(m), [key, 0]);
+  rootKey(m, "left");
+  assert.deepEqual([m.view.picked, ...editing(m)], [null, keyAt(m, 1), "Above", { start: 5, end: 5 }], "past the first: the block before, at its end");
+  escape(m);
+  await pick(1);
+  rootKey(m, "up");
+  assert.deepEqual(editing(m), [keyAt(m, 1), "Above", { start: 5, end: 5 }]);
+  escape(m);
+  await pick(1);
+  rootKey(m, "down");
+  assert.deepEqual(editing(m), [keyAt(m, 3), "Below", { start: 0, end: 0 }]);
+  escape(m);
+  await pick(1);
+  rootKey(m, "x");
+  assert.deepEqual([m.view.text, pickedNow(m)], [AROUND, [key, 1]]);
+  rootKey(m, "escape");
+  assert.deepEqual([m.view.picked, floatOf(m), m.view.activeKey], [null, null, null]);
+});
+
+test("Enter with a picture picked opens a new empty paragraph below its paragraph, being edited; Cmd+Z there goes back to the picture", async () => {
+  const m = await picturedAll(AROUND), key = keyAt(m, 2);
+  await clickAt(m, onNth(m, 1, 2));
+  rootKey(m, "enter");
+  assert.ok(pendingOf(m));
+  assert.equal(m.view.blocks[3].key, m.view.activeKey);
+  assert.equal(m.view.picked, null);
+  typed(m, "x");
+  assert.equal(m.view.text, "# Title\n\nAbove\n\n![a](a.png) ![b](b.png) ![c](c.png)\n\nx\n\nBelow\n");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.activeKey, pickedNow(m)], [AROUND, null, [key, 1]]);
+  await clickAt(m, onNth(m, 1, 2));
+  rootKey(m, "enter");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.activeKey, pickedNow(m)], [AROUND, null, [key, 1]], "nothing typed: back to the picture");
+});
+
+test("never the source: Down from the paragraph above picks the first picture, Up from the one below the last, Backspace and Delete at their edges pick and join nothing", async () => {
+  const m = await picturedAll(AROUND), key = keyAt(m, 2);
+  await openBlock(m, 1, 0);
+  act(m, "mdb-down");
+  assert.deepEqual([m.view.activeKey, pickedNow(m)], [null, [key, 0]]);
+  await openBlock(m, 3, 0);
+  act(m, "mdb-up");
+  assert.deepEqual([m.view.activeKey, pickedNow(m)], [null, [key, 2]]);
+  await openBlock(m, 3, 0);
+  act(m, "mdb-backspace-start");
+  assert.deepEqual([m.view.text, m.view.activeKey, pickedNow(m)], [AROUND, null, [key, 2]], "the last picked, nothing joined");
+  await openBlock(m, 1, 5);
+  forwardDeleteAtEnd(m);
+  assert.deepEqual([m.view.text, m.view.activeKey, pickedNow(m)], [AROUND, null, [key, 0]]);
+});
+
+test("never the source: Page Down landing on a paragraph of pictures picks one there; an undo landing in it picks the picture", async () => {
+  const m = await picturedAll(AROUND), key = keyAt(m, 2);
+  viewportOf(m, 900, 100);
+  await openBlock(m, 1, 0);
+  act(m, "mdb-pagedown");
+  assert.deepEqual([m.view.activeKey, pickedNow(m)], [null, [key, 0]]);
+  await openBlock(m, 3, 5);
+  typed(m, "!");
+  escape(m);
+  await clickAt(m, onNth(m, 2, 2));
+  rootKey(m, "backspace");
+  rootKey(m, "escape");
+  rootKey(m, "cmd-z");
+  assert.deepEqual([m.view.text, pickedNow(m)], ["# Title\n\nAbove\n\n![a](a.png) ![b](b.png) ![c](c.png)\n\nBelow!\n", [key, 2]]);
+});
+
+test("never the source: ![a](a.png) typed into an empty paragraph is drawn as a picture once left; Enter at its end draws it and opens a paragraph below", async () => {
+  const m = await pictured("# Title\n\nBye\n");
+  await openBlock(m, 1, 3);
+  act(m, "mdb-enter");
+  typed(m, "![a](a.png)");
+  escape(m);
+  await flush();
+  const key = keyAt(m, 2);
+  assert.deepEqual([m.view.text, m.view.blockByKey(key).image, m.view.activeKey, m.view.picked], ["# Title\n\nBye\n\n![a](a.png)\n", true, null, null]);
+  assert.equal(imageOf(m.tree(), `md-pictures-${key}`).path, cached(SHOT));
+  await openBlock(m, 1, 3);
+  act(m, "mdb-enter");
+  typed(m, "![b](a.png)");
+  act(m, "mdb-enter");
+  await flush();
+  assert.equal(m.view.text, "# Title\n\nBye\n\n![b](a.png)\n\n![a](a.png)\n");
+  assert.ok(pendingOf(m), "a new paragraph below, being edited");
+  assert.deepEqual([m.view.doc.blocks[2].image, m.view.blocks[3].key], [true, m.view.activeKey]);
+  assert.ok(imageOf(m.tree(), `md-pictures-${keyAt(m, 2)}`), "drawn");
+});
+
+test("a file that cannot be edited: a click picks a picture, its float has Copy address, Open and Open link only, and no key changes the file", async () => {
+  const m = await pictured(LINKED);
+  m.view.locked = "Read-only: unusual characters";
+  await clickAt(m, onPicture(m));
+  assert.deepEqual(floatButtons(m), ["copy", "open", "link"]);
+  for (const key of ["backspace", "delete", "enter"]) rootKey(m, key);
+  assert.deepEqual([m.view.text, pickedNow(m), m.view.activeKey], [LINKED, [keyAt(m, 1), 0], null]);
+});
+
+test("Cmd+E lets a picked picture go; the Markdown view still shows its source", async () => {
+  const m = await pictured();
+  await clickAt(m, onPicture(m));
+  await m.key("cmd-e");
+  assert.deepEqual([m.view.mode, m.view.picked, m.view.source.value()], ["markdown", null, PICDOC]);
 });

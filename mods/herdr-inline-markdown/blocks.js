@@ -1496,6 +1496,29 @@ const seamBefore = (doc, i, at) => {
 // at their old indent (a paragraph under a wide marker becomes code).
 export const remove = (doc, b) => removeRange(doc, b, b);
 
+// The markdown of each picture of image paragraph b, a linked one with its link: [{ start, end }] document offsets.
+export function picturesIn(doc, b) {
+  const f = fieldOf(doc.text, b, doc.eol);
+  return [...f.value.matchAll(IMAGE_ITEM)].map(m => ({ start: fieldToDoc(f, m.index), end: fieldToDoc(f, m.index + m[0].length) }));
+}
+
+// Picture i of image paragraph b goes: with the spaces after it when another follows on its line, else the spaces
+// before it; with its whole line when it stands alone on one; with the paragraph when it is the only one.
+export function removePicture(doc, b, i) {
+  const all = picturesIn(doc, b), p = all[i];
+  if (!p) return null;
+  if (all.length === 1) return remove(doc, b);
+  const lines = b.lines.map((_, k) => absLine(b, k)), lineOf = x => lines.findIndex(l => x < l.next || l === lines.at(-1));
+  const k = lineOf(p.start), row = all.filter(q => lineOf(q.start) === k), j = row.indexOf(p);
+  let s;
+  if (row.length > 1) s = j < row.length - 1 ? { start: p.start, end: row[j + 1].start } : { start: row[j - 1].end, end: p.end };
+  // The first line keeps its own start, which a lazy next line may lack.
+  else if (k === 0) s = { start: lines[0].body, end: lines[1].body };
+  else if (k < lines.length - 1) s = { start: lines[k].start, end: lines[k + 1].start };
+  else s = { start: lines[k - 1].eol, end: lines[k].eol };
+  return { ...s, insert: "", caret: s.start };
+}
+
 export function removeRange(doc, first, last0) {
   const bl = doc.blocks;
   let k = last0.index;

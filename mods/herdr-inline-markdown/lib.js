@@ -98,7 +98,7 @@ const destinationOf = raw => {
   return (angled ? angled[1] : text.split(/\s/, 1)[0]).trim();
 };
 
-const unescapeAlt = alt => alt.replace(/\\([\\[\]])/g, "$1");
+const unescapeAlt = alt => alt.replace(/\\([!-/:-@[-`{-~])/g, "$1");
 
 // -> [{ alt, src, href }], one per image of an image-only paragraph's content (`href` is null unless the image is
 // linked), else [].
@@ -136,10 +136,12 @@ export const copyName = base => String(base ?? "").replace(/\s+/g, "-");
 // stops at the first `)`, even inside <…>).
 const ADDRESS_ESCAPES = { "%": "%25", "(": "%28", ")": "%29", "?": "%3F", "#": "%23", "<": "%3C", ">": "%3E", "\n": "%0A", "\r": "%0D" };
 
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+const angledIfSpaced = address => (/\s/.test(address) ? `<${address}>` : address);
+
 function pictureAddress(relative) {
   const text = relative.replace(/[%()?#<>\n\r]/g, c => ADDRESS_ESCAPES[c]);
-  const plain = /^[a-z][a-z0-9+.-]*:/i.test(text) ? `./${text}` : text;
-  return /\s/.test(plain) ? `<${plain}>` : plain;
+  return angledIfSpaced(SCHEME.test(text) ? `./${text}` : text);
 }
 
 // null when the picture is not under the note's folder, so it has to be copied there first.
@@ -148,9 +150,45 @@ export function pictureLink(path, note) {
   return target.startsWith(prefix) && target.length > prefix.length ? pictureAddress(target.slice(prefix.length)) : null;
 }
 
-const escapeAlt = alt => alt.replace(/[\\[\]]/g, "\\$&");
+// What an alt text holds that markdown would read as marks, a tag or an entity rather than as itself.
+const ALT_MARKS = /[\\[\]*_`~<]|&(?=#?[0-9A-Za-z]+;)/g;
+export const escapeAlt = alt => String(alt ?? "").replace(ALT_MARKS, "\\$&");
 
 export const pictureMarkdown = items => items.map(({ alt, address }) => `![${escapeAlt(alt)}](${address})`).join("\n");
+
+// An address typed for a picture as its markdown writes it, so that pictureSource finds what was typed. A web or data
+// address keeps its query, fragment and escapes; a path is escaped as pictureAddress escapes it, except that a `%XX`
+// stays the escape it is, since the box shows an address as the file writes it.
+export function writtenAddress(typed) {
+  const text = String(typed ?? "").trim();
+  const unsafe = SCHEME.test(text) ? /[()<>\n\r]/g : /%(?![0-9A-Fa-f]{2})|[()?#<>\n\r]/g;
+  return angledIfSpaced(text.replace(unsafe, c => ADDRESS_ESCAPES[c]));
+}
+
+const ONE_PICTURE = new RegExp(`^(?:${IMAGE_ITEM.source})`);
+
+// [start, end) of a picture's alt text and of its address (as destinationOf reads it), or null for no picture.
+function pictureRanges(source) {
+  const m = ONE_PICTURE.exec(source);
+  if (!m) return null;
+  const linked = m[4] === undefined, alt = linked ? m[1] : m[4], inside = linked ? m[2] : m[5];
+  const altAt = linked ? 3 : 2, insideAt = altAt + alt.length + 2, lead = /^\s*/.exec(inside)[0].length, rest = inside.slice(lead);
+  const address = /^<[^<>\n]*>/.exec(rest)?.[0] ?? /^\S*/.exec(rest)[0];
+  return { alt: [altAt, altAt + alt.length], address: [insideAt + lead, insideAt + lead + address.length] };
+}
+
+const spliced = (text, [start, end], insert) => text.slice(0, start) + insert + text.slice(end);
+
+export function pictureWithAlt(source, alt) {
+  const r = pictureRanges(source);
+  return r ? spliced(source, r.alt, escapeAlt(alt)) : source;
+}
+
+// `written` as writtenAddress or pictureLink give it; the title and link stay.
+export function pictureWithAddress(source, written) {
+  const r = pictureRanges(source);
+  return r ? spliced(source, r.address, written) : source;
+}
 
 // Order: a match in the file name beats one only in the path, a run of the query beats scattered letters, an earlier
 // match beats a later one, a shorter path breaks ties.
