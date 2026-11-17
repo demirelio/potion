@@ -4,7 +4,7 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { applySplice, cellCount, parse, reparse } from "../mods/herdr-inline-markdown/blocks.js";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { cellEdit, cellText, tableOf } from "../mods/herdr-inline-markdown/tables.js";
+import { cellEdit, cellText, rowAt, tableOf, writeCell } from "../mods/herdr-inline-markdown/tables.js";
 import { originals } from "./markdown-corpus.mjs";
 
 const tableIn = text => {
@@ -253,4 +253,63 @@ test("cellEdit on random tables and texts: still one table of the same rows and 
     cases++;
   }
   assert.ok(cases > 2500, `${cases} cases`);
+});
+
+// The row of table t's row r as rowAt parts it from the text alone, and its line's EOL.
+const rowLine = (doc, b, t, r) => {
+  const L = b.lines[t.rows[r].line];
+  return { body: b.start + L.body, eol: b.start + L.eol };
+};
+
+test("rowAt parts one row from the text alone as tableOf parts it: its cells, null for each the row lacks, and its pipes at either end", () => {
+  const text = "Intro\n\n| a | b \\| c | d |\n|---|---|---|\nx | y\n| p |\n";
+  const { doc, b, t } = tableIn(text);
+  for (let r = 0; r < t.rows.length; r++) {
+    const { body, eol } = rowLine(doc, b, t, r), row = rowAt(text, body, eol, t.columns);
+    assert.deepEqual([row.cells, row.lead, row.trail], [t.rows[r].cells, t.rows[r].lead, t.rows[r].trail], `row ${r}`);
+  }
+});
+
+test("writeCell writes as cellEdit does, and says what the cell's field holds once written and where that starts in the new text", () => {
+  const cases = [
+    ["| a | b |\n|---|---|\n| c | d |\n", 1, 1, "x|y", "x\\|y"],
+    ["| a | b |\n|---|---|\n| c | d |\n", 1, 0, "one\ntwo", "one two"],
+    ["| a | b |\n|---|---|\n| c ||\n", 1, 1, "z", "z"],
+    ["| a | b | c |\n|---|---|---|\n| x |\n", 1, 2, "w", "w"],
+    ["| a | b | c |\n|---|---|---|\n| x\n", 1, 2, "w", "w"],
+    ["a | b\n--|--\nc | d\n", 1, 0, "# h", "\\# h"],
+    ["|a|b|\n|-|-|\n", 0, 0, "x\\", "x\\"],
+    ["| a | b |\n|---|---|\n| c | d |\n", 1, 1, "word ", "word "],
+  ];
+  for (const [text, r, c, next, value] of cases) {
+    const { doc, b, t } = tableIn(text), { eol } = rowLine(doc, b, t, r), w = writeCell(text, t.rows[r], eol, c, next);
+    const after = applySplice(text, w);
+    assert.equal(after, applySplice(text, cellEdit(doc, b, t, r, c, next)), `${JSON.stringify(next)}: as cellEdit writes it`);
+    assert.equal(w.value, value, `${JSON.stringify(next)}: the field holds`);
+    assert.equal(after.slice(w.from, w.from + w.value.length), w.value, `${JSON.stringify(next)}: where it starts`);
+  }
+  const { doc, b, t } = tableIn("| a | b |\n|---|---|\n| c | d |\n"), { eol } = rowLine(doc, b, t, 1);
+  const blank = writeCell(doc.text, t.rows[1], eol, 1, " ");
+  assert.deepEqual([applySplice(doc.text, blank), blank.value], ["| a | b |\n|---|---|\n| c |   |\n", " "], "a blank text empties the cell, written as typed");
+});
+
+test("writeCell on random tables and texts: what the field holds is in the new text where it says, and is the cell's text there", () => {
+  const seed = Number(process.env.TABLE_SEED ?? 20261117) + 1, next = rng(seed);
+  let cases = 0;
+  for (let n = 0; n < 2000; n++) {
+    const text = randomTable(next), { doc, b, t } = tableIn(text);
+    if (!t || t.irregular) continue;
+    const r = Math.floor(next() * t.rows.length), c = Math.floor(next() * t.columns);
+    const value = Array.from({ length: Math.floor(next() * 6) }, () => NEXT_PARTS[Math.floor(next() * NEXT_PARTS.length)]).join("");
+    const why = `seed ${seed}, case ${n}: ${JSON.stringify(text)} row ${r} cell ${c} <- ${JSON.stringify(value)}`;
+    const { body, eol } = rowLine(doc, b, t, r), w = writeCell(text, rowAt(text, body, eol, t.columns), eol, c, value), after = applySplice(text, w);
+    assert.equal(after, applySplice(text, cellEdit(doc, b, t, r, c, value)), `${why}: as cellEdit writes it`);
+    assert.equal(w.value, written(value).trim() ? w.value : written(value), `${why}: a blank text is kept as typed`);
+    if (!w.value.trim()) continue;
+    assert.equal(after.slice(w.from, w.from + w.value.length), w.value, `${why}: the field's text is where it says`);
+    const eol2 = eol + w.insert.length - (w.end - w.start), cell = rowAt(after, body, eol2, t.columns).cells[c];
+    assert.equal(after.slice(cell.start, cell.end), w.value.trim(), `${why}: it is the cell's text`);
+    cases++;
+  }
+  assert.ok(cases > 1000, `${cases} cases`);
 });

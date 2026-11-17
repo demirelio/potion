@@ -294,6 +294,14 @@ test("an entry recorded as opening nothing says so on undo and redo, through a r
   assert.deepEqual(h.redo("xab\n"), { start: 3, end: 3, insert: "c", caret: 4, opensNothing: true });
 });
 
+test("the table column of an entry's typing comes back with its caret on undo and redo, the group's after more typing", () => {
+  const h = createHistory();
+  h.record("|a|\n", { start: 3, end: 3, insert: " b |" }, { typing: true, key: 1, time: 0, caretBefore: 3, caretAfter: 5, stroke: "type", column: 2 });
+  h.record("|a| b |\n", { start: 5, end: 5, insert: "c" }, { typing: true, key: 1, time: 10, caretBefore: 5, caretAfter: 6, stroke: "type", column: 2 });
+  assert.deepEqual(h.undo("|a| bc |\n"), { start: 3, end: 8, insert: "", caret: 3, column: 2 });
+  assert.deepEqual(h.redo("|a|\n"), { start: 3, end: 3, insert: " bc |", caret: 6, column: 2 });
+});
+
 test("select on a text the newest entry did not leave changes nothing", () => {
   const { h } = bolded();
   h.select("Hello world.\n", { start: 6, end: 11 }, { start: 8, end: 13 });

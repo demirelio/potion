@@ -36,7 +36,7 @@ function drawn(text, i, more = {}, also = {}) {
     remote: false, shown: new Map(), good: new Map(), links: [], sizes: [], layouts: new Map(),
     link(url) { this.links.push(url); }, blockSized(key, size) { this.sizes.push([key, size]); },
     pictureOf(key, width) { this.asked = [key, width]; return this.layouts.get(key) ?? { items: [], boxes: [], height: 0 }; },
-    blockButtonIn: () => null,
+    blockButtonIn: () => null, cellField: () => null,
     ...also,
   };
   return { d, owner, el: renderBlock(owner, d), b };

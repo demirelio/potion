@@ -457,3 +457,14 @@ test("visibleMap maps what Reading shows to value offsets: an escape at its char
   assert.equal(map[12], v.indexOf("👍"));
   assert.equal(map.at(-1), v.length);
 });
+
+test("in a table cell (`cell`) a \\| shows as | in a code span too, its backslash hidden as an escape's; a paragraph's code shows it as written", () => {
+  const value = "`x\\|y` and a \\| b";
+  const chars = opts => parseInline(value, opts).chars.map(c => c.text).join("");
+  assert.equal(chars({ cell: true }), "x|y and a | b");
+  assert.equal(chars(), "x\\|y and a | b");
+  const pipe = parseInline(value, { cell: true }).runs.find(r => r.text === "|" && !r.verbatim);
+  assert.deepEqual([pipe.start, pipe.end], [2, 4], "one character from the backslash and the pipe");
+  assert.notEqual(parsedInline(value, null, true), parsedInline(value, null), "kept apart from a paragraph's read");
+  assert.equal(parsedInline(value, null, true).chars.map(c => c.text).join(""), "x|y and a | b");
+});

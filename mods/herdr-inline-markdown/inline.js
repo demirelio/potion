@@ -11,7 +11,7 @@ import { TEXT_COLORS } from "./colors.js";
 
 const TAB = 9, NL = 10, FF = 12, CR = 13, SP = 32, BANG = 33, DQUOTE = 34, AMP = 38, SQUOTE = 39, LPAREN = 40;
 const RPAREN = 41, STAR = 42, DASH = 45, DOT = 46, SLASH = 47, COLON = 58, SEMI = 59, LT = 60, EQUALS = 61, GT = 62;
-const LBR = 91, BSL = 92, RBR = 93, UNDER = 95, BT = 96, TILDE = 126, DEL = 127;
+const LBR = 91, BSL = 92, RBR = 93, UNDER = 95, BT = 96, PIPE = 124, TILDE = 126, DEL = 127;
 
 const SPECIAL = /[\n\r`[\]\\!<&*_~]/g;
 const ESCAPABLE = /^[!-/:-@[-`{-~]$/;
@@ -948,8 +948,9 @@ function sortedBy(items, key, bound) {
 // Turns the reader's leaves into runs, kept in typed arrays until they are read, and adds the spans the text itself
 // makes: web and e-mail literals.
 class Writer {
-  constructor(reader) {
+  constructor(reader, cell) {
     this.s = reader.s;
+    this.cell = cell;
     this.starts = new Int32Array(FIRST_CAPACITY);
     this.ends = new Int32Array(FIRST_CAPACITY);
     this.texts = [];
@@ -1008,12 +1009,20 @@ class Writer {
     this.verbatim(plain, to);
   }
 
-  // A code span's content: a line ending in it shows as a space.
+  // A code span's content: a line ending in it shows as a space; in a table cell a \| shows as | (GFM reads a cell so
+  // before its inline content).
   code(from, to) {
     const s = this.s;
     let plain = from;
     for (let i = from; i < to; i++) {
       const c = s.charCodeAt(i);
+      if (this.cell && c === BSL && i + 1 < to && s.charCodeAt(i + 1) === PIPE) {
+        this.verbatim(plain, i);
+        this.char(i, i + 2, "|");
+        plain = i + 2;
+        i++;
+        continue;
+      }
       if (c !== NL && c !== CR) continue;
       this.verbatim(plain, i);
       plain = c === CR && i + 1 < to && s.charCodeAt(i + 1) === NL ? i + 2 : i + 1;
@@ -1125,9 +1134,10 @@ class Writer {
 // text differs from its source (an escape, an entity, a line break, a line ending in code).
 // `runs` and `chars` are built when first read (`chars` is one object per character); `spans` costs neither.
 // Runs and characters with the same spans share one `spans` array: read it, never change it.
-export function parseInline(value, { defs } = {}) {
+// `cell`: the value is a table cell's text, whose \| shows as | in a code span too.
+export function parseInline(value, { defs, cell = false } = {}) {
   const s = String(value ?? "");
-  const reader = new Reader(s, defs ?? null).read(), writer = new Writer(reader);
+  const reader = new Reader(s, defs ?? null).read(), writer = new Writer(reader, cell);
   writer.write(reader);
   return writer.finish();
 }
@@ -1137,12 +1147,13 @@ export function parseInline(value, { defs } = {}) {
 const KEPT_READS = 4;
 const reads = [];
 
-// parseInline's answer for `value` read with `defs` (compared by identity), from the last few reads when it is there.
-export function parsedInline(value, defs = null) {
+// parseInline's answer for `value` read with `defs` (compared by identity), as a table cell's text when `cell`, from
+// the last few reads when it is there.
+export function parsedInline(value, defs = null, cell = false) {
   const s = String(value ?? ""), known = defs ?? null;
-  for (const r of reads) if (r.value === s && r.defs === known) return r.inline;
-  const inline = parseInline(s, { defs: known });
-  reads.unshift({ value: s, defs: known, inline });
+  for (const r of reads) if (r.value === s && r.defs === known && r.cell === cell) return r.inline;
+  const inline = parseInline(s, { defs: known, cell });
+  reads.unshift({ value: s, defs: known, cell, inline });
   if (reads.length > KEPT_READS) reads.pop();
   return inline;
 }

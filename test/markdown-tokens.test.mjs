@@ -228,6 +228,12 @@ test("a tint over plain text makes its words tokens drawn highlighted, a word it
   assert.deepEqual(tinted(value, { start, end, letter: "h" }, { start, end }).map(t => t[0]), ["h", "e", "l", "l", "o", " ", "w", "o", "r", "l", "d"], "the words at the selection's ends split into letters");
 });
 
+test("a cell's code span holding \\| draws | in its token, the backslash hidden; a paragraph's draws it as written", () => {
+  assert.deepEqual(tokens("`x\\|y`", FAR, { cell: true }), [["`x\\|y`", "x|y", "c:3"]]);
+  assert.deepEqual(tokens("`x\\|y`"), [["`x\\|y`", "x\\|y", "c:4"]]);
+  assert.equal(rich("a \\| b `x\\|y`", { cell: true }).drawn, "a | b x|y");
+});
+
 test("tokens compare by range, text, id and label", () => {
   const a = tokensFor(rich("a **b** c"), FAR).tokens;
   assert.ok(sameTokens(a, tokensFor(rich("a **b** c"), FAR).tokens));

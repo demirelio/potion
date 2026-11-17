@@ -54,9 +54,10 @@ function fold(text, g, e) {
 }
 
 // -> a history. record(text, splice, meta) takes the text before the splice and meta { caretBefore, caretAfter,
-// typing, key, time, join, stroke, opensNothing }; undo(text) and redo(text) hand back the splice to apply
-// to `text`, with the caret and, for an entry given them by select(), the `select` range, and `opensNothing` for an
-// entry recorded with it, or null when there is none or the entry does not match `text`.
+// typing, key, time, join, stroke, opensNothing, column }; undo(text) and redo(text) hand back the splice to apply
+// to `text`, with the caret and, for an entry given them by select(), the `select` range, and `opensNothing` and
+// `column` (the table column the caret is in) for an entry recorded with them, or null when there is none or the entry
+// does not match `text`.
 export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, groupMs = GROUP_MS } = {}) {
   let done = [], undone = [], open = null, size = 0;
 
@@ -96,6 +97,7 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
     };
     if (meta.join !== undefined && t.start === t.end) e.join = meta.join;
     if (meta.opensNothing) e.opensNothing = true;
+    if (meta.column !== undefined) e.column = meta.column;
     undone = [];
     const g = done.at(-1);
     if (meta.typing && open === g && g && g.join === undefined) align(text, g, e);
@@ -187,7 +189,7 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
       size -= bytes(e);
       undone.push(e);
       open = null;
-      return { start: e.start, end: e.start + e.inserted.length, insert: e.removed, caret: e.caretBefore, ...(e.selectBefore && { select: e.selectBefore }), ...(e.opensNothing && { opensNothing: true }) };
+      return { start: e.start, end: e.start + e.inserted.length, insert: e.removed, caret: e.caretBefore, ...(e.selectBefore && { select: e.selectBefore }), ...(e.opensNothing && { opensNothing: true }), ...(e.column !== undefined && { column: e.column }) };
     },
     redo(text) {
       const e = undone.at(-1);
@@ -197,7 +199,7 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
       done.push(e);
       size += bytes(e);
       open = null;
-      return { start: e.start, end: e.start + e.removed.length, insert: e.inserted, caret: e.caretAfter, ...(e.selectAfter && { select: e.selectAfter }), ...(e.opensNothing && { opensNothing: true }) };
+      return { start: e.start, end: e.start + e.removed.length, insert: e.inserted, caret: e.caretAfter, ...(e.selectAfter && { select: e.selectAfter }), ...(e.opensNothing && { opensNothing: true }), ...(e.column !== undefined && { column: e.column }) };
     },
     // An outside change E (a reload, a merged disk change), as a splice of the current text: entries before and after it
     // are kept with their offsets moved, an entry it overlaps is dropped with every older one, and redo is cleared.

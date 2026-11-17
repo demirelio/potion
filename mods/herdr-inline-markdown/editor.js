@@ -5,9 +5,9 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureName, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, gridAt, gridRowTop, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, tablePress, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
-import { gridOf } from "./grid.js";
-import { tableOf } from "./tables.js";
+import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, GRID, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, gridAt, gridRowTop, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, tablePress, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { drawsGrid, gridOf } from "./grid.js";
+import { cellText, cellWritten, rowAt, tableOf, writeCell } from "./tables.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -24,7 +24,7 @@ import { addLink, clipboardAddress, linkAddress, pictureCut, pictureForm, setAdd
 import { addComment, cellComments, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, showComments, timeLabel } from "./comments.js";
 import { addBlockNote, addPictureNote, blockUnit, editBlockNote, editCellNote, editPictureNote, notesAfter, ownerOf, ownsNotes, pairNotes, removeWithNotes, resolveBlockNote, resolveCellNote, resolvePictureNote } from "./blocknotes.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
-import { Block, CALIBRATED, Column, FRAMED, FRONT_BOX, BOX, INDENT, MARKER_W, PICTURE_FRAME, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
+import { Block, CALIBRATED, Column, FRAMED, FRONT_BOX, BOX, INDENT, MARKER_W, PICTURE_FRAME, QUOTE_BAR, QUOTE_PAD, STYLES, cellId, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, parsedInline, visibleMap } from "./inline.js";
 import { drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
 
@@ -62,6 +62,15 @@ const WINDOW_MARGIN = 1500, INLINE_MARGIN = 800;
 // Screens above and below the viewport: a text block gets a field of its own within the first, and keeps it within the
 // second, so scrolling to and fro across one edge does not make and let go the same fields.
 const FIELDS_MADE_WITHIN = 1, FIELDS_KEPT_WITHIN = 3;
+// Making a field costs a few milliseconds in Herdr, where a handler has 500: the cells of a long table near the page
+// get theirs over several passes.
+const CELLS_A_PASS = 240;
+const CELL_ID = /^(.*):(\d+):(\d+)$/;
+// The table cell a field id (page.js cellId) names: { key, r, c }; null for a block's key, which holds no colon.
+function cellOfId(id) {
+  const m = CELL_ID.exec(id ?? "");
+  return m ? { key: m[1], r: Number(m[2]), c: Number(m[3]) } : null;
+}
 // The page is laid out before the viewport reports its size: the first window is made for a page this tall.
 const UNSIZED_VIEW_H = 1200;
 // A recalibration whose samples, once drawn, never report sizes keeps the measurements it had.
@@ -156,6 +165,13 @@ const NEW_CARD = "md-card-new", FLOAT_CARD = "md-card-float";
 const CARD_SLACK = 200;
 // Look letters (tokens.js) of the text a comment is being written on, and of the active comment's.
 const TINT_NEW = "h", TINT_ACTIVE = "d";
+// What of field value `value` the comment starting at `at` tints in look `letter`: its marked text, a point comment's
+// marker; null when no comment starts there.
+function tintIn(value, at, letter) {
+  const c = noted(value).find(x => x.start === at);
+  if (!c) return null;
+  return c.kind === "point" ? { start: c.start, end: c.end, letter } : { start: c.from, end: c.to, letter };
+}
 const CARD_TIME_SIZE = 11.5;
 const LINK_BUTTONS = [
   { name: "open", icon: "external-link", tip: "Open link" },
@@ -261,6 +277,17 @@ function caretOf(state) {
   } catch { return null; }
 }
 const docRange = (f, r) => ({ start: fieldToDoc(f, r.start), end: fieldToDoc(f, r.end) });
+const asRange = caret => (typeof caret === "number" ? { start: caret, end: caret } : caret ?? { start: 0, end: 0 });
+const BLANK_ENDS = /^([ \t]*)([\s\S]*?)[ \t]*$/;
+// Cell field map f (cellMap) takes `shown` as its value when that is f's text with blanks at its ends the file holds
+// there, which typing wrote and a parse trims away, or blanks alone in an empty cell.
+function keepBlanks(f, shown) {
+  const [, lead, core] = BLANK_ENDS.exec(shown);
+  if (core !== f.value) return;
+  const from = core ? f.start0 - lead.length : f.start0;
+  if (core && f.text.slice(from, from + shown.length) !== shown) return;
+  f.start0 = from; f.value = shown;
+}
 // Whether field change `edit` is one a key makes at the caret or selection `known` (else the caret moved unread).
 const madeAt = (known, edit) => known.valid && (known.start === known.end
   ? edit.at === known.start || edit.at + edit.removed === known.start
@@ -538,6 +565,12 @@ export class Editor {
     // Shift+press went into, which selects blocks instead; `cmdPress` ({ key, opened }) a Cmd+press in a block's field,
     // which may open a link instead. `fieldGen` counts the times blocks got or lost a field of their own.
     this.blockFields = new Map(); this.fieldKeys = new Map(); this.defs = null; this.fieldGen = 0;
+    // The cells of a grid table's rows near the viewport are drawn by fields of their own too (`cellFields`: table key ->
+    // { cells: `r:c` -> { state, and what its value and tokens were made from }, gen: a new number whenever its fields
+    // come or go, content / defs / deep / dirty: what they were last filled from }; `cellKeys` each state's { key, r, c }).
+    // While the edited block is such a table, `cell` ({ r, c }) names the edited cell, whose field is `field`, and the
+    // table's column widths stay `heldWidths` ({ key, widths }).
+    this.cellFields = new Map(); this.cellKeys = new Map(); this.cell = null; this.heldWidths = null; this.cellGen = 0;
     this.loose = this.newField();
     this.field = this.loose;
     this.activeKey = null; this.pending = null; this.pendings = 0;
@@ -1134,6 +1167,7 @@ export class Editor {
       if (this.f) at = fieldToDoc(this.f, c ? c.end : 0);
     }
     this.leave(cx);
+    for (const key of [...this.cellFields.keys()]) this.releaseCells(key);
     at = at === null ? this.topBlock()?.start ?? 0 : Math.min(at, this.text.length);
     this.mode = "markdown";
     if (this.remote) return this.handle.focus();
@@ -1325,8 +1359,8 @@ export class Editor {
     this.dialog?.stop();
     owners.delete(this.id);
     const fields = [...this.blockFields.values()].map(kept => kept.state);
-    for (const e of [...this.entities.values(), this.column, ...fields]) { try { e?.release(); } catch { /* the host let it go already */ } }
-    this.entities.clear(); this.blockFields.clear(); this.fieldKeys.clear();
+    for (const e of [...this.entities.values(), this.column, ...fields, ...this.cellKeys.keys()]) { try { e?.release(); } catch { /* the host let it go already */ } }
+    this.entities.clear(); this.blockFields.clear(); this.fieldKeys.clear(); this.cellFields.clear(); this.cellKeys.clear();
     this.woken?.();
     if (!this.writable() || this.text === this.disk) return;
     const { text, disk } = this, first = this.saving ?? disk;
@@ -1364,7 +1398,7 @@ export class Editor {
     this.syncField(cx);
     if (!this.stale) return;
     const h = this.activeKey && !this.pending && this.f ? this.held() : null, b = h && this.blockByKey(this.activeKey);
-    const base = this.doc.text, gone = b && this.seen === "" && b.subtreeEnd === b.end ? removeWithNotes(this.doc, b) : null;
+    const base = this.doc.text, gone = b && !this.cell && this.seen === "" && b.subtreeEnd === b.end ? removeWithNotes(this.doc, b) : null;
     const at = caretDoc ?? h?.caret ?? h?.field;
     const d = this.refresh(cx, at === undefined ? null : { at, kind: null, caretDoc: caretDoc ?? h?.caret ?? null, from: h?.start });
     // Everything typed in the emptied block lies inside its span, so removing it from the text before the typing
@@ -1398,6 +1432,7 @@ export class Editor {
   refind({ at, kind, caretDoc, from = -Infinity }, cx) {
     const b = this.holding(at);
     if (!b || b.start > at || (kind && b.kind !== kind) || b.start < from || b.image || this.hiddenNotes(b.key) || !this.editable()) return this.drop();
+    if (this.cell) return this.refindCell(b, at, caretDoc, cx);
     const f = fieldOf(this.doc, b), value = withInnerLine(b, f.value);
     this.activeKey = b.key; this.f = f;
     this.adoptField(b);
@@ -1410,6 +1445,32 @@ export class Editor {
     this.rows = this.rowsFlag();
     this.revealNext = true;
     this.wake();
+  }
+
+  // The edited cell after a re-parse: the one of grid table b holding document offset `at`, its field the one being
+  // edited, as it was, with the blanks typed at its text's ends. A table the re-parse leaves kept as source stops the
+  // editing: the grid of the pass before still names it one.
+  refindCell(b, at, caretDoc, cx) {
+    if (b.kind !== "table" || !drawsGrid(this.doc, b)) return this.drop();
+    const { r, c } = this.cellAtDoc(b, at, at, this.cell.c), f = this.cellMap(b, r, c, this.seen);
+    this.activeKey = b.key; this.f = f; this.cell = { r, c };
+    this.adoptCell(b.key, r, c);
+    if (f.value === this.seen) return;
+    const n = clamp(caretDoc !== null && caretDoc !== undefined ? docToField(f, caretDoc) : mapCaret(diff(this.seen, f.value), caretOf(this.field)?.end ?? 0), 0, f.value.length);
+    this.slash = null; this.bar = null; this.note = null;
+    if (!this.setField(f.value, { start: n, end: n })) return this.drop();
+    this.retoken();
+    this.revealNext = true;
+    this.wake();
+  }
+
+  // The field being edited draws cell (r, c) of table `key`, which a re-parse may have moved it to.
+  adoptCell(key, r, c) {
+    const was = this.cellKeys.get(this.field);
+    if (was && was.key === key && was.r === r && was.c === c) return;
+    if (was) this.disownCell(was.key, was.r, was.c);
+    this.releaseField(this.disownCell(key, r, c));
+    this.ownCell(key, r, c, this.field);
   }
 
   // The edited block may be another one after a re-parse (its key went, or the block not written yet was written):
@@ -1438,6 +1499,7 @@ export class Editor {
     for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames, this.cardMemo, this.cellMemo, this.grids, this.rowHeights]) m.delete(key);
     this.zoomed.delete(key);
     this.releaseField(this.disown(key));
+    this.releaseCells(key);
     if (this.hoverFrame === key) this.hoverFrame = null;
     if (this.pan?.key === key) this.pan = null;
     if (this.lang?.key === key) this.letLanguagesGo();
@@ -1649,9 +1711,136 @@ export class Editor {
   }
 
   releaseField(state) {
-    if (!state || state === this.field || state === this.loose || this.fieldKeys.has(state)) return;
+    if (!state || state === this.field || state === this.loose || this.fieldKeys.has(state) || this.cellKeys.has(state)) return;
     this.owed.delete(state); this.echoes.delete(state);
     try { state.release(); } catch { /* the host let it go already */ }
+  }
+
+  cellField(key, r, c) {
+    return this.cellFields.get(key)?.cells.get(`${r}:${c}`)?.state ?? null;
+  }
+
+  ownCell(key, r, c, state) {
+    let table = this.cellFields.get(key);
+    if (!table) this.cellFields.set(key, (table = { cells: new Map(), gen: 0, content: null, defs: null, deep: "", dirty: true }));
+    table.cells.set(`${r}:${c}`, { state, src: null, value: null, defs: null, tint: "", rich: null, checked: false });
+    table.gen = ++this.cellGen;
+    table.dirty = true;
+    this.cellKeys.set(state, { key, r, c });
+  }
+
+  // -> the field cell (r, c) of table `key` owned, now nobody's, or null.
+  disownCell(key, r, c) {
+    const table = this.cellFields.get(key), kept = table?.cells.get(`${r}:${c}`);
+    if (!kept) return null;
+    table.cells.delete(`${r}:${c}`);
+    table.gen = ++this.cellGen;
+    if (!table.cells.size) this.cellFields.delete(key);
+    this.cellKeys.delete(kept.state);
+    return kept.state;
+  }
+
+  // Every cell field of table `key` goes; the edited one is only disowned, for its editing to find it again.
+  releaseCells(key) {
+    const table = this.cellFields.get(key);
+    if (!table) return;
+    for (const kept of [...table.cells.values()]) {
+      const { r, c } = this.cellKeys.get(kept.state);
+      this.releaseField(this.disownCell(key, r, c));
+    }
+  }
+
+  // The field cell (r, c) of grid table b is edited in: its own, made now when its row is far from the page.
+  cellFieldFor(b, r, c) {
+    if (!this.cellField(b.key, r, c)) this.ownCell(b.key, r, c, this.newField());
+    return this.cellField(b.key, r, c);
+  }
+
+  // A press is under way in the cell's field, or it is the edited one.
+  cellInUse(key, r, c) {
+    const id = cellId(key, r, c);
+    return id === this.editedId() || this.fieldInUse(id);
+  }
+
+  // What names the edited field: the edited block's key, or its cell's id while a cell is edited.
+  editedId() {
+    return this.cell && this.activeKey ? cellId(this.activeKey, this.cell.r, this.cell.c) : this.activeKey;
+  }
+
+  // The field a field id names: a block's own, or a cell's.
+  stateOf(id) {
+    const cell = cellOfId(id);
+    return cell ? this.cellField(cell.key, cell.r, cell.c) : this.blockField(id);
+  }
+
+  // The field id of a field state: its block's key or its cell's id; undefined for none.
+  idOf(state) {
+    const cell = this.cellKeys.get(state);
+    return cell ? cellId(cell.key, cell.r, cell.c) : this.fieldKeys.get(state);
+  }
+
+  // Grid table b's grid data while it is drawn as a grid, else null.
+  gridOf(b) {
+    return b?.kind === "table" ? this.data.get(b.key)?.grid ?? null : null;
+  }
+
+  // The field map of cell (r, c) of grid table b: its text as the file holds it, from `start0`, with what writing it
+  // needs (its row's line: `body` and `eol`; the header's `columns`), so that typing writes the cell (writeCell)
+  // without a parse, and where that line is in b's content (`lineAt`, `lineEnd`). A cell its row lacks holds nothing and
+  // starts at the line's end. A field that shows `shown` keeps the blanks typed at the ends of the cell's text, which
+  // the parse trims away (keepBlanks).
+  cellMap(b, r, c, shown = null) {
+    const t = tableOf(this.doc, b), row = t.rows[r], L = b.lines[row.line], cell = row.cells[c] ?? null, eol = b.start + L.eol;
+    let lineAt = row.line;
+    for (let k = 0; k < row.line; k++) lineAt += b.lines[k].eol - b.lines[k].body;
+    const f = {
+      cell: true, block: b, kind: b.kind, r, c, columns: t.columns, body: b.start + L.body, eol, end: b.end, text: this.doc.text,
+      lineAt, lineEnd: lineAt + L.eol - L.body,
+      start0: cell ? cell.start : eol, value: cell ? this.doc.text.slice(cell.start, cell.end) : "", seps: [], g: 0, gf: 0, gd: 0,
+    };
+    if (shown !== null) keepBlanks(f, shown);
+    return f;
+  }
+
+  // The cell of grid table b holding document offset `start`, the last cell of the row holding it that starts at or
+  // before it (the header for the delimiter row), and [start, end) in that cell's field, clamped to it: { r, c, range }.
+  // Every cell a row lacks starts at its line's end, so an offset there is in cell `column` when the row lacks that one.
+  cellAtDoc(b, start, end = start, column = null) {
+    const t = tableOf(this.doc, b);
+    let r = 0, c = 0;
+    for (let k = 0; k < t.rows.length; k++) if (b.start + b.lines[t.rows[k].line].start <= start) r = k;
+    const cells = t.rows[r].cells;
+    if (column !== null && cells[column] === null && start >= b.start + b.lines[t.rows[r].line].eol) return { r, c: column, range: { start: 0, end: 0 } };
+    for (let k = 0; k < cells.length; k++) if (cells[k] && cells[k].start <= start) c = k;
+    const cell = cells[c], len = cell ? cell.end - cell.start : 0, from = cell ? cell.start : 0, at = x => clamp(x - from, 0, len);
+    return { r, c, range: { start: at(start), end: at(Math.max(start, end)) } };
+  }
+
+  // The edited cell's field, which holds `next`, written as the cell's rules write it (writeCell) into the text as it is
+  // now: over the cell's text as its field shows it, spaces typed at its ends included.
+  cellWrite(next) {
+    const f = this.f, row = rowAt(this.text, f.body, f.eol, f.columns);
+    if (f.value.trim() && row.cells[f.c]) row.cells[f.c] = { start: f.start0, end: f.start0 + f.value.length };
+    return writeCell(this.text, row, f.eol, f.c, next);
+  }
+
+  // A change typed in the edited cell shows what the cell's rules write: a | escaped, a line break a space. -> mend's
+  // answer `mended` with that written, or one of its shape for the change `edit` of `before` into `value`; `mended`
+  // itself when it is written as it shows.
+  cellFixed(before, mended, value, edit) {
+    const base = mended ? mended.value : value, written = this.cellWrite(base).value;
+    if (written === base) return mended;
+    const caret = mapCaret(diff(base, written), mended ? mended.caret : edit.at + edit.inserted.length);
+    return { value: written, caret, edit: diff(before, written), style: mended?.style ?? null };
+  }
+
+  // The typing splice of the edited cell, whose field shows `this.seen`, with its field map moved on. `change` is that
+  // change of the field's value. -> { start, end, insert, caret, fieldCaret }, as blocks.js type gives it.
+  typeCell(change) {
+    const f = this.f, w = this.cellWrite(this.seen), delta = w.insert.length - (w.end - w.start);
+    Object.assign(f, { eol: f.eol + delta, end: f.end + delta, value: w.value, start0: w.from, text: applySplice(this.text, w) });
+    const fieldCaret = clamp(change.at + change.inserted.length, 0, w.value.length);
+    return { start: w.start, end: w.end, insert: w.insert, caret: w.from + fieldCaret, fieldCaret };
   }
 
   // The field block b is edited in: its own, made now when it has none yet, or `loose`.
@@ -1685,11 +1874,99 @@ export class Editor {
       changed.push(key);
       this.fillField(b, this.blockFields.get(key));
     }
+    this.syncCells(mounted, refresh, changed);
     // A value a field refused (fillField) left the file read-only: its text is drawn as text again.
     if (this.locked && !locked) return this.syncFields(cx, false, fresh);
     if (!changed.length) return;
     this.fieldGen++;
     this.redraw(changed, cx, fresh);
+  }
+
+  // syncFields for the cells of grid tables, row by row: a row within FIELDS_MADE_WITHIN screens gets a field for each
+  // cell, at most CELLS_A_PASS a pass (the next pass, posted, makes the rest); one farther than FIELDS_KEPT_WITHIN, out
+  // of the window or the document lets its fields go, and so does a cell that is no longer there. The edited cell and
+  // one a press is under way in keep theirs. The keys of the tables whose fields came or went go into `changed`.
+  syncCells(mounted, refresh, changed) {
+    for (const [key, table] of [...this.cellFields]) {
+      const i = mounted.has(key) ? this.at.get(key) : undefined, b = i === undefined ? null : this.blocks[i], g = this.gridOf(b);
+      const rows = g && this.ownsCells(b) ? this.rowsNear(i, this.data.get(key), FIELDS_KEPT_WITHIN) : null, gen = table.gen;
+      for (const kept of [...table.cells.values()]) {
+        const { r, c } = this.cellKeys.get(kept.state);
+        if ((rows?.has(r) && c < g.widths.length) || this.cellInUse(key, r, c)) continue;
+        this.releaseField(this.disownCell(key, r, c));
+      }
+      if (table.gen !== gen) changed.push(key);
+    }
+    let budget = CELLS_A_PASS;
+    for (const key of this.nearKeys(mounted, FIELDS_MADE_WITHIN)) {
+      const i = this.at.get(key), b = this.blocks[i];
+      if (budget > 0 && this.gridOf(b) && this.ownsCells(b)) budget = this.makeCells(i, b, budget, changed);
+    }
+    const defs = this.defsNow();
+    for (const [key, table] of this.cellFields) if (refresh || table.dirty) this.fillCells(key, table, defs);
+    if (budget <= 0) this.post(cx => this.syncWindow(cx));
+  }
+
+  ownsCells(b) {
+    return Boolean(b) && b.kind === "table" && !this.remote && !this.locked;
+  }
+
+  // Fields for the cells of grid table b's rows near the page that have none, `budget` at most. -> what is left of it.
+  makeCells(i, b, budget, changed) {
+    const d = this.data.get(b.key), columns = d.grid.widths.length;
+    let left = budget;
+    for (const r of this.rowsNear(i, d, FIELDS_MADE_WITHIN)) {
+      for (let c = 0; c < columns && left > 0; c++) {
+        if (this.cellField(b.key, r, c)) continue;
+        this.ownCell(b.key, r, c, this.newField());
+        left--;
+      }
+    }
+    if (left !== budget) changed.push(b.key);
+    return left;
+  }
+
+  // The rows of grid table data d (page index i) within `screens` screens above or below the viewport.
+  rowsNear(i, d, screens) {
+    const near = new Set();
+    if (this.sums.length !== this.blocks.length + 1) return near;
+    const screen = this.viewport ? this.viewH() : UNSIZED_VIEW_H, top = this.offset - COLUMN.padTop;
+    const from = top - screens * screen, to = top + (1 + screens) * screen, heights = this.gridHeights(d);
+    let y = this.sums[i] + d.space + GRID.line;
+    for (let r = 0; r < heights.length && y < to; r++) {
+      if (y + heights[r] > from) near.add(r);
+      y += heights[r];
+    }
+    return near;
+  }
+
+  // The cell fields of table `key` not being edited take their cells' text and tokens where those changed, the active
+  // cell comment's in the deeper colour; nothing is read while the table, the definitions and that comment stay.
+  fillCells(key, table, defs) {
+    const b = this.blockByKey(key), deep = b ? this.cellDeep(b) : null, deepKey = deep ? `${deep.row}:${deep.column}:${deep.at}` : "";
+    if (!b || (!table.dirty && table.content === b.content && table.defs === defs && table.deep === deepKey)) return;
+    const t = tableOf(this.doc, b), edited = key === this.activeKey ? this.cell : null;
+    for (const kept of table.cells.values()) {
+      const { r, c } = this.cellKeys.get(kept.state);
+      if ((edited && edited.r === r && edited.c === c) || r >= t.rows.length) continue;
+      const source = cellText(this.doc, t, r, c), at = deep && deep.row === r && deep.column === c ? deep.at : -1;
+      this.fillCell(kept, source, defs, at < 0 ? null : tintIn(source, at, TINT_ACTIVE));
+    }
+    Object.assign(table, { content: b.content, defs, deep: deepKey, dirty: false });
+  }
+
+  // A cell field not being edited shows its cell's text with its words as tokens, none split into letters, `tint` ({
+  // start, end, letter }) drawn in its look too; set only when those changed. A cell left has `src` null.
+  fillCell(kept, source, defs, tint) {
+    const tinted = tint ? `${tint.start}:${tint.end}:${tint.letter}` : "";
+    if (kept.src === source && kept.defs === defs && kept.tint === tinted) return;
+    if (!kept.rich || source !== kept.value || kept.tint !== tinted || (defs !== kept.defs && source.includes("["))) {
+      kept.rich = richOf(source, parsedInline(source, defs.map, true), { tint });
+    }
+    Object.assign(kept, { src: source, value: source, defs, tint: tinted });
+    const tokens = tokensFor(kept.rich, null).tokens, state = kept.state;
+    if (state.value() === source && sameTokens(state.tokens(), tokens)) return;
+    try { state.set_value({ text: source, tokens }); } catch { this.guard(() => state.set_value(source)); }
   }
 
   // The keys of the mounted blocks within `screens` screens above or below the viewport.
@@ -1751,13 +2028,16 @@ export class Editor {
     try { this.entities.set(key, cx.new(Block, { owner: this.id, key })); } catch { this.inline = true; }
   }
 
+  // A table is drawn as a grid unless its source is what the edited field shows (a table kept as source). `cells` says
+  // which of its cells have fields, `cell` which one is edited.
   dataFor(blocks, i, width) {
-    const b = blocks[i], grid = b.kind === "table" && b.key !== this.activeKey ? this.gridNow(b, width) : null;
+    const b = blocks[i], source = b.key === this.activeKey && !this.cell, grid = b.kind === "table" && !source ? this.gridNow(b, width) : null;
+    const cell = grid && b.key === this.activeKey ? `${this.cell.r}:${this.cell.c}` : "";
     const look = lookOf(b, Boolean(grid)), cal = this.calOf(look.style), marker = markerOf(b);
     const text = grid ? "" : look.look === "text" ? displayText(b, this.highlight) : b.kind === "table" ? this.tableText(b) : look.look === "boxed" ? b.render : b.content;
     const space = spaceBefore(blocks, i, this.doc.blocks);
     return {
-      key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color, grid,
+      key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color, grid, cell, cells: grid ? this.cellFields.get(b.key)?.gen ?? 0 : 0,
       space, depth: b.depth, text, ...this.notesData(b, look, space, cal, width), ...this.chipData(b),
       marker, label: marker === "number" ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked),
       diagram: look.look === "diagram" ? diagramSig(this.shown.get(b.key), this.good.get(b.key)) : "",
@@ -1834,11 +2114,12 @@ export class Editor {
   }
 
   // What table b's grid draws (grid.js gridOf) in a column `width` px wide, the same object while that stays the same;
-  // null for a table kept as source.
+  // null for a table kept as source. The widths held while the caret is in the table stay.
   gridNow(b, width) {
     let kept = this.grids.get(b.key);
     if (!kept) this.grids.set(b.key, (kept = {}));
-    const opts = { room: width - b.depth * INDENT, head: this.calOf("head"), body: this.calOf("cell"), color: this.highlight, deep: this.cellDeep(b), defs: this.defsNow() };
+    const widths = this.heldWidths?.key === b.key ? this.heldWidths.widths : null;
+    const opts = { room: width - b.depth * INDENT, head: this.calOf("head"), body: this.calOf("cell"), color: this.highlight, deep: this.cellDeep(b), defs: this.defsNow(), widths };
     return gridOf(kept, this.doc, b, opts);
   }
 
@@ -2349,7 +2630,7 @@ export class Editor {
     }
     if (hit.on === "outside") return this.deactivate(cx);
     if (hit.on === "end") return this.openPending(cx);
-    if (hit.block.key !== this.activeKey) this.clickBlock(hit.block.key, p, cx);
+    if (hit.block.key !== this.activeKey || this.cell) this.clickBlock(hit.block.key, p, cx);
   }
 
   // A click on a picture picks it, a double-click too, and the block being edited is left; Cmd+click follows a linked
@@ -2555,10 +2836,10 @@ export class Editor {
 
   // The field the drag began in goes on selecting while the button is down: with blocks selected, it shows none.
   dragTo(from, p, cx) {
-    const b = this.hit(p)?.block;
-    if (!b || !this.blockByKey(from) || !this.blockByKey(b.key) || (!this.sel && b.key === from)) return;
-    this.select(from, b.key, cx);
-    this.unselect(this.blockField(from));
+    const b = this.hit(p)?.block, key = cellOfId(from)?.key ?? from;
+    if (!b || !this.blockByKey(key) || !this.blockByKey(b.key) || (!this.sel && b.key === key)) return;
+    this.select(key, b.key, cx);
+    this.unselect(this.stateOf(from));
   }
 
   select(from, to, cx) {
@@ -2715,8 +2996,11 @@ export class Editor {
   // Block `key` becomes the edited one, the caret at field offset `caret` (a number or a range). `shift` moves the page
   // down by that much; `reveal` keeps the caret row in view, which a press does not want: the page does not move on a click.
   // A paragraph of pictures is never edited: the picture at the caret is picked instead. Nor is a block's comments
-  // paragraph: nothing opens. Another block's active comment ends. -> whether a block is edited.
-  activate(key, caret, cx, { shift = 0, reveal = true } = {}) {
+  // paragraph: nothing opens. Another block's active comment ends. A table drawn as a grid is edited in the cell holding
+  // the caret, which is an offset of its source's field (in `column` at the end of a row that lacks it, cellAtDoc), or
+  // in `cell` ({ r, c }) with the caret in its field, which keeps the blanks at its text's ends that `shown` (what it
+  // showed before) has (openCell). -> whether a block is edited.
+  activate(key, caret, cx, { shift = 0, reveal = true, cell = null, shown = null, column = null } = {}) {
     if (!this.editable() || this.hiddenNotes(key)) return false;
     if (this.blockNote && this.blockNote.key !== key) this.endBlockNote(cx);
     this.setSel(null, cx);
@@ -2731,6 +3015,10 @@ export class Editor {
       return false;
     }
     this.unpick(cx);
+    if (this.gridOf(b)) {
+      const t = tableOf(this.doc, b), there = cell && cell.r < t.rows.length && cell.c < t.columns;
+      return this.openCell(b, there ? { ...cell, range: asRange(caret), shown } : this.cellAtSource(b, cell ? 0 : caret, column), cx, { shift, reveal });
+    }
     const anchor = this.anchor(), f = fieldOf(this.doc, b), value = withInnerLine(b, f.value), n = value.length;
     const r = typeof caret === "number" ? { start: caret, end: caret } : caret ?? { start: 0, end: 0 };
     this.f = f; this.opened = value;
@@ -2748,6 +3036,36 @@ export class Editor {
     this.syncWindow(cx);
     cx.notify();
     return true;
+  }
+
+  // Cell (r, c) of grid table b becomes the edited one, `range` selected in its field, after activate's leaving. Its
+  // field is the one drawing it (made now for a row far from the page), and nothing in the grid moves: the widths it had
+  // when the caret came into the table stay until the caret leaves it. The cell being edited, or one whose field showed
+  // `shown`, keeps the blanks typed at its text's ends (cellMap).
+  openCell(b, { r, c, range, shown = null }, cx, { shift = 0, reveal = true } = {}) {
+    const again = this.activeKey === b.key && this.cell?.r === r && this.cell?.c === c;
+    const anchor = this.anchor(), f = this.cellMap(b, r, c, shown ?? (again ? this.seen : null)), n = f.value.length;
+    if (this.activeKey !== b.key) this.heldWidths = { key: b.key, widths: this.gridOf(b).widths };
+    if (this.cell && this.activeKey === b.key && (this.cell.r !== r || this.cell.c !== c)) this.letField();
+    this.f = f; this.opened = f.value;
+    this.field = this.cellFieldFor(b, r, c); this.tokensOff = false;
+    if (!this.setField(f.value, { start: clamp(range.start, 0, n), end: clamp(range.end, 0, n) })) { this.drop(); this.rebuild(cx, anchor); return false; }
+    this.activeKey = b.key; this.cell = { r, c }; this.act++;
+    this.retoken();
+    this.rows = "many";
+    this.rebuild(cx, anchor);
+    if (shift) this.offset = clampOffset(this.offset + shift, this.contentH(), this.viewH());
+    this.focusField(cx);
+    if (reveal) this.revealCaret(cx);
+    this.syncWindow(cx);
+    cx.notify();
+    return true;
+  }
+
+  // The cell of grid table b holding the caret `caret` of its source's field (a number or a range), as cellAtDoc.
+  cellAtSource(b, caret, column = null) {
+    const f = fieldOf(this.doc, b), r = asRange(caret);
+    return this.cellAtDoc(b, fieldToDoc(f, r.start), fieldToDoc(f, r.end), column);
   }
 
   // The value is taken as seen before set_value, which may report it as a change. A field that holds it already (a
@@ -2768,9 +3086,10 @@ export class Editor {
     const key = this.activeKey, value = this.seen, defs = this.defsNow(), kept = this.rich, b = this.blockByKey(key);
     const checked = Boolean(b?.task?.checked), tint = this.tintNow();
     if (kept && kept.key === key && kept.value === value && kept.defs === defs && kept.checked === checked && kept.tint === tint) return kept.layout;
-    const own = this.blockFields.get(key), same = !tint && own?.rich && own.value === value && own.defs === defs && own.checked === checked;
-    const layout = !b || !isText(b) || b.image ? null
-      : same ? own.rich : richOf(value, parsedInline(value, defs.map), { everyWord: checked, tint });
+    const cell = this.cell ? this.cellFields.get(key)?.cells.get(`${this.cell.r}:${this.cell.c}`) : null;
+    const own = cell ?? this.blockFields.get(key), same = !tint && !cell?.tint && own?.rich && own.value === value && own.defs === defs && own.checked === checked;
+    const layout = !b || (!isText(b) && !cell) || b.image ? null
+      : same ? own.rich : richOf(value, parsedInline(value, defs.map, Boolean(cell)), { everyWord: checked, tint });
     this.rich = { key, value, defs, checked, tint, layout };
     return layout;
   }
@@ -2789,9 +3108,7 @@ export class Editor {
   }
 
   deepTint(start) {
-    const c = noted(this.seen).find(x => x.start === start);
-    if (!c) return null;
-    return c.kind === "point" ? { start: c.start, end: c.end, letter: TINT_ACTIVE } : { start: c.from, end: c.to, letter: TINT_ACTIVE };
+    return tintIn(this.seen, start, TINT_ACTIVE);
   }
 
   // The active field's text as it draws it, for the estimates of rows and columns.
@@ -2893,13 +3210,13 @@ export class Editor {
   pressToken(key, ev, press, cx) {
     if (!this.editable()) return;
     if (ev?.modifiers?.platform && this.openLinkIn(key, ev.range, cx)) return;
-    if (key !== this.activeKey) this.takeField(key, cx);
-    if (key !== this.activeKey) return;
+    if (key !== this.editedId()) this.takeField(key, cx);
+    if (key !== this.editedId()) return;
     this.syncField(cx);
     const r = this.richNow(), box = ev?.bounds, range = ev?.range, x = press?.x;
     if (!r || !range) return;
     const at = pressedAt(r, range, typeof x === "number" && box?.width > 0 ? (x - box.x) / box.width : 1);
-    const span = this.elementPressed(range, at);
+    const span = this.cell ? null : this.elementPressed(range, at);
     if (span && !this.wasPicked(span)) {
       this.pickElement(span, cx);
       this.pinToken(r, span, range, box, press);
@@ -2943,7 +3260,7 @@ export class Editor {
   // The element picked, while the selection lies inside it: { kind, span, extent }, or null.
   elementNow() {
     const e = this.element, k = this.known;
-    if (!e || e.act !== this.act || !this.activeKey || this.pending || !this.editable() || !k.valid || this.noteOpen()) return null;
+    if (!e || e.act !== this.act || !this.activeKey || this.pending || this.cell || !this.editable() || !k.valid || this.noteOpen()) return null;
     return this.elementHolding(e.kind, k);
   }
 
@@ -2998,12 +3315,12 @@ export class Editor {
   // into is not opened for it (fieldReleased), and an edited block keeps its caret after the link's word. -> false
   // when the token is no link's.
   openLinkIn(key, range, cx) {
-    const value = key === this.activeKey ? this.seen : this.blockField(key)?.value();
-    const link = range && typeof value === "string" ? linkAt(parseInline(value, { defs: this.doc.defs }).spans, range.start) : null;
+    const edited = key === this.editedId(), value = edited ? this.seen : this.stateOf(key)?.value();
+    const link = range && typeof value === "string" ? linkAt(parseInline(value, { defs: this.doc.defs, cell: Boolean(cellOfId(key)) }).spans, range.start) : null;
     if (!link) return false;
     if (this.cmdPress?.key === key) this.cmdPress.opened = true;
     this.link(link.url, cx);
-    if (key === this.activeKey) this.placeCaret(range.end, cx);
+    if (edited) this.placeCaret(range.end, cx);
     return true;
   }
 
@@ -3027,12 +3344,12 @@ export class Editor {
       const i = this.at.get(keep) ?? (this.at.get(pending.key) ?? 0) - 1;
       anchor = i >= 0 && this.blocks[i] ? { key: this.blocks[i].key, y: COLUMN.padTop + this.sums[i] - this.offset } : null;
     }
-    const gone = b && this.seen === "" && this.opened !== "" && b.subtreeEnd === b.end && !b.fence ? removeWithNotes(this.doc, b) : null;
+    const gone = b && !this.cell && this.seen === "" && this.opened !== "" && b.subtreeEnd === b.end && !b.fence ? removeWithNotes(this.doc, b) : null;
     const base = this.doc.text;
     if (gone) this.f = null;
     this.commit(cx);
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
-    this.element = null; this.linkBox = null; this.imageBox = null; this.typingStyle = null;
+    this.element = null; this.linkBox = null; this.imageBox = null; this.typingStyle = null; this.cell = null; this.heldWidths = null;
     this.letField();
     if (pending) this.forget(pending.key);
     if (gone) this.setText(applySplice(base, gone), cx);
@@ -3043,9 +3360,16 @@ export class Editor {
   // The field of the block no longer edited stays its drawer, with no selection showing; one no block owns any more
   // (its block became code, say) goes.
   letField() {
-    const was = this.field, key = this.fieldKeys.get(was);
+    const was = this.field, key = this.fieldKeys.get(was), cell = this.cellKeys.get(was);
     this.field = this.loose;
     if (was === this.loose) return;
+    if (cell) {
+      const table = this.cellFields.get(cell.key);
+      this.unselect(was);
+      table.cells.get(`${cell.r}:${cell.c}`).src = null;
+      table.dirty = true;
+      return;
+    }
     if (key === undefined) return this.releaseField(was);
     this.unselect(was);
     this.blockFields.get(key).src = null;
@@ -3068,7 +3392,7 @@ export class Editor {
   release() {
     const pending = this.pending;
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
-    this.element = null; this.linkBox = null; this.imageBox = null; this.typingStyle = null;
+    this.element = null; this.linkBox = null; this.imageBox = null; this.typingStyle = null; this.cell = null; this.heldWidths = null;
     this.letField();
     if (pending) this.forget(pending.key);
   }
@@ -3221,11 +3545,12 @@ export class Editor {
     this.typingStyle = null;
     if (this.pending) return this.pendingTyped(before, value, edit, own, style, cx);
     // The field showed what its source does not have yet (withInnerLine): that goes in first.
-    const innerLine = this.f.value !== before ? type(this.f, before) : null;
+    const innerLine = !this.cell && this.f.value !== before ? type(this.f, before) : null;
     const from = !innerLine && madeAt(this.known, edit) ? docRange(this.f, this.known) : null;
     const stroke = !own && from && from.start === from.end ? strokeAt(edit, this.known.start) : null;
     const keyed = own ? null : this.imageKeyed(before, edit);
-    const mended = keyed ?? (this.mends(own, edit, style) ? mend(before, edit, { defs: this.defsNow().map, style }) : null);
+    const repaired = keyed ?? (this.mends(own, edit, style) ? mend(before, edit, { defs: this.defsNow().map, style }) : null);
+    const mended = this.cell ? this.cellFixed(before, repaired, value, edit) : repaired;
     if (keyed) this.element = null;
     let change = edit;
     if (mended && mended.value !== value) {
@@ -3233,13 +3558,14 @@ export class Editor {
       if (this.refill(mended.caret)) change = mended.edit;
       else this.seen = value;
     } else this.seen = value;
-    const s = type(this.f, this.seen, change);
+    const s = this.cell ? this.typeCell(change) : type(this.f, this.seen, change);
     if (!s) return this.retoken();
     if (change === edit) this.known = { start: s.fieldCaret, end: s.fieldCaret, valid: true };
     this.keepElement();
     this.slashChanged({ a: change.at, r: change.removed, ins: change.inserted }, this.seen, own, cx);
     const caretAfter = change === edit ? s.caret : fieldToDoc(this.f, this.known.end);
     const rec = this.typing(this.act, from ? from.end : s.end, caretAfter);
+    if (this.cell) rec.column = this.cell.c;
     if (change !== edit) rec.join = fieldToDoc(this.f, mended.caret);
     if (stroke) rec.stroke = stroke;
     if (innerLine) this.edited(applySplice(applySplice(this.text, innerLine), s), cx, rec);
@@ -3310,7 +3636,7 @@ export class Editor {
     else if (this.focusedState === state) this.focusedState = null;
     if (!on && state === this.field) this.closeBar(cx);
     if (!on && state === this.field && !this.boxOpen()) this.closeElement(cx);
-    const key = on && state !== this.field ? this.fieldKeys.get(state) : undefined;
+    const key = on && state !== this.field ? this.idOf(state) : undefined;
     if (key !== undefined && key !== this.shiftField && key !== this.cmdPress?.key) this.takeField(key, cx);
   }
 
@@ -3318,6 +3644,7 @@ export class Editor {
   // flag drops before a wrap is measured.
   rowsFlag() {
     const d = this.data.get(this.activeKey);
+    if (this.cell) return "many";
     if (!d) return this.seen.includes("\n") ? "many" : "one";
     const cal = this.calOf(d.style), rows = this.rowsOf(d, true) ?? 1;
     return isOneRow({ value: this.drawnNow(), height: rows * d.row, rowPx: d.row, width: this.chromeOf(d, true).w, advance: cal.advance }) ? "one" : "many";
@@ -3335,7 +3662,16 @@ export class Editor {
   caretTop(i, at = caretOf(this.field)?.end ?? 0) {
     const d = this.data.get(this.blocks[i]?.key);
     if (!d) return null;
+    if (this.cell && d.grid) return this.cellCaretTop(i, d, at);
     return this.sums[i] + this.chromeOf(d, true).y + this.wrapAt(at).row * d.row;
+  }
+
+  // caretTop in the edited cell of grid table data d: its row's top and padding, and the row of the cell's text, wrapped
+  // at the cell's inner width.
+  cellCaretTop(i, d, at) {
+    const { r, c } = this.cell, g = d.grid, advance = this.calOf(r === 0 ? "head" : "cell").advance;
+    const inner = g.boxes[r]?.[c] || g.widths[c] - 2 * GRID.padX, wrap = this.wrapOf(this.drawnNow(), inner, advance);
+    return this.sums[i] + d.space + gridRowTop(this.gridHeights(d), r) + GRID.padY + wrapPlace(wrap.rows, this.drawnAt(at), advance, false).row * d.row;
   }
 
   // Where the edited field draws offset `at`: { row, x }, x from the field's left. `end` takes an offset where a row
@@ -3436,7 +3772,16 @@ export class Editor {
     const i = this.at.get(key), b = this.blockByKey(key);
     if (i === undefined || !b) return;
     const { x, y } = this.blockPoint(i, p);
-    this.activate(key, this.pressCaret(b, x, y), cx, { shift: b.kind === "frontmatter" ? this.data.get(key).row : 0, reveal: false });
+    this.openPressed(b, x, y, cx, { shift: b.kind === "frontmatter" ? this.data.get(key).row : 0, reveal: false });
+  }
+
+  // Block b opens where a press at (x, y) on it lands, x from the column's left edge and y from the block's top: a table
+  // drawn as a grid in the pressed cell (gridPress), any other block at pressCaret's caret.
+  openPressed(b, x, y, cx, opts = {}) {
+    const d = this.data.get(b.key);
+    if (!d.grid) return this.activate(b.key, this.pressCaret(b, x, y), cx, opts);
+    const { r, c, caret } = this.gridPress(b, d, x - d.depth * INDENT, y - d.space);
+    return this.activate(b.key, caret, cx, { ...opts, cell: { r, c } });
   }
 
   // View point p as x from the column's left edge and y from the top of block i.
@@ -3444,14 +3789,13 @@ export class Editor {
     return { x: columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin), y: p.y + this.offset - COLUMN.padTop - this.sums[i] };
   }
 
-  // The field caret for a press at (x, y) on block b, x from the column's left edge and y from the block's top,
-  // estimated from the block as currently drawn: rendered, or a field (the edited block's, or a text block's own); on a
-  // table in Reading, grid or source, the pressed cell's start; in a paragraph of pictures, where the picture at y
+  // The field caret for a press at (x, y) on block b, not a grid, x from the column's left edge and y from the block's
+  // top, estimated from the block as currently drawn: rendered, or a field (the edited block's, or a text block's own);
+  // on a table kept as source in Reading, the pressed cell's start; in a paragraph of pictures, where the picture at y
   // begins. A press only the page heard (beside a text block's field: its marker, the space above it) and Page Up / Down
   // use it.
   pressCaret(b, x, y) {
     const d = this.data.get(b.key), active = b.key === this.activeKey, asField = active || d.mode === "field";
-    if (d.grid && !active) return this.gridCaret(b, d, x - d.depth * INDENT, y - d.space);
     const c = this.chromeOf(d, asField), cal = this.calOf(d.style), value = active ? this.seen : this.openedValue(b);
     if (b.kind === "mermaid" && !active) return this.entry(b, value, 1, null);
     if (d.look === "picture" && !active) return this.pictureStartAt(b, d, y);
@@ -3465,13 +3809,23 @@ export class Editor {
     return withInnerLine(b, fieldOf(this.doc, b).value);
   }
 
-  // The field caret for a press at (x, y) from the top-left of table b's grid (data d): the start of the pressed cell's
-  // text, or of the row's last cell where the row lacks the pressed one.
-  gridCaret(b, d, x, y) {
-    const { row, column } = gridAt(this.gridHeights(d), d.grid.widths, x, y), cells = tableOf(this.doc, b).rows[row].cells;
-    let c = Math.min(column, cells.length - 1);
-    while (c > 0 && !cells[c]) c--;
-    return docToField(fieldOf(this.doc, b), cells[c].start);
+  // The cell (r, c) a press at (x, y) from the top-left of table b's grid (data d) lands in, which no cell's field took,
+  // and the caret in that cell's field: the end of its text (the edited cell's as its field shows it), its start when the
+  // press was left of the text. A cell its row lacks has an empty field. The line between two cells is the left one's
+  // (gridAt). -> { r, c, caret }
+  gridPress(b, d, x, y) {
+    const g = d.grid, { row, column } = gridAt(this.gridHeights(d), g.widths, x, y), cell = tableOf(this.doc, b).rows[row].cells[column];
+    const edited = b.key === this.activeKey && this.cell?.r === row && this.cell?.c === column;
+    const end = edited ? this.seen.length : cell ? cell.end - cell.start : 0;
+    return { r: row, c: column, caret: x < this.cellTextLeft(g, row, column) ? 0 : end };
+  }
+
+  // Where the text of cell (r, c) of grid g starts, from the grid's left: past the lines, the columns before it and its
+  // padding, and in a centred or right-aligned column past the room its text box leaves.
+  cellTextLeft(g, r, c) {
+    const inner = g.widths[c] - 2 * GRID.padX, box = g.boxes[r][c] || inner, align = g.aligns[c];
+    const room = align === "center" ? (inner - box) / 2 : align === "right" ? inner - box : 0;
+    return GRID.line + g.widths.slice(0, c).reduce((a, w) => a + w + GRID.line, 0) + GRID.padX + room;
   }
 
   // Where the caret lands in block b, whose field shows `value`, coming from above (dir > 0) or below: in front matter,
@@ -3509,9 +3863,10 @@ export class Editor {
   }
 
   // The caret leaves the edited block for the previous (dir < 0) or next block, rules skipped. Past the end of a raw
-  // block that is the last one, an empty paragraph opens below it.
+  // block that is the last one, an empty paragraph opens below it. The caret stays in an edited cell.
   cross(dir, cx, column = null) {
     this.syncField(cx);
+    if (this.cell) return;
     const blocks = this.blocks, i = this.at.get(this.activeKey);
     if (i === undefined) return;
     const j = this.crossedTo(i, dir);
@@ -3585,19 +3940,19 @@ export class Editor {
   // blocks and the field's focus is not taken; with Cmd it may open a link (openLinkIn). A press in the edited field
   // leaves its caret unknown until it is read after the mouse-up, so that a key-up meanwhile crosses no edge. The
   // element picked is let go: only a click on a token picks one (pressToken), so a drag shows the bar. So is a picked
-  // picture.
+  // picture. `key` names the field: a block's key, or a cell's id (page.js cellId).
   fieldDown(key, e) {
     this.fieldPress = { kind: "down", x: e?.position?.x, y: e?.position?.y };
     this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e);
     this.pressed = { key, x: e?.position?.x ?? null, origin: elementOrigin(e), at: this.point(e), clicks: e?.click_count ?? 1 };
     this.released = null;
     this.cmdPress = e?.modifiers?.platform ? { key, opened: false } : null;
-    const picked = key === this.activeKey ? this.elementNow() : null;
+    const edited = key === this.editedId(), picked = edited ? this.elementNow() : null;
     this.pressedOn = picked && { key, value: this.seen, kind: picked.kind, start: picked.span.start };
     this.element = null;
     if (this.picked) this.post(cx => this.unpick(cx));
     if (this.sel && !e?.modifiers?.shift) this.post(cx => this.setSel(null, cx));
-    if (key === this.activeKey) {
+    if (edited) {
       this.known = { ...this.known, valid: false }; this.ownKeyUp = null;
       if (this.slash) this.post(cx => this.closeSlash(cx));
       if (this.bar) this.post(cx => this.closeBar(cx));
@@ -3606,7 +3961,7 @@ export class Editor {
       this.fieldHeld = null; this.shiftField = key;
       this.post(cx => {
         this.shiftField = null;
-        this.shiftTo(this.blockByKey(key), cx);
+        this.shiftTo(this.blockByKey(cellOfId(key)?.key ?? key), cx);
       });
     }
   }
@@ -3618,7 +3973,7 @@ export class Editor {
     this.fieldHeld = null;
     this.post(cx => {
       if (began) this.fieldReleased(key, cx);
-      else if (key === this.activeKey) this.readLater(cx);
+      else if (key === this.editedId()) this.readLater(cx);
     });
   }
 
@@ -3627,8 +3982,8 @@ export class Editor {
   // bar shows over the selection, or over the word at the caret.
   fieldRightUp(key) {
     this.post(cx => {
-      if (key !== this.activeKey) this.takeField(key, cx);
-      if (key !== this.activeKey || !this.editable()) return;
+      if (key !== this.editedId()) this.takeField(key, cx);
+      if (key !== this.editedId() || !this.editable()) return;
       this.syncField(cx);
       this.element = null;
       const c = this.caretNow(), picture = c && this.formatted() ? this.elementHolding("image", c) : null;
@@ -3651,8 +4006,8 @@ export class Editor {
     const cmd = this.cmdPress;
     this.cmdPress = null;
     if (cmd?.key === key && cmd.opened) return this.giveBackKeyboard();
-    if (key !== this.activeKey && !this.sel) this.takeField(key, cx);
-    if (key === this.activeKey) this.readLater(cx);
+    if (key !== this.editedId() && !this.sel) this.takeField(key, cx);
+    if (key === this.editedId()) this.readLater(cx);
   }
 
   giveBackKeyboard() {
@@ -3664,6 +4019,8 @@ export class Editor {
   // value already there and its caret where the press put it (read out after the mouse-up). Its focus event or the
   // mouse-up, whichever comes first, does this.
   takeField(key, cx) {
+    const cell = cellOfId(key);
+    if (cell) return this.takeCell(cell, cx);
     if (key === this.activeKey || !this.blockFields.has(key) || !this.editable()) return;
     this.unpick(cx);
     this.leave(cx, key);
@@ -3682,6 +4039,31 @@ export class Editor {
     cx.notify();
   }
 
+  // takeField for the field of cell (r, c) of table `key`: that cell becomes the edited one with no set_value, its caret
+  // where the press put it. The widths the grid has stay while the caret is in the table.
+  takeCell({ key, r, c }, cx) {
+    const state = this.cellField(key, r, c);
+    if (cellId(key, r, c) === this.editedId() || !state || !this.editable()) return;
+    this.unpick(cx);
+    if (this.activeKey === key) this.commit(cx);
+    else this.leave(cx, key);
+    const b = this.blockByKey(key);
+    if (!b || !this.gridOf(b) || this.cellField(key, r, c) !== state) return;
+    const anchor = this.anchor(), f = this.cellMap(b, r, c);
+    if (this.activeKey !== key) this.heldWidths = { key, widths: this.gridOf(b).widths };
+    if (this.cell) this.letField();
+    this.field = state; this.tokensOff = false;
+    this.f = f; this.opened = f.value; this.known = NO_CARET;
+    if (state.value() === f.value) this.seen = f.value;
+    else if (!this.setField(f.value, { start: 0, end: 0 })) { this.drop(); this.rebuild(cx, anchor); return; }
+    this.activeKey = key; this.cell = { r, c }; this.act++;
+    this.retoken();
+    this.rows = "many";
+    this.rebuild(cx, anchor);
+    if (this.focusedState !== this.field) this.field.focus();
+    cx.notify();
+  }
+
   // The caret is kept (`stored`) for Enter to come back to.
   escape(cx) {
     this.writeHeld(cx);
@@ -3689,14 +4071,14 @@ export class Editor {
     this.stored = null;
     if (this.activeKey && !this.pending) {
       const c = this.caretNow();
-      this.stored = { key: this.activeKey, caret: c ? { start: c.start, end: c.end } : { start: 0, end: 0 } };
+      this.stored = { key: this.activeKey, caret: c ? { start: c.start, end: c.end } : { start: 0, end: 0 }, cell: this.cell };
     }
     this.deactivate(cx);
   }
 
   resume(cx) {
     const s = this.stored, i = s ? this.at.get(s.key) : undefined;
-    if (i !== undefined && this.onPage(i)) { this.activate(s.key, s.caret, cx); return; }
+    if (i !== undefined && this.onPage(i)) { this.activate(s.key, s.caret, cx, { cell: s.cell }); return; }
     const b = this.topBlock();
     if (b) this.activate(b.key, this.entry(b, this.openedValue(b), 1, null), cx);
     else this.openPending(cx);
@@ -3732,6 +4114,7 @@ export class Editor {
   // end of the field is deleted first, as a key deletes it.
   enter(cx) {
     this.typingStyle = null;
+    if (this.cell) return;
     if (this.pending) return this.pendingKey("enter", cx);
     const b = this.blockByKey(this.activeKey), value = this.seen;
     if (!b) return;
@@ -3888,7 +4271,7 @@ export class Editor {
 
   // Shift+Enter: a line break that stays one (a backslash before it). A heading has none: there it is Enter.
   shiftEnter(cx) {
-    if (this.pending) return;
+    if (this.pending || this.cell) return;
     if (this.blockByKey(this.activeKey)?.kind === "heading") return this.enter(cx);
     if (!this.breakCode(cx)) this.typeOwn("\\\n", cx);
   }
@@ -3908,7 +4291,7 @@ export class Editor {
     const b = this.pending ? null : this.blockByKey(this.activeKey);
     if (!b) return;
     if (b.kind === "item" && b.task) return this.tick(b, cx);
-    if (!isRaw(b.kind)) return;
+    if (!isRaw(b.kind) || this.cell) return;
     const r = this.caretNow() ?? { start: 0, end: 0 };
     this.openPendingWith({ base: afterKey(b.key, "paragraph"), origin: { key: b.key, caret: { start: r.start, end: r.end } } }, cx);
   }
@@ -3916,6 +4299,7 @@ export class Editor {
   // The field gives Backspace away only at its start. A paragraph joins nothing into a paragraph of pictures above it:
   // its last picture is picked.
   backspaceStart(cx) {
+    if (this.cell) return;
     if (this.pending) return this.pendingKey("backspace", cx);
     const key = this.activeKey, b = this.blockByKey(key), i = this.at.get(key);
     if (!b || i === undefined) return;
@@ -3978,7 +4362,7 @@ export class Editor {
   // caret is there, the next text block joins this one or the rule after it goes; a paragraph of pictures after it
   // joins nothing, its first picture is picked.
   deleteAtEnd(cx) {
-    if (this.pending || !this.activeKey) return;
+    if (this.pending || this.cell || !this.activeKey) return;
     const c = this.caretNow(), end = this.seen.length;
     if (!c || c.start !== c.end || c.end !== end) return;
     this.commit(cx);
@@ -3992,6 +4376,7 @@ export class Editor {
 
   tab(dir, cx) {
     if (this.pending) return this.pendingKey(dir > 0 ? "tab" : "shift-tab", cx);
+    if (this.cell) return this.tabCell(dir, cx);
     const b = this.blockByKey(this.activeKey), r = b && this.caretNow();
     if (!b || !r) return;
     if (b.kind === "table") return this.toCell(dir, r, cx);
@@ -4030,6 +4415,16 @@ export class Editor {
     this.revealCaret(cx);
   }
 
+  // Tab (dir > 0) or Shift+Tab in a cell: the next or previous cell in reading order, the header first, with its whole
+  // text selected (a cell its row lacks: the caret in it). Past the last cell or before the first, nothing.
+  tabCell(dir, cx) {
+    const b = this.blockByKey(this.activeKey);
+    if (!b) return;
+    const t = tableOf(this.doc, b), at = this.cell.r * t.columns + this.cell.c + dir, next = { r: Math.floor(at / t.columns), c: at % t.columns };
+    if (at < 0 || next.r >= t.rows.length) return;
+    this.activate(b.key, { start: 0, end: cellText(this.doc, t, next.r, next.c).length }, cx, { cell: next });
+  }
+
   selectField({ start, end }) {
     if (!this.guard(() => this.field.set_selected_range({ start, end }))) return false;
     this.known = { start, end, valid: true };
@@ -4046,8 +4441,9 @@ export class Editor {
     const b = j < 0 ? null : this.blockByKey(blocks[j].key);
     if (!b) return;
     this.offset = clampOffset(this.offset + dir * page, this.contentH(), this.viewH()); this.reveal = null;
-    const value = b.key === this.activeKey ? this.seen : this.openedValue(b);
-    this.activate(b.key, edge ? this.entry(b, value, -dir, null) : this.pressCaret(b, 0, y - this.sums[j]), cx);
+    const value = b.key === this.activeKey && !this.cell ? this.seen : this.openedValue(b);
+    if (edge) this.activate(b.key, this.entry(b, value, -dir, null), cx);
+    else this.openPressed(b, 0, y - this.sums[j], cx);
     this.updateHover(cx);
     cx.notify();
   }
@@ -4063,8 +4459,11 @@ export class Editor {
     if (this.pending) return;
     const r = this.caretNow();
     this.commit(cx);
-    const b = this.blockByKey(this.activeKey), doc = this.doc;
-    if (b) this.op(move(doc, b, dir, x => blockUnit(doc, x)), cx, { caret: r ? { start: r.start, end: r.end } : 0 });
+    const b = this.blockByKey(this.activeKey), doc = this.doc, caret = r ? { start: r.start, end: r.end } : 0;
+    if (!b) return;
+    const s = move(doc, b, dir, x => blockUnit(doc, x)), cell = this.cell, shown = this.seen;
+    if (cell) this.op(s, cx, { then: () => this.openAt(s.caret, cx, caret, null, { cell, shown }) });
+    else this.op(s, cx, { caret });
   }
 
   // Cmd+C and Cmd+X in a text block: the selection as markdown that stands alone (seams.js), each character with its
@@ -4090,6 +4489,7 @@ export class Editor {
     if (typeof clip !== "string" || !clip) return;
     const lf = clip.replace(/\r\n/g, "\n"), b = this.pending ? null : this.blockByKey(this.activeKey);
     if (!b && !this.pending) return;
+    if (this.cell) return this.pasteInCell(lf.replace(/\n+$/, ""), cx);
     const text = lf.replace(/\n+$/, "");
     if ((b && !isText(b)) || !text) return this.typeText(lf, cx);
     if (this.pasteFormatted(text, cx)) return;
@@ -4112,6 +4512,17 @@ export class Editor {
     const s = isText(now) && c ? paste(this.doc, now, c.start, c.end, text) : null;
     if (s) this.pasted(s, cx);
     else this.typeText(text, cx);
+  }
+
+  // A cell holds one line: the clipboard's lines are pasted as one, its pipes escaped as the cell writes them, then read
+  // as markdown on its own and given the formatting of where it lands, as in a paragraph. One entry of the history.
+  pasteInCell(text, cx) {
+    const r = this.caretNow(), line = cellWritten(text);
+    if (!r || !line) return;
+    const style = r.start === r.end ? this.styleFor({ at: r.start, removed: 0 }) : null;
+    const out = this.formatted() ? pasteInto(this.seen, r, line, { defs: this.defsNow().map, style }) : null;
+    if (!out) return this.typeText(line, cx);
+    this.typeChange(this.seen, r, { value: out.value, start: out.caret, end: out.caret }, cx);
   }
 
   // Clipboard text pasted where the field draws its block formatted (seams.js), read as markdown on its own and given
@@ -4221,7 +4632,7 @@ export class Editor {
   }
 
   takesMarks() {
-    if (this.pending) return true;
+    if (this.pending || this.cell) return true;
     const b = this.blockByKey(this.activeKey);
     return Boolean(b && isText(b));
   }
@@ -4282,16 +4693,16 @@ export class Editor {
     this.picked = null; this.blockNote = null; this.blockAdd = null;
     this.setText(text, cx, false);
     if (u.opensNothing) this.handle.focus();
-    else this.openAt(u.caret, cx, null, u.select);
+    else this.openAt(u.caret, cx, null, u.select, { column: u.column });
   }
 
   // The block holding document offset `at` opens with field caret `caret`, else the document range `select` selected,
-  // else the caret where `at` falls.
-  openAt(at, cx, caret = null, select = null) {
+  // else the caret where `at` falls. `opts` go to activate.
+  openAt(at, cx, caret = null, select = null, opts = {}) {
     if (!this.editable()) return this.handle.focus();
     const b = this.holding(at);
     if (!b) return this.openPending(cx);
-    if (!this.activate(b.key, caret ?? fieldRange(fieldOf(this.doc, b), select ?? { start: at, end: at }), cx)) this.handle.focus();
+    if (!this.activate(b.key, caret ?? fieldRange(fieldOf(this.doc, b), select ?? { start: at, end: at }), cx, opts)) this.handle.focus();
   }
 
   // The menu belongs to one activation of a writable block and only while its field shows "/" + query where the menu
@@ -4576,7 +4987,7 @@ export class Editor {
   // last read or set holds more than spaces, the menu and the boxes are shut, and no element is picked.
   barOpen() {
     const k = this.known;
-    return this.bar?.act === this.act && Boolean(this.activeKey) && this.editable() && k.valid
+    return this.bar?.act === this.act && Boolean(this.activeKey) && !this.cell && this.editable() && k.valid
       && Boolean(this.seen.slice(k.start, k.end).trim()) && !this.slashOpen() && !this.boxOpen() && !this.elementNow() && this.takesMarks();
   }
 
@@ -4961,7 +5372,7 @@ export class Editor {
   // its edge is outside it), else for a new link over the selection, the word holding the caret, or at the caret,
   // offering the address the clipboard holds.
   linkKey(cx) {
-    if (!this.takesMarks()) return;
+    if (!this.takesMarks() || this.cell) return;
     const r = this.caretNow();
     if (!r) return;
     const picked = this.elementNow(), held = picked?.kind === "link" ? picked : this.elementHolding("link", r);
@@ -5794,7 +6205,7 @@ export class Editor {
         .child(button(`md-note-resolve-${i}`, "Resolve", cx => this.resolveNote(i, cx)))));
   }
 
-  // The file's comments, those of the block being edited as its field shows them.
+  // The file's comments, those of the block being edited as its field shows them; a table's as typed (cellNotesOf).
   commentCount() {
     if (!this.doc) return 0;
     if (this.notesFor?.doc !== this.doc) {
@@ -5806,7 +6217,8 @@ export class Editor {
       this.notesFor = { doc: this.doc, byKey, total: [...byKey.values()].reduce((sum, n) => sum + n, 0) };
     }
     const { byKey, total } = this.notesFor, b = this.activeKey && !this.pending ? this.blockByKey(this.activeKey) : null;
-    return b && holdsComments(b) ? total - (byKey.get(b.key) ?? 0) + noted(this.seen).length : total;
+    if (!b || !holdsComments(b)) return total;
+    return total - (byKey.get(b.key) ?? 0) + (b.kind === "table" ? this.cellNotesOf(b).cards.length : noted(this.seen).length);
   }
 
   // The comment that is active in the edited block: picked by a press on its text or its card, or being edited; a
@@ -5889,19 +6301,19 @@ export class Editor {
   }
 
   // The page y that cell comment `card` of table data d (page index i) is level with: its grid row's top, measured or
-  // estimated; while the table's source is edited, the top of the line holding the comment; for a table kept as
-  // source, its row's top as Reading's TextView draws a table of one-line rows.
+  // estimated, a cell being edited or not; while the source of a table kept as source is edited, the top of the line
+  // holding the comment; else its row's top as Reading's TextView draws a table of one-line rows.
   cellTop(i, d, card) {
-    if (d.key === this.activeKey) return this.caretTop(i, card.c.start);
     if (d.grid) return this.sums[i] + d.space + gridRowTop(this.gridHeights(d), card.row);
+    if (d.key === this.activeKey) return this.caretTop(i, card.c.start);
     return this.sums[i] + d.space + tableRowTop(card.row, CELL_LINE_H, TABLE_INSET);
   }
 
   // Table b's cell comments as its cards show them (comments.js cellComments: each comment with its cell, row and note;
-  // its time, text and card look), read from the edited table's field, else from its content, and kept while that
-  // stays the same.
+  // its time, text and card look), read from the edited table's field while it shows the source, as typed while a cell
+  // of it is edited (typedTable), else from its content, and kept while that stays the same.
   cellNotesOf(b) {
-    const value = b.key === this.activeKey ? this.seen : b.content, kept = this.cellMemo.get(b.key);
+    const value = b.key !== this.activeKey ? b.content : this.cell ? this.typedTable(b) : this.seen, kept = this.cellMemo.get(b.key);
     if (kept?.value === value) return kept;
     const cards = cellComments(value).map((x, index) => {
       const { when, text } = readNote(x.note);
@@ -5910,6 +6322,13 @@ export class Editor {
     const memo = { value, cards, look: null };
     this.cellMemo.set(b.key, memo);
     return memo;
+  }
+
+  // Table b's content as typed in its edited cell: as last parsed, the edited cell's line as the buffer holds it now.
+  typedTable(b) {
+    const f = this.f;
+    if (!this.stale || f?.block !== b) return b.content;
+    return b.content.slice(0, f.lineAt) + this.text.slice(f.body, f.eol) + b.content.slice(f.lineEnd);
   }
 
   // Each level with its picture's top, in the pictures' order.
@@ -6145,10 +6564,12 @@ export class Editor {
     return Boolean(this.blockNoteNow()?.editing) && this.editable();
   }
 
+  // A table's cell fields draw its active cell comment in the deeper colour.
   setBlockNote(next, cx) {
-    const was = this.blockNote?.key;
+    const was = this.blockNote?.key, keys = [...new Set([was, next?.key])].filter(Boolean);
     this.blockNote = next;
-    this.redraw([...new Set([was, next?.key])].filter(Boolean), cx);
+    for (const key of keys) if (this.cellFields.has(key)) this.fillCells(key, this.cellFields.get(key), this.defsNow());
+    this.redraw(keys, cx);
     cx?.notify();
   }
 

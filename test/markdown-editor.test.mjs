@@ -172,7 +172,7 @@ test("the font: the theme's sans on the root, on every text block's field and on
   const visit = n => { for (const k of n.kids) { if (k.kind === "textview") parents.push(n); visit(k); } };
   visit(must(t, "md-column"));
   const fields = all(must(t, "md-column"), n => n.kind === "textarea");
-  assert.deepEqual([parents.length, fields.length], [2, 4], "the TextView of each of the table's two cells, and four fields");
+  assert.deepEqual([parents.length, fields.length], [0, 6], "four text blocks' fields and the table's two cells'");
   for (const el of [...parents, ...fields]) assert.equal(el.style.font_family, SANS);
 });
 
@@ -1579,8 +1579,9 @@ test("a read that was out when the tab closed is ignored when it answers", async
   assert.equal(m.view.text, "");
 });
 
-// A table still draws its cells with a TextView, whose link clicks the editor takes.
-const CELL_LINK = "| [a](b) |\n|---|\n";
+// A table kept as source (a row with more cells than its header) still draws a TextView, whose link clicks the editor
+// takes.
+const CELL_LINK = "| [a](b) |\n|---|\n| c | d |\n";
 
 test("links: web pages go to the browser, markdown files open beside this pane, other files say so, anchors do nothing", async () => {
   state.exec = async () => ({ code: 0, stdout: "", stderr: "" }); // the mail link below goes to `open`
@@ -2978,8 +2979,9 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.equal(all(written, n => n.kind === "textarea")[0].state, view.noteField, "the card of the comment being written");
   const jsCard = must(t, `md-card-${code[0].key}-0`);
   assert.ok(find(jsCard, `md-card-${code[0].key}-0-time`) && textOf(must(jsCard, `md-card-${code[0].key}-0-text`)).trim() === "why 42?", "the js block's comment on its card");
-  const table = view.doc.blocks.find(b => b.kind === "table").key, cells = all(must(t, `md-table-${table}`), n => n.kind === "textview").map(n => n.markdown);
-  assert.deepEqual(cells, ["Column", "Other", "a", `<mark color="${highlightColor(theme())}">b</mark>`], "the table drawn as a grid, its cell comment's text highlighted and its markup hidden");
+  const table = view.doc.blocks.find(b => b.kind === "table").key, cells = all(must(t, `md-table-${table}`), n => n.kind === "textarea").map(n => n.state);
+  assert.deepEqual(cells.map(s => s.value()), ["Column", "Other", "a", "{==b==}{>>2026-11-17 09:00 \\| on a cell<<}"], "the table drawn as a grid of cell fields");
+  assert.deepEqual(cells[3].tokens().map(x => [x.token.label, x.token.id]), [["b", "h:1"]], "its cell comment's text highlighted and its markup hidden");
   assert.equal(textOf(must(t, `md-card-${table}-cell-0-text`)).trim(), "on a cell", "and its card");
   audit(t);
 });
@@ -3233,7 +3235,7 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   for (const name of new Set(table.map(x => x.action))) assert.equal(typeof root.handlers[`on_action:${name}`], "function", name);
 });
 
-test("a press on a code block puts the caret on the pressed line and column and moves nothing, its field showing only the code; on a table's grid, at the pressed cell's start", async () => {
+test("a press on a code block puts the caret on the pressed line and column and moves nothing, its field showing only the code; on a table's grid left of a cell's text, at that cell's start in its field", async () => {
   const code = "const a = 1;\nlet b = 2;\nreturn a + b;", table = "| name | value |\n|------|-------|\n| a    | 12345 |";
   const m = await page(`Intro\n\n\`\`\`js\n${code}\n\`\`\`\n\n${table}\n`, { 0: 24, 1: 14 + 26 + CODE_HEAD + 3 * 19.5, 2: 14 + 26 + 60 }, 150);
   const [codeKey, tableKey] = [keyAt(m, 1), keyAt(m, 2)];
@@ -3251,9 +3253,8 @@ test("a press on a code block puts the caret on the pressed line and column and 
   assert.deepEqual([m.view.activeKey, m.view.field.selection, m.view.offset], [codeKey, { start: second, end: second }, 0]);
   const grid = m.view.data.get(tableKey).grid;
   await clickAt(m, { x: X + 1 + grid.widths[0] + 1 + 5, y: topOf(m, 2) + 14 + 1 + grid.heights[0] + 5 }); // the grid's body row, the second column
-  assert.equal(m.view.activeKey, tableKey);
-  const cell = table.indexOf("12345");
-  assert.deepEqual(m.view.field.selection, { start: cell, end: cell });
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field.value()], [tableKey, { r: 1, c: 1 }, "12345"], "that cell, in its field");
+  assert.deepEqual(m.view.field.selection, { start: 0, end: 0 }, "pressed left of its text: at its start");
   assert.equal(calls.writeTextFile.length, 0, "opening blocks writes nothing");
 });
 
@@ -4759,10 +4760,11 @@ test("Tab on a paragraph after an item makes it the item's continuation, Shift+T
   assert.equal(m.view.text, doc);
 });
 
-test("Tab in a table selects the next cell and Shift+Tab the one before; past the last cell nothing; Tab in code with nothing indented types four spaces", async () => {
-  const table = "| name | value |\n|------|-------|\n| a    | 12345 |", code = "```\nx\n```";
+test("Tab in the source of a table kept as source selects the next cell and Shift+Tab the one before; past the last cell nothing; Tab in code with nothing indented types four spaces", async () => {
+  const table = "| name | value |\n|------|-------|\n| a    | 12345 | 9 |", code = "```\nx\n```";
   const m = await page(`${table}\n\n${code}\n`, { 0: 26 + 60, 1: 14 + 26 + 19.5 });
   await openBlock(m, 0, 2);
+  assert.equal(m.view.field.value(), table, "its source");
   const sel = (word, from = 0) => ({ start: table.indexOf(word, from), end: table.indexOf(word, from) + word.length });
   const a = sel("a", table.lastIndexOf("|------|"));
   act(m, "mdb-tab");
@@ -4772,7 +4774,9 @@ test("Tab in a table selects the next cell and Shift+Tab the one before; past th
   act(m, "mdb-tab");
   assert.deepEqual(m.view.field.selection, sel("12345"));
   act(m, "mdb-tab");
-  assert.deepEqual(m.view.field.selection, sel("12345"), "past the last cell: nothing");
+  act(m, "mdb-tab");
+  assert.deepEqual(m.view.field.selection, sel("9"), "past the last cell: nothing");
+  act(m, "mdb-shift-tab");
   act(m, "mdb-shift-tab");
   assert.deepEqual([m.view.field.selection, m.view.known], [a, { ...a, valid: true }]);
   assert.equal(m.view.text, `${table}\n\n${code}\n`);
@@ -5922,8 +5926,8 @@ test(`typing / at the start of a paragraph opens the menu under the caret row wi
 test("/ after a space opens the menu; / mid-word, before a word, inside backticks, in a code block, a table or a mermaid source, and a pasted /, do not", async () => {
   const doc = "Hello\n\nand\n\nword\n\nrun `ls\n\n```\nx\n```\n\n| a |\n|---|\n| b |\n\n```mermaid\ngraph TD\n```\n\nPaste here\n";
   const m = await page(doc, { 0: 24, 1: 38, 2: 38, 3: 38, 4: 14 + 26 + 3 * 19.5, 5: 14 + 26 + 60, 6: 134, 7: 38 });
-  // The carets: the end of each text block, the end of the code's line, of the table's last cell, of the diagram's line.
-  const attempts = [[0, 5, " /", true], [1, 3, "/", false], [2, 0, "/", false], [3, 7, " /", false], [4, 1, " /", false], [5, 15, " /", false], [6, 8, " /", false]];
+  // The carets: the end of each text block, the end of the code's line, of the diagram's line; the table's last cell's.
+  const attempts = [[0, 5, " /", true], [1, 3, "/", false], [2, 0, "/", false], [3, 7, " /", false], [4, 1, " /", false], [6, 8, " /", false]];
   for (const [i, at, keys, opens] of attempts) {
     await openBlock(m, i, at);
     typed(m, keys);
@@ -5931,6 +5935,10 @@ test("/ after a space opens the menu; / mid-word, before a word, inside backtick
     escape(m);
     escape(m);
   }
+  await pressCell(m, keyAt(m, 5), 1, 0, 1);
+  typed(m, " /");
+  assert.equal(menuOf(m), null, `the table's cell: ${JSON.stringify(m.view.field.value())}`);
+  escape(m);
   await openBlock(m, 7, 10);
   typed(m, " ");
   m.cx.held = "/";
@@ -6579,18 +6587,17 @@ test("a drop on a page that cannot be edited does nothing: no notice, no copy", 
   assert.deepEqual([m.view.text, calls.notify, calls.exec], [THREE, [], []]);
 });
 
-test("/table writes a 3-column table with one empty row and selects 'Column 1'; Tab then selects 'Column 2'", async () => {
+test("/table writes a 3-column table with one empty row and puts the caret in the first header cell's field, 'Column 1' selected; Tab then selects 'Column 2'", async () => {
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   typed(m, "/table");
   act(m, "mdb-enter");
   const table = "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |";
   assert.equal(m.view.text, `Intro\n\n${table}\n\nOutro\n`);
-  assert.equal(m.view.blockByKey(m.view.activeKey).kind, "table");
-  const value = m.view.field.value(), cell = word => ({ start: value.indexOf(word), end: value.indexOf(word) + word.length });
-  assert.deepEqual(m.view.field.selection, cell("Column 1"));
+  const key = m.view.activeKey;
+  assert.deepEqual([m.view.blockByKey(key).kind, m.view.cell, m.view.field, m.view.field.value(), m.view.field.selection], ["table", { r: 0, c: 0 }, m.view.cellField(key, 0, 0), "Column 1", { start: 0, end: 8 }]);
   act(m, "mdb-tab");
-  assert.deepEqual(m.view.field.selection, cell("Column 2"));
+  assert.deepEqual([m.view.cell, m.view.field.value(), m.view.field.selection], [{ r: 0, c: 1 }, "Column 2", { start: 0, end: 8 }]);
 });
 
 test("/divider writes a rule and opens an empty paragraph below it that takes the caret; nothing is written for that paragraph until typing", async () => {
@@ -7020,8 +7027,8 @@ test("the paragraph a first letter writes below the last block can be formatted,
   assert.equal(state.disk.get(FILE), "Intro\n\n*x*\n");
 });
 
-test("in a code block or a table the format actions change nothing", async () => {
-  const doc = "Hello\n\n```\ncode\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+test("in a code block or the source of a table kept as source the format actions change nothing", async () => {
+  const doc = "Hello\n\n```\ncode\n```\n\n| a | b |\n|---|---|\n| 1 | 2 | 3 |\n";
   const m = await page(doc, { 0: 24, 1: 14 + 26 + 19.5, 2: 14 + 26 + 60 });
   for (const i of [1, 2]) {
     await openBlock(m, i);
@@ -7270,8 +7277,8 @@ test("a drag inside a code block not being edited leaves its rendered text selec
   assert.deepEqual([m.view.activeKey, barOf(m)], [keyAt(m, 0), null]);
 });
 
-test("the format bar shows in a heading, an item and a quote; not in a code block or a table, in the Markdown view, or once the file can't be edited", async () => {
-  const doc = "# Title words\n\n- item words\n\n> quote words\n\n```\ncode words\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+test("the format bar shows in a heading, an item and a quote; not in a code block or the source of a table kept as source, in the Markdown view, or once the file can't be edited", async () => {
+  const doc = "# Title words\n\n- item words\n\n> quote words\n\n```\ncode words\n```\n\n| a | b |\n|---|---|\n| 1 | 2 | 3 |\n";
   const m = await page(doc, { 0: 35, 1: 30, 2: 38, 3: 14 + 26 + 19.5, 4: 14 + 26 + 60 });
   for (const i of [0, 1, 2]) {
     await openBlock(m, i);
@@ -10649,9 +10656,9 @@ test("Enter in code starts the new line with the spaces and tabs of the caret's 
   }
 });
 
-test("Enter in a table, an HTML block or front matter is a plain line break, as the field's own was", async () => {
+test("Enter in the source of a table kept as source, an HTML block or front matter is a plain line break, as the field's own was", async () => {
   for (const [doc, sizes, at, want] of [
-    ["| a |\n|---|\n| b |\n", { 0: 26 + 60 }, 3, "| a\n |\n|---|\n| b |\n"],
+    ["| a |\n|---|\n| b | c |\n", { 0: 26 + 60 }, 3, "| a\n |\n|---|\n| b | c |\n"],
     ["<div>\n  x\n</div>\n", { 0: 26 + 3 * 19.5 }, 9, "<div>\n  x\n\n</div>\n"],
     ["---\n  a: 1\n---\n\nText\n", { 0: 2 * 14 + 2 + 18, 1: 38 }, 10, "---\n  a: 1\n\n---\n\nText\n"],
   ]) {
@@ -11249,8 +11256,8 @@ test("Backspace in an empty commented code block or diagram with no block above 
   }
 });
 
-test("a table or an indented code block emptied by typing goes with its comments when it is left: by a click on another block, by Escape or by Cmd+E", async () => {
-  for (const [block, h] of [["| a | b |\n|---|---|\n| 1 | 2 |", 14 + 26 + 63], ["    let a = 1;", CODE_H]]) {
+test("a table kept as source or an indented code block emptied by typing goes with its comments when it is left: by a click on another block, by Escape or by Cmd+E", async () => {
+  for (const [block, h] of [["| a | b |\n|---|---|\n| 1 | 2 | 3 |", 14 + 26 + 63], ["    let a = 1;", CODE_H]]) {
     for (const how of ["click", "escape", "cmd-e"]) {
       reset();
       const doc = `Intro\n\n${block}\n\n{>>n<<}\n\nEnd\n`, m = await page(doc, { 0: 24, 1: h, 3: 38 });
@@ -12253,19 +12260,26 @@ const gridOfKey = (m, key, t = m.tree()) => must(t, `md-table-${key}`);
 const cellViews = (m, key, t = m.tree()) => all(gridOfKey(m, key, t), n => n.kind === "textview");
 const rowReport = (m, key, r, height) => fire(must(m.tree(), `md-row-${key}-${r}`), "on_size_change", { width: 300, height }, m.cx);
 
-test("Reading draws a table's cell comments as highlighted text, notes and marks hidden, a point comment a highlighted 💬; the table's source while edited and an HTML block show them as written", async () => {
+test("Reading draws a table's cell comments as highlighted text, notes and marks hidden, a point comment a highlighted 💬; an edited cell's field and an HTML block hold them as written", async () => {
   const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), light = highlightColor(theme());
-  assert.deepEqual(cellViews(m, table).map(v => v.markdown), [
+  const cells = [0, 1, 2].flatMap(r => [0, 1].map(c => m.view.cellField(table, r, c)));
+  assert.deepEqual(cells.map(s => s.tokens().map(x => [x.token.label, x.token.id])), [
+    [["Name", "h:4"]], [], [], [["12", "h:2"]], [], [[POINT, `N:${POINT.length}`]],
+  ], "each in its grid cell's field: the marked text highlighted, the notes and marks hidden");
+  const state = await pressCell(m, table, 1, 1, 0);
+  assert.equal(state.value(), "{==12==}{>>2026-11-16 20:51 \\| too big?<<}", "edited: the cell's text, its comment as written");
+  reset();
+  const remote = await mount({ machine: "devbox", disk: CELL_DOC });
+  viewportOf(remote);
+  assert.deepEqual(cellViews(remote, keyOfKind(remote, "table")).map(v => v.markdown), [
     `<mark color="${light}">Name</mark>`, "Size", "apple", `<mark color="${light}">12</mark>`, "pear", `<mark color="${light}">${POINT}</mark>`,
-  ], "each in its grid cell");
-  await openKey(m, table);
-  assert.equal(m.view.field.value(), CELL_DOC.split("\n").slice(2, 6).join("\n"), "edited: the source, comments and all");
+  ], "a file that can't be edited: each cell's TextView");
   reset();
   const html = "<div>{==x==}{>>y<<}</div>\n\nEnd\n", h = await page(html, { 0: 14 + 26 + 21, 1: 38 });
   assert.equal(viewAt(h, 0).markdown, "<div>{==x==}{>>y<<}</div>", "an HTML block's box as before");
 });
 
-test("in the margin each comment in a table's cells is a card level with its row's top, after the table's own, in row order and pushed down as all cards are; while the table's source is edited, level with the line holding it", async () => {
+test("in the margin each comment in a table's cells is a card level with its row's top, after the table's own, in row order and pushed down as all cards are; while a cell of the table is edited, still level with its row", async () => {
   await atTime(NOW, async () => {
     const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), t = m.tree();
     const ids = [`md-card-${table}-0`, ...[0, 1, 2].map(n => `md-card-${table}-cell-${n}`)], texts = ["on the table", "a header", "too big?", "fill in"];
@@ -12280,8 +12294,7 @@ test("in the margin each comment in a table's cells is a card level with its row
     assert.deepEqual(cardsOf(m).map(n => n.id), [ids[0], NEW_CARD_ID, ...ids.slice(1)], "a new comment on the whole table: after its own, before its cells'");
     act(m, "mdb-note-cancel");
     await openKey(m, table);
-    const d = m.view.data.get(table), line = levelWith(m, table) + BOX.py + 1;
-    assert.deepEqual(m.view.cardList().map(e => 28 + e.want), [levelWith(m, table), line, line + 2 * d.row, line + 3 * d.row], "the source's first, third and fourth lines");
+    assert.deepEqual([m.view.cell, m.view.cardList().map(e => 28 + e.want)], [{ r: 0, c: 0 }, wants], "the grid's rows, a cell edited");
     assert.deepEqual(cardsOf(m).map(n => n.id), ids);
   });
 });
@@ -12294,19 +12307,20 @@ test("a press on a cell comment's card makes it active: the card raised, that ce
     let t = m.tree();
     assert.deepEqual([isRaised(cellCard(m, table, 1, t)), isRaised(cellCard(m, table, 0, t)), frameOf(m, table, t), m.view.activeKey], [true, false, null, null]);
     assert.ok(find(t, `md-card-${table}-cell-1-edit`) && find(t, `md-card-${table}-cell-1-resolve`), "Edit and Resolve");
-    const shown = cellViews(m, table, t).map(v => v.markdown);
-    assert.deepEqual([shown[3], shown[0], shown[5]], [`<mark color="${deep}">12</mark>`, `<mark color="${light}">Name</mark>`, `<mark color="${light}">${POINT}</mark>`], "its cell's text deep, the others light");
+    const looks = () => [0, 1, 2].flatMap(r => [0, 1].map(c => m.view.cellField(table, r, c).tokens().map(x => x.token.id).join(",")));
+    assert.deepEqual([looks()[3], looks()[0], looks()[5]], ["hd:2", "h:4", `N:${POINT.length}`], "its cell's text deep, the others light");
+    assert.deepEqual([m.view.deep, m.view.highlight], [deep, light]);
     audit(t);
-    const deepAnywhere = (tree = m.tree()) => cellViews(m, table, tree).some(v => v.markdown.includes(deep));
+    const deepAnywhere = () => looks().some(id => /(^|,)N?h?d/.test(id));
     await m.key("escape");
     t = m.tree();
-    assert.deepEqual([isRaised(cellCard(m, table, 1, t)), deepAnywhere(t)], [false, false], "Escape ends it");
+    assert.deepEqual([isRaised(cellCard(m, table, 1, t)), deepAnywhere()], [false, false], "Escape ends it");
     cardPress(m, `md-card-${table}-cell-2`);
-    assert.equal(cellViews(m, table)[5].markdown, `<mark color="${deep}">${POINT}</mark>`, "a point comment's 💬 deep");
+    assert.equal(looks()[5], `Nd:${POINT.length}`, "a point comment's 💬 deep");
     cardPress(m, `md-card-${table}-0`);
     await flush();
     t = m.tree();
-    assert.deepEqual([isRaised(cellCard(m, table, 2, t)), isRaised(cellCard(m, table, 0, t)), isRaised(blockCard(m, table, 0, t)), Boolean(frameOf(m, table, t)), deepAnywhere(t)],
+    assert.deepEqual([isRaised(cellCard(m, table, 2, t)), isRaised(cellCard(m, table, 0, t)), isRaised(blockCard(m, table, 0, t)), Boolean(frameOf(m, table, t)), deepAnywhere()],
       [false, false, true, true, false], "the table's own comment: its frame, the cells back in the highlight colour");
     cardPress(m, `md-card-${table}-cell-0`);
     await flush();
@@ -12395,12 +12409,14 @@ test("counts take in cell comments: the footer, the margin for a file whose only
     const resolved = edited.replace(" {>>2026-11-15 09:00 \\| fill in<<} |", "  |");
     assert.equal(m.view.text, resolved);
     assert.equal(textOf(must(m.tree(), `md-notes-${table}`)).trim(), "3");
-    await openKey(m, table);
-    m.view.field.select(m.view.field.value().length);
-    for (const ch of " {>>n<<}") m.view.field.type(ch, m.cx);
+    const state = await pressCell(m, table, 1, 0, 5);
+    for (const ch of " {>>n<<}") state.type(ch, m.cx);
     m.view.redraw([table], m.cx);
+    const typed = m.tree();
+    assert.deepEqual([textOf(must(typed, `md-notes-${table}`)).trim(), textOf(must(typed, "md-comments"))], ["4", "4 comments"], "the edited cell counts what its field holds");
+    escape(m);
     const counted = m.tree();
-    assert.deepEqual([textOf(must(counted, `md-notes-${table}`)).trim(), textOf(must(counted, "md-comments"))], ["4", "4 comments"], "the edited table counts what its field holds");
+    assert.deepEqual([textOf(must(counted, `md-notes-${table}`)).trim(), textOf(must(counted, "md-comments"))], ["4", "4 comments"], "and so once it is left");
   });
 });
 
@@ -12428,14 +12444,21 @@ const GRID_DOC = [
   "", "End", "",
 ].join("\n");
 
-test("Reading draws a table as a grid of cells: no pipe and no delimiter row; each cell's text by a TextView of its own as a paragraph's, its comments highlighted without their notes, \\| as | in code too, a block start kept as text", async () => {
-  const m = await page(GRID_DOC, { 0: 24, 1: 14 + gridH(3), 2: 38 }), table = keyAt(m, 1), light = highlightColor(theme());
-  const t = m.tree(), grid = gridOfKey(m, table, t);
-  assert.deepEqual(grid.kids.map(k => k.id), [0, 1, 2].map(r => `md-row-${table}-${r}`));
-  assert.deepEqual(cellViews(m, table, t).map(v => v.markdown), [
+test("Reading draws a table as a grid of cells: no pipe and no delimiter row; each cell's text by a TextView of its own as a paragraph's where no field draws it, its comments highlighted without their notes, \\| as | in code too, a block start kept as text", async () => {
+  const r = await mount({ machine: "devbox", disk: GRID_DOC }), light = highlightColor(theme());
+  viewportOf(r);
+  const rt = r.tree(), rtable = keyAt(r, 1);
+  assert.deepEqual(cellViews(r, rtable, rt).map(v => v.markdown), [
     "A", "B", "C", "**b**", "[l](https://e.com)", `<mark color="${light}">c</mark>`, "a | b", "`x|y`", "\\# not a heading",
   ]);
-  assert.equal(all(blockAt(m, 1, t), n => n.kind === "textview").length, 9, "no TextView of the source");
+  assert.equal(all(blockAt(r, 1, rt), n => n.kind === "textview").length, 9, "no TextView of the source");
+  reset();
+  const m = await page(GRID_DOC, { 0: 24, 1: 14 + gridH(3), 2: 38 }), table = keyAt(m, 1);
+  const t = m.tree(), grid = gridOfKey(m, table, t);
+  assert.deepEqual(grid.kids.map(k => k.id), [0, 1, 2].map(row => `md-row-${table}-${row}`));
+  assert.deepEqual(all(grid, n => n.kind === "textarea").map(n => n.state.value()), [
+    "A", "B", "C", "**b**", "[l](https://e.com)", "{==c==}{>>2026-11-16 20:51 \\| a note<<}", "a \\| b", "`x\\|y`", "# not a heading",
+  ], "a file that can be edited: each cell's field, holding its text as written");
   assert.deepEqual([grid.kids[0].style.bg, all(must(t, `md-cell-${table}-0-0`), n => n.style.font_weight === 600).length > 0], ["surface", true], "the header at 600 on the surface");
   assert.equal(m.view.data.get(table).look, "grid");
   audit(t);
@@ -12475,23 +12498,22 @@ test("a table not measured yet is estimated row by row: one-row cells within 2 p
   assert.deepEqual([m.view.rowHeights.get(table)[1], m.view.data.get(table), m.cx.notifiedEntities.includes(entity)], [60, data, false], "kept for the table, nothing redrawn");
 });
 
-test("a press on a table's grid opens its source with the caret at the start of the pressed cell's text, found from the measured rows and the columns' widths", async () => {
+test("a press on a table's grid left of a cell's text opens that cell with the caret at its start, the cell found from the measured rows and the columns' widths", async () => {
   const table = "| name | value |\n|------|-------|\n| a    | 12345 |\n| b    | 6     |";
   const m = await page(`Intro\n\n${table}\n`, { 0: 24, 1: 14 + 34 + 60 + 34 + 33 + 2 }), key = keyAt(m, 1), d = m.view.data.get(key);
   rowReport(m, key, 0, 34);
   rowReport(m, key, 1, 60);
   await flush();
   const second = leftOf(m) + 1 + d.grid.widths[0] + 1 + 5, rowTop = r => topOf(m, 1) + d.space + 1 + [0, 34, 94][r];
+  const opened = () => [m.view.activeKey, m.view.cell, m.view.field.value(), m.view.field.selection];
   await clickAt(m, { x: second, y: rowTop(2) + 5 });
-  assert.equal(m.view.activeKey, key);
-  assert.equal(m.view.field.value(), table, "its source");
-  assert.deepEqual(m.view.field.selection, { start: table.indexOf("6"), end: table.indexOf("6") }, "the third row by its measured top");
+  assert.deepEqual(opened(), [key, { r: 2, c: 1 }, "6", { start: 0, end: 0 }], "the third row by its measured top");
   escape(m);
   await clickAt(m, { x: second, y: rowTop(1) + 50 });
-  assert.deepEqual(m.view.field.selection, { start: table.indexOf("12345"), end: table.indexOf("12345") }, "a tall row");
+  assert.deepEqual(opened(), [key, { r: 1, c: 1 }, "12345", { start: 0, end: 0 }], "a tall row");
   escape(m);
   await clickAt(m, { x: leftOf(m) + 5, y: rowTop(0) + 5 });
-  assert.deepEqual(m.view.field.selection, { start: 2, end: 2 });
+  assert.deepEqual(opened(), [key, { r: 0, c: 0 }, "name", { start: 0, end: 0 }]);
 });
 
 test("a table kept as source: one whose rows hold more cells than its header, or of more than 1,000 cells, is drawn and opened as before, a press at the start of the pressed cell", async () => {
@@ -12559,4 +12581,468 @@ test("a table's source offset revealed in Reading goes to the top of its grid ro
   assert.equal(m.view.reveal.rowY, d.space + GRID.line + 40 + d.grid.heights[1]);
   m.view.revealOffset(start + table.indexOf("---"));
   assert.equal(m.view.reveal.rowY, d.space + GRID.line);
+});
+
+// The blocks of CELLS_DOC: the intro (0), the table (1), End (2).
+const CELLS_DOC = [
+  "Intro with **bold** words", "",
+  "| Name | Size |", "|---|---|",
+  "| apple **pie** | 12 |",
+  "| [pear](https://e.com/p) | `x\\|y` |",
+  "", "End", "",
+].join("\n");
+const CELLS_SIZES = { 0: 24, 1: 14 + gridH(3), 2: 38 };
+const cellInputOf = (m, key, r, c, t = m.tree()) => all(must(t, `md-cell-${key}-${r}-${c}`), n => n.kind === "textarea")[0] ?? null;
+const liveCells = m => [...m.view.cellFields.values()].reduce((n, table) => n + table.cells.size, 0);
+const labelsOf = state => state.tokens().map(x => x.token.label);
+// A press in cell (r, c)'s field: its wrapper hears it, the field puts its selection at [at, end) and takes the keyboard,
+// then the mouse-up and the readout 30 ms after it.
+async function pressCell(m, key, r, c, at, end = at, modifiers = NO_MODS) {
+  const state = m.view.cellField(key, r, c), p = { x: X + 30, y: 120 }, id = `md-field-${key}-${r}-${c}`;
+  fire(must(m.tree(), id), "on_mouse_down:left", press(p, { modifiers }), m.cx);
+  state.select(at, end);
+  if (!modifiers.platform) state.handlers.focus({}, m.cx);
+  fire(must(m.tree(), id), "on_mouse_up:left", press(p, { modifiers }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+  return state;
+}
+// Grid row r's top and column c's left edge of table block i on the screen.
+const gridY = (m, i, r) => {
+  const d = m.view.data.get(keyAt(m, i));
+  return topOf(m, i) + d.space + GRID.line + m.view.gridHeights(d).slice(0, r).reduce((a, h) => a + h, 0);
+};
+const gridX = (m, i, c) => {
+  const d = m.view.data.get(keyAt(m, i));
+  return leftOf(m) + d.depth * INDENT + GRID.line + d.grid.widths.slice(0, c).reduce((a, w) => a + w + GRID.line, 0);
+};
+const cellKeyUp = (m, key, r, c, k, modifiers = {}) => fire(must(m.tree(), `md-field-${key}-${r}-${c}`), "on_key_up", { key: k, keystroke: k, modifiers: { ...NO_MODS, ...modifiers } }, m.cx);
+
+test("cells are fields: every cell of a table row near the page has a field of its own holding its text with its words as tokens, \\| drawn | in code, the header's at 600; a table kept as source and a file that can't be edited get none", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), t = m.tree();
+  for (const [r, c, value] of [[0, 0, "Name"], [0, 1, "Size"], [1, 0, "apple **pie**"], [1, 1, "12"], [2, 0, "[pear](https://e.com/p)"], [2, 1, "`x\\|y`"]]) {
+    const state = m.view.cellField(table, r, c), input = cellInputOf(m, table, r, c, t);
+    assert.ok(state && input?.state === state, `cell ${r}, ${c} is drawn by its own field`);
+    assert.equal(state.value(), value);
+    assert.equal(typeof input.token, "function", "its tokens are drawn");
+    assert.equal(must(t, `md-field-${table}-${r}-${c}`).style.key_context, undefined, "not edited: no keys");
+  }
+  assert.deepEqual([texts(m.view.cellField(table, 1, 0)), labelsOf(m.view.cellField(table, 2, 1))], [["**pie**"], ["x|y"]], "a cell's \\| shows as | in code");
+  assert.deepEqual([0, 1].map(r => cellInputOf(m, table, r, 0, t).style.font_weight), [600, 400], "the header at 600");
+  assert.deepEqual([cellViews(m, table, t).length, liveCells(m), m.view.activeKey], [0, 6, null], "no TextView where a field draws");
+  audit(t);
+  reset();
+  const irregular = await page("| a | b |\n|---|---|\n| c | d | e |\n\nEnd\n", { 0: 100, 1: 38 });
+  assert.deepEqual([liveCells(irregular), irregular.view.data.get(keyAt(irregular, 0)).look], [0, "boxed"], "kept as source");
+  reset();
+  const remote = await mount({ machine: "devbox", disk: CELLS_DOC });
+  viewportOf(remote);
+  assert.deepEqual([liveCells(remote), cellViews(remote, keyAt(remote, 1)).length], [0, 6], "a file on another machine: TextViews");
+});
+
+test("a 500-row table gets fields for its rows within a screen of the page, at most 240 a pass and the rest in the next; rows more than three screens away let theirs go", async () => {
+  const rows = n => `| a | b |\n|---|---|\n${Array.from({ length: n }, (_, i) => `| r${i} | s${i} |`).join("\n")}\n`;
+  const m = await mount({ disk: rows(499) }), table = keyAt(m, 0);
+  await flush();
+  const first = liveCells(m);
+  assert.ok(first > 0 && first <= 240, `${first} before the viewport is sized`);
+  viewportOf(m, 900, 9000);
+  const one = liveCells(m);
+  assert.ok(one > first && one - first <= 240, `${one - first} made in that pass`);
+  for (let i = 0; i < 8 && liveCells(m) < 1000; i++) await flush();
+  assert.equal(liveCells(m), 1000, "every cell, in passes");
+  viewportOf(m, 900, 600);
+  const far = m.view.cellField(table, 0, 0);
+  m.view.scrollTo(m.view.sums[1] - 700, m.cx);
+  await flush();
+  assert.equal(far.released, true, "the header, far above, let go");
+  assert.equal(m.view.cellField(table, 0, 0), null);
+  assert.ok(m.view.cellField(table, 499, 1), "the last row, near the page");
+  assert.ok(liveCells(m) < 400, `${liveCells(m)} fields`);
+});
+
+test("a press in a cell's field makes it the edited cell with no set_value: the caret where the press put it, the table the edited block, and nothing in the grid moves", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
+  calibrate(m);
+  const state = m.view.cellField(table, 1, 0), from = state.log.length, widths = m.view.data.get(table).grid.widths;
+  const look = () => all(gridOfKey(m, table), n => n.id !== null && !n.id.startsWith("md-field-")).map(n => [n.id, n.kind, n.style.w, n.style.font_weight, n.style.text_size, n.style.line_height, n.style.font_family, n.style.pb]);
+  const was = look();
+  await pressCell(m, table, 1, 0, 3);
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field], [table, { r: 1, c: 0 }, state], "the cell is the edited one, by its own field");
+  assert.deepEqual(state.log.slice(from).filter(([c]) => c === "set_value"), [], "no set_value: its value was there");
+  assert.deepEqual([state.selection, m.view.known], [{ start: 3, end: 3 }, { start: 3, end: 3, valid: true }], "the caret the press placed");
+  assert.deepEqual(look(), was, "the same elements, widths, fonts and sizes");
+  assert.equal(m.view.data.get(table).grid.widths, widths);
+  assert.deepEqual(texts(state), ["**pie**"], "the same tokens: the caret is in a plain word");
+  assert.equal(must(m.tree(), `md-field-${table}-1-0`).style.key_context, `${TEXT} rows=many`, "the text keys reach it");
+  assert.equal(must(m.tree(), `md-field-${table}-1-1`).style.key_context, undefined, "and no other cell");
+  assert.equal(m.view.data.get(table).look, "grid", "never shown as source");
+  await pressCell(m, table, 2, 1, 0);
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field], [table, { r: 2, c: 1 }, m.view.cellField(table, 2, 1)], "another cell of the same table");
+  assert.equal(m.view.text, CELLS_DOC, "nothing written");
+  audit(m.tree());
+});
+
+test("a press only the page hears on a cell's padding opens that cell, the caret at the end of its text or at its start left of it; on the line between two cells, the one to its left", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), g = m.view.data.get(table).grid;
+  await clickAt(m, { x: gridX(m, 1, 1) + g.widths[1] - 3, y: gridY(m, 1, 1) + 12 });
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field.selection], [table, { r: 1, c: 1 }, { start: 2, end: 2 }], "right of 12: its end");
+  await clickAt(m, { x: gridX(m, 1, 0) + 4, y: gridY(m, 1, 2) + 12 });
+  assert.deepEqual([m.view.cell, m.view.field.selection], [{ r: 2, c: 0 }, { start: 0, end: 0 }], "left of the link: its start");
+  await clickAt(m, { x: gridX(m, 1, 1) - GRID.line, y: gridY(m, 1, 1) + 12 });
+  assert.deepEqual([m.view.cell, m.view.field.selection], [{ r: 1, c: 0 }, { start: 13, end: 13 }], "the line after apple pie");
+  assert.equal(m.view.field, m.view.cellField(table, 1, 0));
+});
+
+test("a press only the page hears on a cell its row lacks opens that cell, empty, in its own field, and what is typed there writes it", async () => {
+  const doc = CELLS_DOC.replace("| [pear](https://e.com/p) | `x\\|y` |", "| pear |");
+  const m = await page(doc, CELLS_SIZES), table = keyAt(m, 1), g = m.view.data.get(table).grid;
+  await clickAt(m, { x: gridX(m, 1, 1) + g.widths[1] - 3, y: gridY(m, 1, 2) + 12 });
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field, m.view.field.value(), m.view.field.selection],
+    [table, { r: 2, c: 1 }, m.view.cellField(table, 2, 1), "", { start: 0, end: 0 }], "right of where its text would be");
+  escape(m);
+  await clickAt(m, { x: gridX(m, 1, 1) + 3, y: gridY(m, 1, 2) + 12 });
+  assert.deepEqual([m.view.cell, m.view.field.selection], [{ r: 2, c: 1 }, { start: 0, end: 0 }], "left of it");
+  m.view.field.type("7", m.cx);
+  assert.equal(m.view.text, doc.replace("| pear |", "| pear | 7 |"));
+});
+
+test("in a cell, Cmd+press on a link opens it and opens no cell; a press on the link places the caret at the pressed letter and shows no popover", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), state = m.view.cellField(table, 2, 0), [word] = state.tokens(), id = `md-field-${table}-2-0`;
+  const cmd = { ...NO_MODS, platform: true }, bounds = { x: 100, y: 0, width: 100, height: 21 };
+  fire(must(m.tree(), id), "on_mouse_down:left", press({ x: 150, y: 10 }, { modifiers: cmd }), m.cx);
+  fire(cellInputOf(m, table, 2, 0), "on_token_click", { ...word, bounds, modifiers: cmd }, m.cx);
+  fire(must(m.tree(), id), "on_mouse_up:left", press({ x: 150, y: 10 }, { modifiers: cmd }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+  assert.deepEqual([m.cx.opened, m.view.activeKey], [["https://e.com/p"], null]);
+  fire(must(m.tree(), id), "on_mouse_down:left", press({ x: 150, y: 10 }), m.cx);
+  fire(cellInputOf(m, table, 2, 0), "on_token_click", { ...state.tokens()[0], bounds, modifiers: NO_MODS }, m.cx);
+  fire(must(m.tree(), id), "on_mouse_up:left", press({ x: 150, y: 10 }), m.cx);
+  await flush();
+  await fire_timers(m.cx, { ms: 30 });
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.known.start], [table, { r: 2, c: 0 }, 3], "between e and a of pear");
+  assert.deepEqual([m.view.element, m.view.elementFloat(theme()), m.cx.opened.length], [null, null, 1], "no popover, nothing opened");
+});
+
+test("typing in a cell writes that cell alone: letters; a | written \\| (the field holds it, its token draws |); a paste of two lines and a pipe as one line", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), state = await pressCell(m, table, 1, 1, 2);
+  const row = text => CELLS_DOC.replace("| 12 |", `| ${text} |`);
+  state.type("3", m.cx);
+  assert.equal(m.view.text, row("123"));
+  state.type("|", m.cx);
+  assert.equal(m.view.text, row("123\\|"));
+  assert.deepEqual([state.value(), state.selection], ["123\\|", { start: 5, end: 5 }], "the field holds what the file does, the caret after it");
+  assert.equal(drawnField(m), "123|", "drawn as |");
+  state.type("4", m.cx);
+  assert.equal(m.view.text, row("123\\|4"));
+  m.cx.clipboardText = "one\ntwo|three";
+  act(m, "mdb-paste");
+  assert.equal(m.view.text, row("123\\|4one two\\|three"));
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field.value()], [table, { r: 1, c: 1 }, "123\\|4one two\\|three"]);
+  assert.deepEqual(m.view.doc.blocks.map(b => b.kind), ["paragraph", "table", "paragraph"]);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, row("123\\|4"), "the paste: one entry");
+  assert.deepEqual([m.view.cell, m.view.field.value()], [{ r: 1, c: 1 }, "123\\|4"], "undo puts the caret back in that cell");
+});
+
+test("in a cell, Backspace at a bold run's edge keeps the bold, words copied from a paragraph keep their formatting, a typed **w** turns bold, # stays text, / opens no menu, Enter and Shift+Enter write nothing", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
+  let state = await pressCell(m, table, 1, 0, 13);
+  state.backspace(m.cx);
+  assert.equal(m.view.text, CELLS_DOC.replace("apple **pie**", "apple **pi**"), "the bold kept");
+  act(m, "mdb-enter");
+  act(m, "mdb-shift-enter");
+  assert.deepEqual([m.view.text, m.view.cell], [CELLS_DOC.replace("apple **pie**", "apple **pi**"), { r: 1, c: 0 }], "Enter and Shift+Enter: nothing");
+  escape(m);
+  await openBlock(m, 0);
+  m.view.field.select(11, 25);
+  keyUp(m, "right", { shift: true });
+  await flush();
+  act(m, "mdb-copy");
+  state = await pressCell(m, table, 1, 1, 2);
+  act(m, "mdb-paste");
+  assert.ok(m.view.text.includes("| 12**bold** words |"), m.view.text);
+  state = await pressCell(m, table, 2, 1, 6);
+  for (const ch of " **w**") state.type(ch, m.cx);
+  assert.ok(m.view.text.includes("| `x\\|y` **w** |"), m.view.text);
+  assert.equal(drawnField(m), "x|y w", "the marks hidden");
+  for (const ch of " /") state.type(ch, m.cx);
+  assert.equal(m.view.slash, null, "no menu");
+  state = await pressCell(m, table, 0, 1, 0);
+  for (const ch of "# ") state.type(ch, m.cx);
+  escape(m);
+  assert.deepEqual(m.view.doc.blocks.map(b => b.kind), ["paragraph", "table", "paragraph"], "no heading");
+  assert.ok(m.view.text.includes("| Name | # Size |") && m.view.text.includes("| `x\\|y` **w** / |"), m.view.text);
+});
+
+test("format keys act on a cell's selection as in a paragraph, one entry each; a selection in a cell shows no bar, Cmd+K opens nothing, and Cmd+Alt+M comments the whole table", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), state = await pressCell(m, table, 1, 1, 0, 2);
+  assert.equal(barOf(m), null, "no bar over a selection in a cell");
+  act(m, "mdb-bold");
+  assert.equal(m.view.text, CELLS_DOC.replace("| 12 |", "| **12** |"));
+  assert.deepEqual([m.view.cell, state.value()], [{ r: 1, c: 1 }, "**12**"]);
+  act(m, "mdb-link");
+  assert.deepEqual([m.view.linkBox, barOf(m)], [null, null], "Cmd+K: nothing");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, CELLS_DOC, "one Cmd+Z");
+  act(m, "mdb-comment");
+  assert.deepEqual([m.view.blockAdd?.key, m.view.activeKey], [table, table], "the whole table's new comment");
+});
+
+test("Escape leaves the cell and Enter on the page comes back to it with its selection; a press outside the table commits and leaves; a long word typed leaves the widths alone until the caret leaves the table", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
+  const state = await pressCell(m, table, 1, 1, 0, 2), widths = m.view.data.get(table).grid.widths;
+  escape(m);
+  assert.deepEqual([m.view.activeKey, m.view.cell], [null, null]);
+  await m.key("enter");
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field, state.selection], [table, { r: 1, c: 1 }, state, { start: 0, end: 2 }], "back in the cell, its selection");
+  state.select(2);
+  const long = "x".repeat(60);
+  state.type(long, m.cx);
+  act(m, "mdb-tab");
+  assert.deepEqual([m.view.cell, m.view.data.get(table).grid.widths], [{ r: 2, c: 0 }, widths], "the widths stay while the caret is in the table");
+  await clickAt(m, { x: X + 10, y: topOf(m, 2) + 20 });
+  assert.equal(m.view.activeKey, keyAt(m, 2), "a press outside the table");
+  assert.ok(m.view.text.includes(`| 12${long} |`));
+  assert.notDeepEqual(m.view.data.get(table).grid.widths, widths, "worked out again once it left");
+  await pressCell(m, table, 1, 1, 0, 0);
+  m.view.field.type("", m.cx);
+  m.view.field.select(0, m.view.field.value().length);
+  m.view.field.type("", m.cx);
+  escape(m);
+  assert.ok(m.view.text.includes("| apple **pie** |  |"), "a cell typed empty stays an empty cell");
+});
+
+test("Tab and Shift+Tab select the next and the previous cell's whole text in reading order, the header first; past the last cell or before the first nothing; no other key crosses a cell's edge", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
+  await pressCell(m, table, 0, 0, 1);
+  const at = () => [m.view.cell, m.view.field.value(), m.view.field.selection];
+  act(m, "mdb-shift-tab");
+  assert.deepEqual(at(), [{ r: 0, c: 0 }, "Name", { start: 1, end: 1 }], "before the first: nothing");
+  act(m, "mdb-tab");
+  assert.deepEqual(at(), [{ r: 0, c: 1 }, "Size", { start: 0, end: 4 }]);
+  act(m, "mdb-tab");
+  assert.deepEqual(at(), [{ r: 1, c: 0 }, "apple **pie**", { start: 0, end: 13 }], "the next row");
+  act(m, "mdb-left-start");
+  act(m, "mdb-right-end");
+  act(m, "mdb-up");
+  act(m, "mdb-down");
+  act(m, "mdb-backspace-start");
+  assert.deepEqual(at().slice(0, 2), [{ r: 1, c: 0 }, "apple **pie**"], "Left, Right, Up, Down and Backspace at an edge stay in the cell");
+  m.view.field.select(13);
+  cellKeyUp(m, table, 1, 0, "down");
+  await flush();
+  assert.deepEqual([m.view.activeKey, m.view.cell], [table, { r: 1, c: 0 }], "a Down that left the caret where it was crosses nothing");
+  for (let i = 0; i < 3; i++) act(m, "mdb-tab");
+  assert.deepEqual(at(), [{ r: 2, c: 1 }, "`x\\|y`", { start: 0, end: 6 }]);
+  act(m, "mdb-tab");
+  assert.deepEqual(at(), [{ r: 2, c: 1 }, "`x\\|y`", { start: 0, end: 6 }], "past the last: nothing");
+  act(m, "mdb-shift-tab");
+  assert.deepEqual(at(), [{ r: 2, c: 0 }, "[pear](https://e.com/p)", { start: 0, end: 23 }]);
+  assert.equal(m.view.text, CELLS_DOC);
+});
+
+test("undo and redo of a cell's typing open that cell; a merge from disk keeps the edited cell; a change elsewhere sets the value of the changed cells' fields alone", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
+  let field = await pressCell(m, table, 2, 1, 6);
+  field.type("z", m.cx);
+  field.type("z", m.cx);
+  await clickAt(m, { x: X + 10, y: topOf(m, 2) + 20 });
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, CELLS_DOC, "one run");
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field.selection], [table, { r: 2, c: 1 }, { start: 6, end: 6 }], "back in the cell");
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.cell, m.view.field.value(), m.view.field.selection], [{ r: 2, c: 1 }, "`x\\|y`zz", { start: 8, end: 8 }]);
+  field = m.view.field;
+  field.type("!", m.cx);
+  await m.save();
+  field.select(4);
+  const theirs = m.view.text.replace("Intro with", "Intro, with").replace("| apple **pie** |", "| apple tart |");
+  const sets = [0, 1, 2].flatMap(r => [0, 1].map(c => m.view.cellField(table, r, c))).map(s => [s, s.log.filter(([x]) => x === "set_value").length]);
+  state.disk.set(FILE, theirs);
+  await m.touch([FILE]);
+  assert.ok(m.view.text.includes("| apple tart |") && m.view.text.includes("`x\\|y`zz! |"), m.view.text);
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field], [table, { r: 2, c: 1 }, field], "the merge keeps the edited cell");
+  const setNow = sets.map(([s, n]) => s.log.filter(([x]) => x === "set_value").length - n);
+  assert.deepEqual(setNow, [0, 0, 1, 0, 0, 0], "only apple's field took a value");
+  assert.equal(m.view.cellField(table, 1, 0).value(), "apple tart");
+});
+
+test("a merge from disk that leaves the edited cell's table kept as source ends the editing: the table drawn as its source, its cells' fields let go", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
+  const field = await pressCell(m, table, 1, 1, 2);
+  field.type("3", m.cx);
+  await m.save();
+  const theirs = m.view.text.replace("| apple **pie** | 123 |", "| apple **pie** | 123 | extra |");
+  state.disk.set(FILE, theirs);
+  await m.touch([FILE]);
+  assert.equal(m.view.text, theirs);
+  const d = m.view.data.get(keyAt(m, 1));
+  assert.deepEqual([m.view.activeKey, m.view.cell, d.look, d.mode, liveCells(m)], [null, null, "boxed", "rendered", 0]);
+  assert.equal(viewAt(m, 1).markdown, theirs.split("\n").slice(2, 6).join("\n"), "its source, in Reading's TextView");
+});
+
+test("blanks typed at a cell's ends stay in its field through a merge from disk and Alt+Up, and what is typed next goes after them", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
+  const row = text => `| ${text} |`, field = () => [m.view.cell, m.view.field.value(), m.view.field.selection];
+  const state0 = await pressCell(m, table, 1, 1, 0);
+  state0.type(" ", m.cx);
+  state0.select(3);
+  state0.type(" ", m.cx);
+  assert.ok(m.view.text.includes(row(" 12 ")), m.view.text);
+  await m.save();
+  state.disk.set(FILE, m.view.text.replace("Intro with", "Intro, with"));
+  await m.touch([FILE]);
+  assert.ok(m.view.text.startsWith("Intro, with"), m.view.text);
+  assert.deepEqual(field(), [{ r: 1, c: 1 }, " 12 ", { start: 4, end: 4 }], "the merge keeps both blanks and the caret");
+  m.view.field.type("b", m.cx);
+  m.view.field.type(" ", m.cx);
+  assert.ok(m.view.text.includes(row(" 12 b ")), m.view.text);
+  act(m, "mdb-move-up");
+  assert.ok(m.view.text.startsWith("| Name | Size |"), m.view.text);
+  assert.deepEqual(field(), [{ r: 1, c: 1 }, " 12 b ", { start: 6, end: 6 }], "Alt+Up keeps them");
+  m.view.field.type("c", m.cx);
+  m.view.field.type(" ", m.cx);
+  assert.ok(m.view.text.includes(row(" 12 b c ")), m.view.text);
+  const g = m.view.data.get(table).grid;
+  await clickAt(m, { x: gridX(m, 0, 1) + g.widths[1] - 3, y: gridY(m, 0, 1) + 12 });
+  assert.deepEqual(field(), [{ r: 1, c: 1 }, " 12 b c ", { start: 8, end: 8 }], "a press on its padding: the end of what it shows");
+});
+
+test("Alt+Up in a cell moves the whole table up and the caret stays where it was in that cell", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1);
+  await pressCell(m, table, 1, 1, 1);
+  act(m, "mdb-move-up");
+  assert.ok(m.view.text.startsWith("| Name | Size |"), m.view.text);
+  assert.deepEqual([m.view.blockByKey(m.view.activeKey).kind, m.view.cell, m.view.field.value(), m.view.field.selection], ["table", { r: 1, c: 1 }, "12", { start: 1, end: 1 }]);
+});
+
+// The blocks of SHORT_ROW_DOC: the intro (0), a table of three columns whose last row has its first cell alone (1), End
+// (2). Every cell that row lacks starts where its line ends.
+const SHORT_ROW_DOC = ["Intro", "", "| A | B | C |", "|---|---|---|", "| pear |", "", "End", ""].join("\n");
+const SHORT_ROW_SIZES = { 0: 24, 1: 14 + gridH(2), 2: 38 };
+async function lastCellOfShortRow(m, table) {
+  await pressCell(m, table, 1, 0, 4);
+  act(m, "mdb-tab");
+  act(m, "mdb-tab");
+  assert.deepEqual([m.view.cell, m.view.field, m.view.field.value()], [{ r: 1, c: 2 }, m.view.cellField(table, 1, 2), ""], "the row's last cell, which it lacks");
+  return m.view.field;
+}
+
+test("a cell its row lacks, opened with nothing typed in it, stays the edited cell through a merge from disk, and what is typed then writes it", async () => {
+  const m = await page(SHORT_ROW_DOC, SHORT_ROW_SIZES), table = keyAt(m, 1), field = await lastCellOfShortRow(m, table);
+  const theirs = SHORT_ROW_DOC.replace("Intro", "Intro, merged");
+  state.disk.set(FILE, theirs);
+  await m.touch([FILE]);
+  assert.equal(m.view.text, theirs);
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field, field.value(), field.selection], [table, { r: 1, c: 2 }, field, "", { start: 0, end: 0 }], "the merge keeps it");
+  field.type("7", m.cx);
+  assert.equal(m.view.text, theirs.replace("| pear |", "| pear | | 7 |"));
+});
+
+test("undo of the letters typed into a cell its row lacks opens that cell again, empty, from the cell or from outside the table; redo puts them back in it", async () => {
+  const m = await page(SHORT_ROW_DOC, SHORT_ROW_SIZES), table = keyAt(m, 1), field = await lastCellOfShortRow(m, table);
+  const typed = SHORT_ROW_DOC.replace("| pear |", "| pear | | 78 |"), at = () => [m.view.activeKey, m.view.cell, m.view.field.value(), m.view.field.selection];
+  field.type("7", m.cx);
+  field.type("8", m.cx);
+  assert.equal(m.view.text, typed);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, SHORT_ROW_DOC, "one run");
+  assert.deepEqual(at(), [table, { r: 1, c: 2 }, "", { start: 0, end: 0 }], "back in the cell typed in");
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, ...at()], [typed, table, { r: 1, c: 2 }, "78", { start: 2, end: 2 }]);
+  await clickAt(m, { x: X + 10, y: topOf(m, 2) + 20 });
+  assert.equal(m.view.activeKey, keyAt(m, 2), "left for End");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...at()], [SHORT_ROW_DOC, table, { r: 1, c: 2 }, "", { start: 0, end: 0 }], "from outside the table");
+});
+
+test("Cmd+Enter in a cell does what it does in a paragraph, nothing: no paragraph opens below the table, the cell stays edited, and Cmd+Z takes back what was typed there", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), field = await pressCell(m, table, 1, 1, 2);
+  field.type("3", m.cx);
+  act(m, "mdb-cmd-enter");
+  assert.deepEqual([m.view.pending, m.view.activeKey, m.view.cell, m.view.field, field.selection], [null, table, { r: 1, c: 1 }, field, { start: 3, end: 3 }], "still in the cell");
+  assert.equal(m.view.text, CELLS_DOC.replace("| 12 |", "| 123 |"));
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.cell, m.view.field.value(), m.view.field.selection], [CELLS_DOC, { r: 1, c: 1 }, "12", { start: 2, end: 2 }]);
+});
+
+test("Page Down past the last block from a cell of a table that ends the note goes to the end of its last cell, Page Up past the first to its first cell's start", async () => {
+  const doc = "| Name | Size |\n|---|---|\n| apple | 12 |\n| pear | 7 |\n";
+  const m = await page(doc, { 0: 14 + gridH(3) }), table = keyAt(m, 0);
+  await pressCell(m, table, 0, 1, 2);
+  act(m, "mdb-pagedown");
+  assert.deepEqual([m.view.cell, m.view.field.selection], [{ r: 2, c: 1 }, { start: 1, end: 1 }]);
+  act(m, "mdb-pageup");
+  assert.deepEqual([m.view.cell, m.view.field.selection], [{ r: 0, c: 0 }, { start: 0, end: 0 }]);
+});
+
+test("while a cell of a table is edited its cells' cards stay level with their grid rows and follow what is typed: a comment typed in gets its card, one deleted loses it", async () => {
+  await atTime(NOW, async () => {
+    const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table");
+    const wants = () => m.view.cardList().map(e => 28 + e.want);
+    const was = wants();
+    const state = await pressCell(m, table, 2, 0, 4);
+    state.type("s", m.cx);
+    assert.deepEqual([m.view.cell, wants()], [{ r: 2, c: 0 }, was]);
+    assert.deepEqual(was.slice(1), [0, 1, 2].map(row => rowLevel(m, table, row)));
+    for (const ch of " {>>new<<}") state.type(ch, m.cx);
+    const ids = () => m.view.cardList().map(e => e.id).filter(id => id.includes("-cell-"));
+    assert.deepEqual([m.view.cell, ids(), wants().slice(1)], [{ r: 2, c: 0 }, [0, 1, 2, 3].map(n => `md-card-${table}-cell-${n}`), [0, 1, 2, 2].map(row => rowLevel(m, table, row))], "the typed comment's card, level with its row");
+    assert.equal(textOf(must(m.tree(), "md-comments")), "5 comments");
+    state.select(5, state.value().length);
+    state.type("", m.cx);
+    assert.deepEqual([m.view.cell, state.value(), ids().length, textOf(must(m.tree(), "md-comments"))], [{ r: 2, c: 0 }, "pears", 3, "4 comments"], "deleted: its card gone");
+  });
+});
+
+test("cell fields go with their rows: scrolling a note of tables to and fro, a reload, Markdown and back end with exactly the fields of the rows near the page and the edited cell's; every one let go was released once, and the pane closing releases the rest", async () => {
+  const table = n => `| a | b |\n|---|---|\n${Array.from({ length: n }, (_, i) => `| r${i} | **s${i}** |`).join("\n")}`;
+  const doc = Array.from({ length: 6 }, (_, k) => `Para ${k}\n\n${table(60)}`).join("\n\n") + "\n";
+  const made = [], realNew = TextareaState.new;
+  TextareaState.new = function (options) {
+    const s = realNew.call(this, options);
+    made.push(s);
+    return s;
+  };
+  let m;
+  try {
+    m = await mount({ disk: doc });
+    viewportOf(m, 900, 600);
+    await flush();
+    await scrollThrough(m);
+    const edited = await pressCell(m, keyAt(m, 1), 3, 1, 1);
+    await m.key("cmd-e");
+    assert.equal(liveCells(m), 0, "none in the Markdown view");
+    await m.key("cmd-e");
+    state.disk.set(FILE, doc.replace("| r5 |", "| R5 |"));
+    await m.touch([FILE]);
+    await scrollThrough(m);
+    m.view.scrollTo(m.view.contentH(), m.cx);
+    await flush();
+    m.view.scrollTo(m.view.sums[3] - 100, m.cx);
+    await flush();
+    assert.equal(edited.released, true, "the cell left by Markdown went with the rest");
+  } finally { delete TextareaState.new; }
+  const view = m.view, screen = view.viewH(), top = view.offset - 28, near = [];
+  for (let i = 0; i < view.blocks.length; i++) {
+    const d = view.data.get(view.blocks[i].key);
+    if (d.look !== "grid") continue;
+    const heights = view.gridHeights(d);
+    let y = view.sums[i] + d.space + GRID.line;
+    heights.forEach((h, r) => {
+      if (y < top + 2 * screen && y + h > top - screen) near.push(...[0, 1].map(c => `${view.blocks[i].key}:${r}:${c}`));
+      y += h;
+    });
+  }
+  if (view.cell) near.push(`${view.activeKey}:${view.cell.r}:${view.cell.c}`);
+  const live = [...view.cellFields.entries()].flatMap(([key, t]) => [...t.cells.keys()].map(rc => `${key}:${rc}`));
+  assert.deepEqual(live.sort(), [...new Set(near)].sort(), "the rows within a screen of the page, and the cell Reading opened again");
+  const cells = made.filter(s => view.cellKeys.has(s) || s.releases);
+  assert.ok(cells.length > 2 * live.length, `${cells.length} cell fields made`);
+  for (const s of cells) assert.equal(s.releases ?? 0, view.cellKeys.has(s) ? 0 : 1, "live ones never released, the others once");
+  const left = [...view.cellKeys.keys()];
+  await view.close(m.cx);
+  assert.ok(left.length > 0 && left.every(s => s.releases === 1), "closing the pane releases every cell field");
 });

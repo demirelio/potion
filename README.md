@@ -167,10 +167,16 @@ without its indent and stays indented. A table is drawn as a grid of cells, with
 header row first, in bold on a tinted background; lines round the table and between its rows and columns; each
 column as wide as its widest text (from 64 to 360 px, shared out when the page is narrower than the columns), and a
 column's text centred or at the right when its delimiter row's colons say so (`:-:`, `--:`). Each cell shows its text
-as a paragraph does: formatting, links (a click opens them), comments highlighted. A table whose rows hold more cells
-than its header, or of more than 1,000 cells, shows its source, as do an HTML block and front matter. A paragraph of
-pictures never shows its source: a click [picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as
-spaces, so it wraps as it did on the page, and keeps them in the file.
+as a paragraph does: formatting, links (Cmd+click opens them; a click in a file you can't edit), comments highlighted.
+A click in a cell puts the caret where you click, and you type in the cell as in a paragraph: the format keys, typed
+`**bold**` and the like, copy and paste. A cell holds one line: a line break you paste becomes a space, and a `|` you
+type shows as `|` and is written `\|`, so the table keeps its columns. Tab and Shift+Tab select the whole text of the
+next and the previous cell, the header row first. Enter does nothing in a cell yet, and the arrows stay in it. While
+the caret is in the table its columns keep their widths, however long a word you type; they are worked out again when
+you leave it. A table whose rows hold more cells than its header, or of more than 1,000 cells, shows its source, as do
+an HTML block and front matter. A paragraph of pictures never shows its source: a click [picks a
+picture](#pictures). A hard-wrapped paragraph shows its line breaks as spaces, so it wraps as it did on the page, and
+keeps them in the file.
 
 In code, typing stays as typed: no formatting, shortcut or slash menu. Enter starts the new line with the indent of
 the line the caret is on, and Tab and Shift+Tab indent (see the table). To leave a code block, press Enter three times
@@ -182,7 +188,7 @@ fences.
 
 | Key or click | What it does |
 |---|---|
-| Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, the page staying put too; on a table's grid the table's source opens, the caret at the start of the clicked cell's text; in a table that shows its source, at the start of the clicked cell (there the second click is exact) |
+| Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, the page staying put too; in a table's cell where you click as in a paragraph, and on a cell's padding or the line after it at the end of its text (at its start left of its text) |
 | Click a link | Selects the whole link and shows its [popover](#links) over it; a second click puts the caret in its text |
 | Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
@@ -191,7 +197,7 @@ fences.
 | Click a picture | [Picks it](#pictures): a ring around it and its menu over it. A double-click or a right-click does the same, a linked picture included. A picture inside a line of text is selected whole with the same menu, and a second click puts the caret in its alt text |
 | Cmd+click a linked picture | Opens its link, as Cmd+click on a link in text does, also in a file you can't edit |
 | Click a checkbox | Ticks or unticks it |
-| Enter | At the end of a block: a new one below (a list continues). At the start: a new one above. In the middle: splits the block, and the formatting goes on on both sides: Enter inside a bold, coloured, highlighted, underlined or code run leaves both halves with it, inside a link both halves link to its address, and in commented text the first half keeps the comment. In a web address, an autolink or a picture the split goes after it, so it is never cut. On an empty item: out a level, then out of the list. In code: a new line that starts with the spaces and tabs the caret's line has before the caret; at the end of the code, the third Enter after its last line leaves for a new paragraph below, taking the two blank lines away. In a table, HTML block or front matter: a line break |
+| Enter | At the end of a block: a new one below (a list continues). At the start: a new one above. In the middle: splits the block, and the formatting goes on on both sides: Enter inside a bold, coloured, highlighted, underlined or code run leaves both halves with it, inside a link both halves link to its address, and in commented text the first half keeps the comment. In a web address, an autolink or a picture the split goes after it, so it is never cut. On an empty item: out a level, then out of the list. In code: a new line that starts with the spaces and tabs the caret's line has before the caret; at the end of the code, the third Enter after its last line leaves for a new paragraph below, taking the two blank lines away. In a table's cell: nothing yet. In the source of a table that shows its source, an HTML block or front matter: a line break |
 | Shift+Enter | A line break inside the block, written as `\` at the end of the line; in inline code the code closes before the break and opens again after it, as code can't hold one. In a heading it is Enter |
 | Cmd+Enter | Ticks the task being edited; in a code block, leaves it for a new paragraph below |
 | Backspace / Delete | In a paragraph, heading, item or quote what is left keeps its formatting: a bold run keeps its marks while a letter of it is left and they go with its last letter; a link keeps its address and commented text its comment the same way, and a link or comment whose text all went goes whole. A letter typed where you deleted takes the formatting of the first letter deleted, so a typo at the end of a bold word is retyped bold. Option+Backspace and a selection deleted or cut work the same |
@@ -200,20 +206,20 @@ fences.
 | Backspace at the start | A heading or quote becomes a paragraph; an item moves out a level, then becomes a paragraph; a paragraph joins the one above, or picks the last picture of a paragraph of pictures above it. An empty block goes, an empty code block with its fences; in a code block holding code it does nothing |
 | Delete at the end | Joins the next paragraph, heading or item to this one, removes the rule after it, or picks the first picture of a paragraph of pictures after it |
 | Joining blocks | Every letter of both keeps its formatting and shows as before: a bold word at the end of one and another at the start of the next become one bold word, and a `*` that showed as a character still does. The caret lands at the join |
-| Tab / Shift+Tab | Nests / un-nests a list item with its sub-items; in a table, selects the next / previous cell. In code, Tab types the block's indent at the caret: a tab when its lines are indented with tabs, else its smallest indent of two spaces or more, else four spaces. With a selection Tab indents every line it touches except empty ones, and Shift+Tab takes one indent off them, or off the caret's line; the same text stays selected. A code block is never nested into an item this way |
+| Tab / Shift+Tab | Nests / un-nests a list item with its sub-items; in a table's cell, selects the whole text of the next / previous cell, row by row with the header first (nothing past the last cell or before the first; an empty cell takes the caret). In code, Tab types the block's indent at the caret: a tab when its lines are indented with tabs, else its smallest indent of two spaces or more, else four spaces. With a selection Tab indents every line it touches except empty ones, and Shift+Tab takes one indent off them, or off the caret's line; the same text stays selected. A code block is never nested into an item this way |
 | Option+Up / Down | Moves the block (an item with its sub-items) above or below its neighbour |
 | Arrow keys | Move inside the block, and on to the block above or below at its edge; into a paragraph of pictures they pick its first picture from above, its last from below |
 | Page Up / Page Down | Scrolls a page and takes the caret along |
 | Escape | Closes a link's popover, else the format bar's open menu, else the format bar when it shows, else stops editing; Enter picks up where you were. In the address box it goes back to the popover |
 | Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them. Undo puts the caret back where it was before the key, and a deleted or typed-over selection comes back selected; a picture changed or deleted comes back picked |
-| Cmd+C / Cmd+X | In a paragraph, heading, item or quote: copies the selection as markdown that keeps its formatting and stands on its own (part of a bold word is copied bold, part of a link as a link to its address, a picture whole, line breaks kept); comments are left out, their text kept. Cmd+X then deletes the selection as Backspace does. In a code block they copy the code, in a table the source |
+| Cmd+C / Cmd+X | In a paragraph, heading, item or quote: copies the selection as markdown that keeps its formatting and stands on its own (part of a bold word is copied bold, part of a link as a link to its address, a picture whole, line breaks kept); comments are left out, their text kept. Cmd+X then deletes the selection as Backspace does. In a table's cell the same; in a code block they copy the code, in a table that shows its source the source |
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code. Pasted into a paragraph, heading, item or quote, text keeps its own formatting and takes the formatting of where it lands, as typing does: inside a bold word it is bold too, and over a selection it takes its first letter's. A mark that pairs with nothing on the clipboard (`**wo`) is pasted as the characters it shows. Paragraphs or blocks pasted in the middle of a block split it there as Enter does: the first pasted paragraph joins the text before, the last joins the text after, and lists, rules and code in between arrive as the blocks they write |
-| Cmd+B / Cmd+I / Cmd+U / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic, underline or strikethrough on the selection, all or nothing. If every letter of the selection has it already, the key takes it off all of them; otherwise it puts it on all of them, so a selection that is partly bold becomes all bold first. Text outside the selection keeps its formatting: a bold run the selection cuts is split, and runs that end up touching join into one. Every other formatting stays (bold-italic text that loses bold stays italic; a link keeps its address, a comment its note). The same letters stay selected, so the key again undoes it. Spaces at the ends of the selection stay outside. On a caret in a word they act on the word; elsewhere they write nothing and set the formatting of what you type next there, which stays one run as you type on (Cmd+B, `word`, Cmd+B, `s` gives **word**s) |
+| Cmd+B / Cmd+I / Cmd+U / Cmd+Shift+X | In a paragraph, heading, item, quote or table cell: bold, italic, underline or strikethrough on the selection, all or nothing. If every letter of the selection has it already, the key takes it off all of them; otherwise it puts it on all of them, so a selection that is partly bold becomes all bold first. Text outside the selection keeps its formatting: a bold run the selection cuts is split, and runs that end up touching join into one. Every other formatting stays (bold-italic text that loses bold stays italic; a link keeps its address, a comment its note). The same letters stay selected, so the key again undoes it. Spaces at the ends of the selection stay outside. On a caret in a word they act on the word; elsewhere they write nothing and set the formatting of what you type next there, which stays one run as you type on (Cmd+B, `word`, Cmd+B, `s` gives **word**s) |
 | Cmd+Shift+C | The same for inline code: other formatting goes around the code (`` **`x`** ``), and making formatted text code keeps its formatting, splitting the code where it changes |
 | Cmd+Shift+H | The same for a highlight |
 | Cmd+K | Opens the [address box](#links) under the selection, offering the web or mail address the clipboard holds; Enter makes the selection a link to what you typed. On a caret in a word it links the word; elsewhere Enter writes the address as a link. In a link the box holds its address, to change it |
 | Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret. In a code block, diagram source or table you are editing, or with one of them selected as a block, a comment on the whole block. With a picture picked, a comment on that picture (its own, when it has one) |
-| Select text in a paragraph, heading, item or quote | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
+| Select text in a paragraph, heading, item or quote | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block not being edited a drag selects the drawn text, for Cmd+C. A selection in a table's cell shows no bar yet, and Cmd+K does nothing there |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 The file stays plain markdown. Bold, italic, strikethrough and code are written `**…**`, `*…*`, `~~…~~` and
@@ -230,9 +236,7 @@ item, `[] ` or `[ ] ` a task, and `> ` a quote; Cmd+Z right after gives back wha
 starts an empty code block with the caret in it, and `---`, `***` or `___` then Enter makes a rule. A block you open
 and leave empty disappears and writes nothing to the file; a code block you empty keeps its fences.
 
-**Known limits:** in code blocks and in a table that shows its source the first click puts the caret near the click, and
-the second is exact; a click on a table's grid still shows the table's source, pipes and delimiter row included, until
-its cells can be edited in place;
+**Known limits:** in code blocks the first click puts the caret near the click, and the second is exact;
 code has no syntax colours; blank lines typed at the end of an indented code block show while you edit it but not in
 Reading, which leaves them out as markdown does;
 selecting across blocks selects whole blocks (the middle of one block to the middle of another needs the Markdown
@@ -409,9 +413,10 @@ before the editor stored times are like that). Only the comment's text is ever s
   ```
 
   A point comment alone in a cell is that empty cell's comment. Reading highlights the commented text in the cell (a
-  point comment as a highlighted 💬) and leaves the comment out; the Markdown view, and the table's source while you
-  edit it, show it as written. Each comment's card sits beside the row holding it, after the table's own cards; while
-  you edit the table's source, beside the line holding it. A click on the card makes it active: the card stands out and the
+  point comment as a highlighted 💬) and leaves the comment out, also while you type in the cell, as in a paragraph;
+  the Markdown view shows it as written. Each comment's card sits beside the row holding it, after the table's own
+  cards, also while you type in one of its cells; a comment you type into a cell gets its card, and is counted, as you
+  type it, and one you delete loses them. A click on the card makes it active: the card stands out and the
   cell's commented text turns the deeper ochre (no frame on the table). Edit and Resolve work as on any card: Edit keeps
   the time and writes the `|` escaped again, Resolve takes the marks and the comment off and leaves the cell's text.
   Each is one undo step, and undo opens nothing. In a narrow pane the table's count counts its cells' comments with its

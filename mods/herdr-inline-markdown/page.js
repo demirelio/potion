@@ -56,6 +56,8 @@ const frameColors = (letters, t) => [...letters].map(l => (l === PICTURE_FRAME.d
 
 const RAW_KINDS = new Set(["code", "mermaid", "table", "html", "frontmatter", "hr", "definition"]);
 export const isRaw = kind => RAW_KINDS.has(kind);
+// A block key holds no colon, so a cell's field id never names a block.
+export const cellId = (key, r, c) => `${key}:${r}:${c}`;
 
 // `grid`: table b is drawn as a grid of cells, not as its source.
 export function lookOf(b, grid = false) {
@@ -185,29 +187,47 @@ function rendered(owner, d, t) {
 const frontBox = (t, inner) => div().w_full().rounded(8).bg(t.surface).border_1().border_color(t.border).px(FRONT_BOX.px).py(FRONT_BOX.py).child(inner);
 
 // A table as its grid (block data d's `grid`, grid.js gridOf): the header row on the surface, each row reporting its
-// height, each cell's text drawn by a TextView of its own. Gpui clips to the box, not to its rounded corners, so the
-// header rounds its own top corners inside the 1 px line.
+// height, each cell's text drawn by a field of its own near the page (owner.cellField), else by a TextView. Gpui clips
+// to the box, not to its rounded corners, so the header rounds its own top corners inside the 1 px line.
 function tableGrid(owner, d, t) {
-  const g = d.grid, last = g.texts.length - 1;
+  const g = d.grid, last = g.texts.length - 1, looks = [{ ...d, style: "head" }, d];
   return v_flex().id(`md-table-${d.key}`).w(g.w).flex_none().border_1().border_color(t.border).rounded(GRID.radius).overflow_hidden()
     .children(g.texts.map((cells, r) => h_flex().id(`md-row-${d.key}-${r}`).w_full().items_stretch()
       .when(r === 0, el => el.bg(t.surface).rounded_t(GRID.radius - GRID.line))
       .when(r < last, el => el.border_b(GRID.line).border_color(t.border))
       .on_size_change((size, cx) => owner.rowSized(d.key, r, size, cx))
-      .children(cells.map((text, c) => gridCell(owner, d, t, r, c, text)))));
+      .children(cells.map((text, c) => gridCell(owner, d, t, r, c, text, looks[r === 0 ? 0 : 1])))));
 }
 
 // A centred or right-aligned column's text sits in its box (`boxes`), left-aligned inside it: a field, which edits a
 // cell, can't align its own text.
-function gridCell(owner, d, t, r, c, text) {
+function gridCell(owner, d, t, r, c, text, look) {
   const g = d.grid, lined = c < g.widths.length - 1, align = g.aligns[c], box = g.boxes[r][c], st = r === 0 ? STYLES.head : STYLES.cell;
-  const view = TextView.markdown(`md-tv-${d.key}-${r}-${c}-${d.gen}`, text).selectable(true).on_link_click((url, cx) => owner.link(url, cx));
+  const state = owner.cellField(d.key, r, c);
+  const view = state ? cellField(owner, d, t, r, c, state, st, look)
+    : TextView.markdown(`md-tv-${d.key}-${r}-${c}-${d.gen}`, text).selectable(true).on_link_click((url, cx) => owner.link(url, cx));
   const inner = type(div(), st, t[d.color], owner.fonts.sans).min_h(g.rowPx[r === 0 ? 0 : 1]).child(view);
   return h_flex().id(`md-cell-${d.key}-${r}-${c}`).w(g.widths[c] + (lined ? GRID.line : 0)).flex_none().items_start().px(GRID.padX).py(GRID.padY)
     .when(lined, el => el.border_r(GRID.line).border_color(t.border))
     .when(align === "center", el => el.justify_center())
     .when(align === "right", el => el.justify_end())
     .child(box ? inner.w(box).flex_none() : inner.w_full());
+}
+
+// A cell's text drawn by its field, as a text block's field draws: only the edited cell's wrapper has the text keys.
+// The wrapper hands its key-ups and presses to the editor under the cell's id.
+function cellField(owner, d, t, r, c, state, st, look) {
+  const id = cellId(d.key, r, c), name = `${d.key}-${r}-${c}`;
+  const input = Textarea.new(state).id(`md-input-${name}`).w_full()
+    .font_family(owner.fonts.sans).text_size(st.size).font_weight(st.weight).line_height(d.ratio).text_color(t[d.color])
+    .token(ctx => tokenView(owner, look, t, ctx)).on_token_click((ev, cx) => owner.tokenClick(id, ev, cx));
+  return div().id(`md-field-${name}`).w_full().pb(d.padActive)
+    .when(d.cell === `${r}:${c}`, el => el.key_context(`${TEXT} rows=many`))
+    .on_key_up((e, cx) => owner.fieldKeyUp(id, e, cx))
+    .on_mouse_down("left", (e, cx) => owner.fieldDown(id, e, cx))
+    .on_mouse_up("left", (e, cx) => owner.fieldUp(id, e, cx))
+    .on_mouse_up("right", () => owner.fieldRightUp(id))
+    .child(input);
 }
 
 function piece(owner, d, t, p) {
@@ -271,8 +291,9 @@ function marker(owner, d, t) {
   return box.justify_center().child(dot);
 }
 
+// A grid draws its cells' fields itself, the edited one's among them.
 export function renderBlock(owner, d) {
-  const t = theme(), state = d.mode === "active" ? owner.field : d.mode === "field" ? owner.blockField(d.key) : null;
+  const t = theme(), state = d.look === "grid" ? null : d.mode === "active" ? owner.field : d.mode === "field" ? owner.blockField(d.key) : null;
   let body = state ? field(owner, d, t, state) : rendered(owner, d, t);
   if (d.kind === "item") {
     body = h_flex().w_full().items_start().child(marker(owner, d, t)).child(div().flex_1().min_w(0).child(body));

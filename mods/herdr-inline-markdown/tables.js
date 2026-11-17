@@ -142,6 +142,9 @@ const ownCells = row => {
 
 const escapedPipes = text => text.replace(BARE_PIPE, (m, run) => (run.length % 2 ? m : `${run}\\|`));
 
+// `text` as a cell holds it: its line breaks spaces, every pipe that would part cells escaped.
+export const cellWritten = text => escapedPipes(String(text ?? "").replace(LINE_BREAK, " "));
+
 function endsInOddBackslashes(text) {
   let n = 0;
   while (n < text.length && text.charCodeAt(text.length - 1 - n) === BSL) n++;
@@ -164,6 +167,14 @@ function asRowStart(text, rest) {
   return `${t.slice(0, digits)}\\${t.slice(digits)}`;
 }
 
+// The row on text[body, eol) of a table whose header has `columns` cells, parted as tableOf parts it: { cells (null
+// for each the row lacks), lead, trail }. Edits keep a row on its line, so it can be parted again without a parse.
+export function rowAt(text, body, eol, columns) {
+  const { cells, lead, trail } = partRow(text, body, eol);
+  while (cells.length < columns) cells.push(null);
+  return { cells, lead, trail };
+}
+
 // -> the splice that writes `next` as the text of cell (r, c) of table t (tableOf(doc, b)), the table keeping its shape:
 // line breaks become spaces, a pipe not escaped yet is escaped, a text ending in an odd run of backslashes gets a space
 // before a pipe right after it, an empty cell's text goes between its pipes with a space each side, a cell the row lacks is added
@@ -171,27 +182,39 @@ function asRowStart(text, rest) {
 // leading pipe never opens a block. A row's first or last cell emptied where the row has no pipe at that end gets one:
 // without it the row would have a cell fewer. Nothing outside the cell's slot changes.
 export function cellEdit(doc, b, t, r, c, next) {
-  const text = doc.text, row = t.rows[r], L = b.lines[row.line], eol = b.start + L.eol, own = ownCells(row);
-  const w = escapedPipes(String(next ?? "").replace(LINE_BREAK, " ")), blank = !w.trim();
+  const row = t.rows[r], { start, end, insert } = writeCell(doc.text, row, b.start + b.lines[row.line].eol, c, next);
+  return { start, end, insert };
+}
+
+// cellEdit's splice for cell c of `row` (rowAt's, or a tableOf row) on a line ending at `eol`, with `value`, the cell's
+// text as written (what a field editing it holds), and `from`, where that starts in the text after the splice. A blank
+// `next` empties the cell: `value` is then the blank as typed, which the file holds only between two pipes (a cell at
+// a row's end with no pipe there gets one instead), and `from` the cell's place.
+export function writeCell(text, row, eol, c, next) {
+  const own = ownCells(row), w = cellWritten(next), blank = !w.trim();
+  const at = (start, end, insert, from, value = w) => ({ start, end, insert, value, from });
   if (c >= own) {
-    if (blank) return { start: eol, end: eol, insert: "" };
-    if (!row.trail) return { start: eol, end: eol, insert: `${" |".repeat(c - own + 1)} ${w}` };
+    if (blank) return at(eol, eol, "", eol);
+    if (!row.trail) {
+      const insert = `${" |".repeat(c - own + 1)} ${w}`;
+      return at(eol, eol, insert, eol + insert.length - w.length);
+    }
     const close = text.lastIndexOf("|", eol - 1) + 1;
-    return { start: close, end: close, insert: `${" |".repeat(c - own)} ${w} |` };
+    return at(close, close, `${" |".repeat(c - own)} ${w} |`, close + 2 * (c - own) + 1);
   }
   const cell = row.cells[c], firstBare = c === 0 && !row.lead, lastBare = c === own - 1 && !row.trail;
   if (cell.start === cell.end) {
-    if (blank) return { start: cell.start, end: cell.end, insert: "" };
+    if (blank) return at(cell.start, cell.end, "", cell.start);
     let s = cell.start, e = cell.end;
     while (isBlank(text.charCodeAt(s - 1))) s--;
     while (e < eol && isBlank(text.charCodeAt(e))) e++;
-    return { start: s, end: e, insert: ` ${w} ` };
+    return at(s, e, ` ${w} `, s + 1);
   }
   if (blank) {
     const insert = firstBare && lastBare ? "| |" : firstBare || lastBare ? "|" : w;
-    return { start: cell.start, end: cell.end, insert };
+    return at(cell.start, cell.end, insert, cell.start + (insert === w ? 0 : 1));
   }
   const shown = firstBare ? asRowStart(w, text.slice(cell.end, eol)) : w;
   const gap = endsInOddBackslashes(shown) && text.charCodeAt(cell.end) === PIPE ? " " : "";
-  return { start: cell.start, end: cell.end, insert: shown + gap };
+  return at(cell.start, cell.end, shown + gap, cell.start, shown);
 }
