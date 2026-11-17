@@ -38,6 +38,11 @@ function fakeExec({ git = [], find: found = [], home = "/home/dev", mkdir = 0 } 
 
 beforeEach(() => reset({ spaces: [space("s1", "herdr", { folder: FOLDER, active: true })], exec: fakeExec({ git: FILES }) }));
 
+// The timers Herdr fires once the dialog is made (the listing starts from one), without waiting on what they start.
+const startTimers = cx => {
+  for (const t of cx.timers.filter(t => t.once && t.ms === 0 && !t.ran && !t.cancelled)) { t.ran = true; t.fn(cx); }
+};
+
 // calls.order and calls.setShared are cleared after init, which names the dialog the open picker.
 async function mount({ folder = FOLDER, machine = null, settle = true, props: extra = {} } = {}) {
   state.props = { action: "open", space: "s1", folder, machine, overlay: "ov-1", ...extra };
@@ -45,9 +50,26 @@ async function mount({ folder = FOLDER, machine = null, settle = true, props: ex
   view.init(state.props, cx);
   calls.order.length = 0;
   calls.setShared.length = 0;
+  startTimers(cx);
   if (settle) await cx.settle();
   return { view, cx, tree: () => view.render(cx) };
 }
+
+// Herdr leaves a call pending for ever when the view that made it goes away. The cmd-shift-m mod makes this dialog
+// inside its own timer and closes itself right after, so a call made while the dialog is being made would never
+// answer, and New note, which waits for the listing, would hang the dialog.
+test("the dialog calls nothing while it is being made: the listing starts from its own timer", async () => {
+  state.props = { action: "open", place: "pane", space: "s1", folder: FOLDER, machine: null, overlay: "ov-1" };
+  const cx = makeCx(), view = new Picker();
+  view.init(state.props, cx);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(calls.exec, [], "nothing asked of Herdr yet");
+  assert.equal(view.loading, true);
+  await fire_timers(cx, { ms: 0 });
+  assert.deepEqual(calls.exec.map(c => c.command), ["git"]);
+  assert.equal(view.loading, false);
+});
 const rowIds = tree => ids(tree).filter(id => id.startsWith("mdp-") && /^mdp-(new|file-\d+|create)$/.test(id));
 const row = (tree, id) => textOf(must(tree, id)).replace(/\s+/g, " ").trim();
 const highlighted = tree => rowIds(tree).filter(id => must(tree, id).style.bg === "selected");
@@ -59,7 +81,7 @@ test("init: the input is focused now and again after 600 ms, and Up/Down/Escape 
   assert.equal(view.input.options.placeholder, "Find or create a markdown file…");
   assert.equal(view.input.focused, true);
   view.input.focused = false;
-  assert.deepEqual(cx.timers.map(t => t.ms), [600]);
+  assert.deepEqual(cx.timers.map(t => t.ms), [600, 0], "the second focus, and the listing's start");
   await fire_timers(cx);
   assert.equal(view.input.focused, true, "the dialog opens while the old focus still settles");
   assert.equal(cx.handles.length, 1);
@@ -849,12 +871,12 @@ test("props() wins over the argument init gets, and the argument is the fallback
   state.props = { action: "open", folder: "/tmp/y", machine: null, overlay: "ov-1" };
   let cx = makeCx();
   new Picker().init({ action: "open", folder: "/tmp/x", machine: null }, cx);
-  await cx.settle();
+  await fire_timers(cx, { ms: 0 });
   assert.equal(calls.exec[0].options.cwd, "/tmp/y");
 
   state.props = undefined;
   cx = makeCx();
   new Picker().init({ action: "open", folder: "/tmp/x", machine: null }, cx);
-  await cx.settle();
+  await fire_timers(cx, { ms: 0 });
   assert.equal(calls.exec[1].options.cwd, "/tmp/x");
 });

@@ -51,13 +51,15 @@ export class Picker {
     this.refocus = cx.timer.after(600, () => { if (!this.closed) this.input.focus(); });
     this.handle = cx.focus_handle();
 
-    // Creating a file waits for the listing: the name it picks has to be free.
-    this.ready = new Promise(done => cx.spawn(async cx => {
+    // Creating a file waits for the listing: the name it picks has to be free. The listing starts from the dialog's own
+    // timer: the cmd-shift-m mod makes the dialog inside its timer and then closes, and Herdr never answers a call made
+    // for a view that has gone (gpui-kit shell `async_function`), which would hang New note.
+    this.ready = new Promise(done => cx.timer.after(0, cx => cx.spawn(async cx => {
       try { await this.load(); } catch (e) { this.failure = why(e); }
       this.loading = false;
       done();
       if (!this.closed) cx.notify();
-    }));
+    })));
   }
 
   close() {
