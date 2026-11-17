@@ -138,6 +138,9 @@ const type = (el, st, color, font) => el.font_family(font).text_size(st.size).fo
 const monoLines = (text, st, color, font) => type(v_flex().w_full(), st, color, font).children(text.split("\n").map(l => div().child(l || " ")));
 
 const codeBox = (t, inner) => div().w_full().relative().bg(t.surface).border_1().border_color(t.border).rounded(8).px(BOX.px).py(BOX.py).child(inner);
+// A code block's box with its language, if any, top right: drawn the same in Reading and while edited.
+const labelledCodeBox = (t, inner, info) => codeBox(t, inner)
+  .when(Boolean(info), el => el.child(div().absolute().top(6).right(10).text_size(11).text_color(t.dim).child(info)));
 
 function rendered(owner, d, t) {
   const st = STYLES[d.style], color = t[d.color], { sans, mono } = owner.fonts;
@@ -147,10 +150,7 @@ function rendered(owner, d, t) {
       .child(TextView.markdown(`md-tv-${d.key}-${d.gen}`, d.text).selectable(true).on_link_click((url, cx) => owner.link(url, cx)));
   }
   if (d.look === "lines") return monoLines(d.text, st, color, mono);
-  if (d.look === "code") {
-    return codeBox(t, monoLines(d.text, st, color, mono))
-      .when(Boolean(d.info), el => el.child(div().absolute().top(6).right(10).text_size(11).text_color(t.dim).child(d.info)));
-  }
+  if (d.look === "code") return labelledCodeBox(t, monoLines(d.text, st, color, mono), d.info);
   if (d.look === "boxed") {
     return codeBox(t, type(div().w_full().min_h(d.row), STYLES.cell, color, sans)
       .child(TextView.markdown(`md-tv-${d.key}-${d.gen}`, d.text).selectable(true).on_link_click((url, cx) => owner.link(url, cx))));
@@ -207,7 +207,7 @@ function field(owner, d, t, state) {
     .on_mouse_up("right", () => owner.fieldRightUp(d.key))
     .child(input);
   if (d.kind === "frontmatter") return frontBox(t, wrap);
-  return raw ? codeBox(t, wrap) : wrap;
+  return raw ? labelledCodeBox(t, wrap, d.info) : wrap;
 }
 
 function marker(owner, d, t) {

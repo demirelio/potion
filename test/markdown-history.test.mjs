@@ -29,7 +29,7 @@ test("a typing run undoes in one step and stores only the typed characters", () 
   const lines = [];
   for (let i = 0, n = 0; n < 40 * 1024; i++) n += lines[lines.push(`let v${i} = ${i};`) - 1].length + 1;
   const text = `\`\`\`js\n${lines.join("\n")}\n\`\`\`\n`, h = createHistory();
-  const at = field(parse(text), parse(text).blocks[0]).value.length >> 1;
+  const value = field(parse(text), parse(text).blocks[0]).value, at = value.lastIndexOf("\n", value.length >> 1) + 1;
   const typed = "thirty characters typed here!!";
   const after = typeInto(h, text, 0, at, [...typed]);
   assert.equal(h.entries.length, 1);

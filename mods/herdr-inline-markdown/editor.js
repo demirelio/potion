@@ -4,7 +4,7 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
-import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isText, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
+import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
 import { BAR, BAR_MENU, CARD, CARDS, COLUMN, FRAME, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
@@ -350,15 +350,68 @@ function pendingRecord(key, b) {
 const FENCE_TYPED = /^(```|~~~)[^`\n]*$/;
 const RULE_TYPED = /^(---|\*\*\*|___)$/;
 const EMPTY_MARKS = /^(?:\*{4,}|~{4,})$/;
-// The field of a fenced block or front matter with no line between its fences shows an empty one there, so that the
-// caret never has to sit on a fence line; the source gets that line with the first change typed in the field.
+// The field of front matter with no line between its dashes shows an empty one there, so that the caret never has to
+// sit on a dash line; the source gets that line with the first change typed in the field.
 const withInnerLine = (b, value) => {
-  if (!b.fence && b.kind !== "frontmatter") return value;
-  const first = value.indexOf("\n"), inner = first >= 0 && (b.closed === false || value.indexOf("\n", first + 1) >= 0);
+  if (b.kind !== "frontmatter") return value;
+  const first = value.indexOf("\n"), inner = first >= 0 && value.indexOf("\n", first + 1) >= 0;
   if (inner) return value;
   const end = first < 0 ? value.length : first;
   return `${value.slice(0, end)}\n${value.slice(end)}`;
 };
+const leadingBlank = line => /^[ \t]*/.exec(line)[0];
+const BLANK_LINE = /^[ \t]*$/;
+function endsInTwoBlankLines(value) {
+  const last = value.lastIndexOf("\n");
+  if (last < 0) return false;
+  const prev = last > 0 ? value.lastIndexOf("\n", last - 1) : -1;
+  return BLANK_LINE.test(value.slice(last + 1)) && BLANK_LINE.test(value.slice(prev + 1, last));
+}
+const TAB_WIDTH = 4, SMALLEST_SPACE_INDENT = 2;
+// What one Tab indents the code `value` by: a tab when more of its indented lines start with one than with a space,
+// else its smallest space indent of two or more, else a tab's width of spaces.
+function indentUnit(value) {
+  let tabs = 0, spaces = 0, fewest = Infinity;
+  for (const line of value.split("\n")) {
+    const lead = leadingBlank(line);
+    if (!lead || lead.length === line.length) continue;
+    if (lead[0] === "\t") tabs++;
+    else {
+      spaces++;
+      const n = /^ */.exec(lead)[0].length;
+      if (n >= SMALLEST_SPACE_INDENT && n < fewest) fewest = n;
+    }
+  }
+  if (tabs > spaces) return "\t";
+  return " ".repeat(fewest < Infinity ? fewest : TAB_WIDTH);
+}
+// A selection ending right at a line's start leaves that line out.
+function linesTouched(value, r) {
+  const last = r.end > r.start && value[r.end - 1] === "\n" ? r.end - 1 : r.end;
+  const starts = [r.start > 0 ? value.lastIndexOf("\n", r.start - 1) + 1 : 0];
+  for (let p = value.indexOf("\n", starts[0]); p >= 0 && p < last; p = value.indexOf("\n", p + 1)) starts.push(p + 1);
+  return starts;
+}
+const emptyLineAt = (value, at) => at === value.length || value[at] === "\n";
+// A leading tab, else up to one indent unit of leading spaces.
+function outdentWidth(value, at, unit) {
+  if (value[at] === "\t") return 1;
+  const most = unit === "\t" ? TAB_WIDTH : unit.length;
+  let n = 0;
+  while (n < most && value[at + n] === " ") n++;
+  return n;
+}
+// Where field offset `p` lands once `edits` ({ at, removed, inserted }, in order, apart) are applied: past what was
+// inserted at or before it; inside removed text, at the end of what replaced it.
+function mappedThrough(edits, p) {
+  let shift = 0;
+  for (const e of edits) {
+    if (e.at > p) break;
+    if (p < e.at + e.removed) return e.at + shift + e.inserted.length;
+    shift += e.inserted.length - e.removed;
+  }
+  return p + shift;
+}
 
 // What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, its text blocks drawn
 // by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a picture
@@ -1612,7 +1665,7 @@ export class Editor {
     return {
       key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color,
       space, depth: b.depth, text, ...this.notesData(b, look, space, cal, width),
-      info: b.kind === "code" ? b.info.trim().split(/\s+/)[0] : "",
+      info: b.kind === "mermaid" ? "mermaid" : b.kind === "code" ? b.info.trim().split(/\s+/)[0] : "",
       marker, label: marker === "number" ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked),
       diagram: look.look === "diagram" ? diagramSig(this.shown.get(b.key), this.good.get(b.key)) : "",
       mode: b.key === this.activeKey ? "active" : this.blockFields.has(b.key) ? "field" : "rendered",
@@ -2690,9 +2743,10 @@ export class Editor {
     cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.act === act && this.activeKey && !this.boxOpen()) state.focus(); });
   }
 
-  // What was typed is parsed in, an emptied block goes, and a pending one is never written unless it holds a marker held
-  // back (writeHeld). While its caret row is on the page the block keeps its top where it is; a pending block, which
-  // goes, leaves block `keep` (the one opened next) where it is, else the block above it.
+  // What was typed is parsed in, an emptied block goes (a fenced one keeps its fences), and a pending one is never
+  // written unless it holds a marker held back (writeHeld). While its caret row is on the page the block keeps its top
+  // where it is; a pending block, which goes, leaves block `keep` (the one opened next) where it is, else the block
+  // above it.
   leave(cx, keep = null) {
     if (!this.activeKey) return;
     this.syncField(cx);
@@ -2703,7 +2757,7 @@ export class Editor {
       const i = this.at.get(keep) ?? (this.at.get(pending.key) ?? 0) - 1;
       anchor = i >= 0 && this.blocks[i] ? { key: this.blocks[i].key, y: COLUMN.padTop + this.sums[i] - this.offset } : null;
     }
-    const gone = b && this.seen === "" && this.opened !== "" && b.subtreeEnd === b.end ? remove(this.doc, b) : null;
+    const gone = b && this.seen === "" && this.opened !== "" && b.subtreeEnd === b.end && !b.fence ? remove(this.doc, b) : null;
     const base = this.doc.text;
     if (gone) this.f = null;
     this.commit(cx);
@@ -2920,12 +2974,22 @@ export class Editor {
     if (stroke) rec.stroke = stroke;
     if (innerLine) this.edited(applySplice(applySplice(this.text, innerLine), s), cx, rec);
     else this.edited(applySplice(this.text, s), cx, { ...rec, splice: s });
+    this.lengthenFences(change, cx);
     if (!own && from && from.start < from.end) this.history.select(this.text, from);
     if (change === edit && !edit.removed && edit.inserted === " " && this.shortcutAt(s.fieldCaret - 1, cx)) return this.retoken();
     this.retoken();
     this.updateRows(cx);
     this.revealCaret(cx);
     if (!own && this.known.start === this.known.end) this.keepStyleAt(this.known.end, mended?.style ?? null);
+  }
+
+  // A line typed into a fenced block that would close its fence makes both fences longer at once, in the history entry
+  // of the typing that wrote it: the block keeps every line its field shows, and no save writes it ending early.
+  lengthenFences(change, cx) {
+    const g = lengthenFence(this.f, change.at, change.at + change.inserted.length);
+    if (!g) return;
+    this.history.amend(this.text, { ...g, caret: fieldToDoc(this.f, this.known.end) });
+    this.edited(applySplice(this.text, g), cx, false);
   }
 
   // A key the person made over all of the picture picked in the edited field: Backspace or Delete takes it as the
@@ -3097,12 +3161,12 @@ export class Editor {
     cx?.notify();
   }
 
-  // The clicked line stays under the pointer when the field shows a fence or dash line above it.
+  // The clicked line stays under the pointer when the field shows front matter's dash line above it.
   clickBlock(key, p, cx) {
     const i = this.at.get(key), b = this.blockByKey(key);
     if (i === undefined || !b) return;
-    const { x, y } = this.blockPoint(i, p), fenced = Boolean(b.fence) || b.kind === "frontmatter";
-    this.activate(key, this.pressCaret(b, x, y), cx, { shift: fenced && b.kind !== "mermaid" ? this.data.get(key).row : 0, reveal: false });
+    const { x, y } = this.blockPoint(i, p);
+    this.activate(key, this.pressCaret(b, x, y), cx, { shift: b.kind === "frontmatter" ? this.data.get(key).row : 0, reveal: false });
   }
 
   // View point p as x from the column's left edge and y from the top of block i.
@@ -3120,25 +3184,21 @@ export class Editor {
     if (b.kind === "mermaid" && !active) return this.entry(b, value, 1, null);
     if (d.look === "picture" && !active) return this.pictureStartAt(b, d, y);
     const height = (this.heights.get(b.key) ?? this.estimate(b)) - c.y - c.below - (asField ? d.padActive : d.padRendered);
-    const fenced = !active && (Boolean(b.fence) || b.kind === "frontmatter");
-    return pressToField({ kind: b.kind, value, fenced, closed: b.closed, rows: this.rowsOf(d, asField), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance });
+    const fenced = !active && b.kind === "frontmatter";
+    return pressToField({ kind: b.kind, value, fenced, rows: this.rowsOf(d, asField), width: c.w, height }, x - c.x, y - c.y, { rowPx: d.row, advance: cal.advance, monoAdvance: cal.advance });
   }
 
   openedValue(b) {
     return withInnerLine(b, fieldOf(this.doc, b).value);
   }
 
-  // Where the caret lands in block b, whose field shows `value`, coming from above (dir > 0) or below: inside a
-  // fence, never on its fence lines; at `column`, counted in characters as drawn, when the block is one row, else at
-  // its start or end, which in a paragraph of pictures is its first or last picture.
+  // Where the caret lands in block b, whose field shows `value`, coming from above (dir > 0) or below: in front matter,
+  // never on its dash lines; at `column`, counted in characters as drawn, when the block is one row, else at its start
+  // or end, which in a paragraph of pictures is its first or last picture.
   entry(b, value, dir, column) {
     if (b.image) return dir > 0 ? 0 : value.length;
     const lines = value.split("\n");
-    if (b.fence || b.kind === "frontmatter") {
-      const lastInner = b.closed !== false ? lines.length - 2 : lines.length - 1;
-      if (dir > 0) return lines[0].length + 1;
-      return value.length - lines.slice(lastInner + 1).reduce((n, l) => n + l.length + 1, 0);
-    }
+    if (b.kind === "frontmatter") return dir > 0 ? lines[0].length + 1 : value.length - lines.at(-1).length - 1;
     if (column === null || lines.length !== 1) return dir > 0 ? 0 : value.length;
     const shown = isText(b) ? visibleMap(value) : null, count = shown ? shown.length - 1 : value.length;
     if (!this.fitsOneRow(b, count)) return dir > 0 ? 0 : value.length;
@@ -3386,13 +3446,14 @@ export class Editor {
     return true;
   }
 
-  // Enter in a text block (a raw block keeps the field's own newline). A selection that reaches an end of the field
-  // is deleted first, as a key deletes it.
+  // Enter in the edited block; one that shows its source goes to enterRaw. In a text block a selection that reaches an
+  // end of the field is deleted first, as a key deletes it.
   enter(cx) {
     this.typingStyle = null;
     if (this.pending) return this.pendingKey("enter", cx);
     const b = this.blockByKey(this.activeKey), value = this.seen;
-    if (!b || !isText(b)) return;
+    if (!b) return;
+    if (!isText(b)) return this.enterRaw(b, cx);
     if (!value) return this.enterEmpty(b, cx);
     if (b.kind === "paragraph" && (FENCE_TYPED.test(value) || RULE_TYPED.test(value))) return this.enterTyped(cx);
     const r = this.caretNow();
@@ -3415,6 +3476,28 @@ export class Editor {
     else if (r.start === value.length) return this.openPendingWith({ base: afterKey(now.key, kind), origin }, cx);
     const selected = r.start < r.end ? docRange(fieldOf(this.doc, now), r) : null;
     if (this.op(this.splitAt(now, r), cx) && selected) this.history.select(this.text, selected);
+  }
+
+  // Enter in a block that shows its source: in code a line break whose new line starts with the spaces and tabs of the
+  // caret's line up to the caret, unless the caret is at the end of two blank last lines (leaveCode); elsewhere a plain
+  // line break.
+  enterRaw(b, cx) {
+    const r = this.caretNow();
+    if (!r) return;
+    if (!isCode(b)) return this.typeText("\n", cx);
+    const value = this.seen;
+    if (r.start === r.end && r.end === value.length && endsInTwoBlankLines(value)) return this.leaveCode(b, cx);
+    const lineStart = r.start > 0 ? value.lastIndexOf("\n", r.start - 1) + 1 : 0;
+    this.typeText(`\n${leadingBlank(value.slice(lineStart, r.start))}`, cx);
+  }
+
+  // The third Enter after the last line of code: the two blank lines it left go, as one entry of the history whose undo
+  // puts the caret back after them, and an empty paragraph opens below the block.
+  leaveCode(b, cx) {
+    const value = this.seen, last = value.lastIndexOf("\n");
+    const cut = last > 0 ? Math.max(0, value.lastIndexOf("\n", last - 1)) : 0;
+    if (!this.selectField({ start: cut, end: value.length }) || !this.typeText("", cx)) return;
+    this.openPendingWith({ base: afterKey(b.key, "paragraph") }, cx);
   }
 
   // Whether the edited field draws its block formatted, its marks hidden: there the editor's own edits keep the
@@ -3589,15 +3672,14 @@ export class Editor {
     return chain(this.doc, s, [runs])?.splice ?? s;
   }
 
-  // Backspace at the start of an empty raw block removes it. A block emptied by typing goes as the caret leaves it: a
-  // commit would take it away with the block being edited.
+  // Backspace at the start of an empty raw block removes it. A block whose source typing emptied goes as the caret
+  // leaves it: a commit would take it away with the block being edited. An emptied fenced block still has its fences.
   removeEmptyRaw(b, i, cx) {
-    const lines = this.seen.split("\n"), fenced = Boolean(b.fence) || b.kind === "frontmatter";
-    const inner = fenced ? lines.slice(1, b.closed !== false ? -1 : undefined) : lines;
+    const lines = this.seen.split("\n"), inner = b.kind === "frontmatter" ? lines.slice(1, -1) : lines;
     if (inner.some(l => l.trim())) return;
     const j = this.crossedTo(i, -1);
     if (j < 0) return this.paragraphInPlace(b, cx);
-    if (!this.seen) return this.cross(-1, cx);
+    if (!this.seen && !b.fence) return this.cross(-1, cx);
     this.commit(cx);
     const now = this.blockByKey(this.activeKey), back = this.blocks[j].key;
     this.op(now && remove(this.doc, now), cx, {
@@ -3630,12 +3712,33 @@ export class Editor {
     const b = this.blockByKey(this.activeKey), r = b && this.caretNow();
     if (!b || !r) return;
     if (b.kind === "table") return this.toCell(dir, r, cx);
+    if (isCode(b)) return this.indentCode(dir, r, cx);
     this.commit(cx);
     const now = this.blockByKey(this.activeKey);
     if (!now) return;
     const op = now.kind === "item" ? (dir > 0 ? indent : outdent) : dir > 0 ? nest : unnest;
     if (this.op(op(this.doc, now), cx, { caret: { start: r.start, end: r.end } })) return;
     if (isRaw(now.kind) && dir > 0 && r.start === r.end) this.typeText("    ", cx);
+  }
+
+  // Tab (dir > 0) and Shift+Tab in code, with the block's own indent unit: at a caret Tab types it there; Tab adds it
+  // to every line field range `r` touches that is not empty, the same text staying selected, and Shift+Tab takes up to
+  // one off each. One entry of the history, whose undo selects `r` again. Each line is typed on its own: typed as one
+  // span, the lines inside it would be written with the block's prefix instead of the one their file lines have.
+  indentCode(dir, r, cx) {
+    const value = this.seen, unit = indentUnit(value);
+    const lineEdit = at => (dir > 0 ? { at, removed: 0, inserted: unit } : { at, removed: outdentWidth(value, at, unit), inserted: "" });
+    const lines = linesTouched(value, r).filter(at => !emptyLineAt(value, at));
+    const edits = dir > 0 && r.start === r.end ? [{ at: r.start, removed: 0, inserted: unit }] : lines.map(lineEdit);
+    const made = edits.filter(e => e.removed || e.inserted);
+    if (!made.length) return;
+    let next = "", from = 0;
+    for (const e of made) {
+      next += value.slice(from, e.at) + e.inserted;
+      from = e.at + e.removed;
+    }
+    const range = { start: mappedThrough(made, r.start), end: mappedThrough(made, r.end) };
+    this.typeChange(value, r, { value: next + value.slice(from), ...range }, cx, [...made].reverse());
   }
 
   toCell(dir, r, cx) {
@@ -3824,10 +3927,11 @@ export class Editor {
   }
 
   // Field value `value` with `range` selected becomes `next` ({ value, start, end }), its range selected, as one entry
-  // of the history whose undo puts `range` back. -> false when the field stopped showing what was typed.
-  typeChange(value, range, next, cx) {
+  // of the history whose undo puts `range` back. `edits` are the field splices typed for it, the later first.
+  // -> false when the field stopped showing what was typed.
+  typeChange(value, range, next, cx, edits = marksEdits(value, next.value)) {
     const before = this.f && !this.pending ? docRange(this.f, range) : null, was = this.text;
-    const typed = this.typeEdits(value, marksEdits(value, next.value), cx) && this.selectField(next);
+    const typed = this.typeEdits(value, edits, cx) && this.selectField(next);
     this.retoken();
     if (typed && before && this.text !== was) this.history.select(this.text, before, docRange(this.f, next));
     return typed;

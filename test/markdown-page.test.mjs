@@ -195,13 +195,15 @@ test("a text block not being edited is drawn by its own field exactly as the edi
   assert.deepEqual([all(gone.el, n => n.kind === "textarea").length, all(gone.el, n => n.kind === "textview").length], [0, 1]);
 });
 
-test("raw blocks edit in a monospace field on the code background; front matter keeps its own box", () => {
+test("raw blocks edit in a monospace field on the code background, code keeping its language label; front matter keeps its own box", () => {
   const code = drawn("```js\nx\n```\n", 0, { mode: "active" });
   const box = code.el.__node.kids[0];
   assert.deepEqual([box.style.bg, box.style.border_1, box.style.px, box.style.py], ["surface", true, BOX.px, BOX.py]);
   const wrap = find(code.el, `md-field-${code.d.key}`), input = all(wrap, n => n.kind === "textarea")[0];
   assert.deepEqual([wrap.style.key_context, input.style.font_family, input.style.text_size], [`${RAW} rows=many`, "Mono", 13]);
-  assert.equal(all(code.el, n => n.style.absolute).length, 0, "no language label while editing");
+  const label = all(code.el, n => n.style.absolute);
+  assert.deepEqual([label.map(n => textOf(n).trim()), label[0].style.top, label[0].style.right, label[0].style.text_color], [["js"], 6, 10, "dim"], "the language label as Reading draws it");
+  assert.equal(all(drawn("<div>\nx\n</div>\n", 0, { mode: "active" }).el, n => n.style.absolute).length, 0, "none on HTML");
   const front = drawn("---\na: 1\n---\n", 0, { mode: "active" });
   const fbox = front.el.__node.kids[0];
   assert.deepEqual([fbox.style.px, fbox.style.py, fbox.style.bg], [FRONT_BOX.px, FRONT_BOX.py, "surface"]);

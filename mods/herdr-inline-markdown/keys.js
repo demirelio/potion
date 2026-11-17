@@ -3,7 +3,7 @@
 // handler for as long as any build shipped it.
 // A binding at `X > Input` takes the key from the field entirely; one at `X` fires only for the keys the field gives
 // away there (Backspace and Left at offset 0, Right at the end, Tab, Escape).
-const VERSION = 8;
+const VERSION = 9;
 // NOTE is the field of a box over the page (the comment box, a link's address box, a picture's alt text and address
 // boxes): Enter there saves it, and Escape cancels it.
 export const TEXT = `MdText${VERSION}`, RAW = `MdRaw${VERSION}`, SOURCE = `MdSource${VERSION}`, NOTE = `MdNote${VERSION}`;
@@ -17,7 +17,7 @@ const bind = (keystroke, action, contexts) => contexts.map(context => ({ keystro
 const BLOCKS = [deep(TEXT), deep(RAW)];
 
 export const BINDINGS = [
-  ...bind("enter", "mdb-enter", [deep(TEXT)]),
+  ...bind("enter", "mdb-enter", BLOCKS),
   ...bind("shift-enter", "mdb-shift-enter", [deep(TEXT)]),
   ...bind("cmd-enter", "mdb-cmd-enter", BLOCKS),
   ...bind("tab", "mdb-tab", BLOCKS),

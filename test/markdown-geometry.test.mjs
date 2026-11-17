@@ -13,37 +13,35 @@ import { POINT } from "../mods/herdr-inline-markdown/comments.js";
 
 const cal = { rowPx: 20, advance: 8, monoAdvance: 7.8 };
 
-test("pressToField is exact for unwrapped monospace; a fence line above the drawn code counts", () => {
-  const code = ["```js", "const a = 1;", "", "  return a;", "```"];
-  const value = code.join("\n"), starts = [0, 6, 19, 20, 32];
-  for (let line = 1; line <= 3; line++) {
+test("pressToField is exact for unwrapped monospace: a code field is what Reading draws; front matter's dash line above counts", () => {
+  const code = ["const a = 1;", "", "  return a;"];
+  const value = code.join("\n"), starts = [0, 13, 14];
+  for (let line = 0; line < 3; line++) {
     for (let col = 0; col <= code[line].length; col++) {
-      const at = pressToField({ kind: "code", value, fenced: true, width: 700 }, col * cal.monoAdvance + 1, (line - 1) * cal.rowPx + 7, cal);
+      const at = pressToField({ kind: "code", value, width: 700 }, col * cal.monoAdvance + 1, line * cal.rowPx + 7, cal);
       assert.equal(at, starts[line] + col, `line ${line} col ${col}`);
     }
   }
   assert.equal(pressToField({ kind: "frontmatter", value: "---\ntitle: x\n---", fenced: true, width: 700 }, 999, 0, cal), 12, "clamped to the line");
-  assert.equal(pressToField({ kind: "code", value, fenced: true, width: 700 }, 0, 999, cal), starts[3], "below the last line: the last inner line");
+  assert.equal(pressToField({ kind: "code", value, width: 700 }, 0, 999, cal), starts[2], "below the last line: the last line");
 });
 
-test("pressToField lands on the character drawn under the press when Reading strips a code indent", () => {
+test("pressToField lands on the character drawn under the press: the code field holds what Reading draws, whatever indent the source has", () => {
   const drawnAt = (text, kind = "code") => {
-    const d = parse(text), b = d.blocks[0], value = field(d, b).value, drawn = b.content.split("\n");
-    const lines = value.split("\n"), first = b.fence ? 1 : 0, starts = [0];
-    for (const l of lines) starts.push(starts.at(-1) + l.length + 1);
+    const d = parse(text), b = d.blocks[0], value = field(d, b).value, drawn = b.content.split("\n"), starts = [0];
+    assert.equal(value, b.content);
+    for (const l of drawn) starts.push(starts.at(-1) + l.length + 1);
     drawn.forEach((line, row) => {
-      const at0 = starts[first + row] + lines[first + row].length - line.length;
       for (let col = 0; col <= line.length; col++) {
-        const at = pressToField({ kind, value, fenced: Boolean(b.fence), width: 700 }, col * cal.monoAdvance + 1, row * cal.rowPx + 7, cal);
-        assert.equal(at, at0 + col, `${JSON.stringify(text)} row ${row} col ${col}`);
+        const at = pressToField({ kind, value, width: 700 }, col * cal.monoAdvance + 1, row * cal.rowPx + 7, cal);
+        assert.equal(at, starts[row] + col, `${JSON.stringify(text)} row ${row} col ${col}`);
         if (col < line.length) assert.equal(value[at], line[col]);
       }
     });
-    return pressToField({ kind, value, fenced: Boolean(b.fence), width: 700 }, 999, (drawn.length - 1) * cal.rowPx + 7, cal);
+    return pressToField({ kind, value, width: 700 }, 999, (drawn.length - 1) * cal.rowPx + 7, cal);
   };
-  const plain = "    npm test\n      --watch\n";
-  assert.equal(drawnAt(plain), plain.length - 1, "past the drawn end: the end of the line");
-  assert.equal(pressToField({ kind: "code", value: "    npm test", width: 700 }, 0, 5, cal), 4, "the first drawn character, after the indent");
+  assert.equal(drawnAt("    npm test\n      --watch\n"), "npm test\n  --watch".length, "past the drawn end: the end of the line");
+  assert.equal(pressToField({ kind: "code", value: "  npm test", width: 700 }, 0, 5, cal), 0, "the field's own leading spaces are drawn");
   drawnAt("\tnpm test\n");
   drawnAt("  \tnpm test\n   \tnext\n");
   drawnAt("  ```sh\n  npm test\n   indented\n x\n  ```\n");
@@ -51,20 +49,20 @@ test("pressToField lands on the character drawn under the press when Reading str
 });
 
 test("pressToField on wrapped monospace walks the lines by their rows", () => {
-  const long = "x".repeat(150), value = `\`\`\`\n${long}\nshort\n\`\`\``;
-  const t = { kind: "code", value, fenced: true, width: 78 * 7.8 + 1, rows: 3 };
-  assert.equal(pressToField(t, 10 * 7.8, 1 * 20 + 5, cal), 4 + 78 + 10, "second row of the long line");
-  assert.equal(pressToField(t, 2 * 7.8, 2 * 20 + 5, cal), 4 + 151 + 2, "the next line after the wrapped one");
+  const long = "x".repeat(150), value = `${long}\nshort`;
+  const t = { kind: "code", value, width: 78 * 7.8 + 1, rows: 3 };
+  assert.equal(pressToField(t, 10 * 7.8, 1 * 20 + 5, cal), 78 + 10, "second row of the long line");
+  assert.equal(pressToField(t, 2 * 7.8, 2 * 20 + 5, cal), 151 + 2, "the next line after the wrapped one");
 });
 
-test("pressToField on wrapped indented code counts the rows of what is drawn, without the indent", () => {
-  // 156 drawn characters fill exactly two rows of 78; with the indent counted they would take three.
-  const value = `    ${"x".repeat(156)}\n    short`, second = value.indexOf("short");
-  const t = { kind: "code", value, fenced: false, width: 78 * 7.8 + 1, rows: 3 };
-  assert.equal(pressToField(t, 10 * 7.8, 1 * 20 + 5, cal), 4 + 78 + 10, "the second row of the long line");
+test("pressToField on wrapped code counts the rows of every character the field draws, its leading spaces too", () => {
+  // 156 drawn characters fill exactly two rows of 78; without the two spaces they would leave room on the second.
+  const value = `  ${"x".repeat(154)}\nshort`, second = value.indexOf("short");
+  const t = { kind: "code", value, width: 78 * 7.8 + 1, rows: 3 };
+  assert.equal(pressToField(t, 10 * 7.8, 1 * 20 + 5, cal), 78 + 10, "the second row of the long line");
   assert.equal(pressToField(t, 2 * 7.8, 2 * 20 + 5, cal), second + 2, "the third row is the next line");
-  const tabbed = { ...t, value: value.replace(/^ {4}/gm, "  \t") };
-  assert.equal(pressToField(tabbed, 2 * 7.8, 2 * 20 + 5, cal), tabbed.value.indexOf("short") + 2, "spaces and a tab are one indent");
+  const tabbed = { ...t, value: `\t${"x".repeat(155)}\nshort` };
+  assert.equal(pressToField(tabbed, 2 * 7.8, 2 * 20 + 5, cal), tabbed.value.indexOf("short") + 2, "a tab is a character of the line");
 });
 
 test("tables give the cell start, the delimiter row skipped", () => {

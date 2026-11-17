@@ -2118,14 +2118,14 @@ test("a click on a frame opens nothing, even with a paragraph being edited; a do
   assert.equal(m.view.activeKey, para, "a double-click released past the click slop opens nothing");
   await doubleClickAt(m, margin);
   assert.equal(m.view.activeKey, key);
-  assert.equal(m.view.field.value(), "```mermaid\ngraph TD\nA-->B\n```");
-  assert.deepEqual(m.view.field.selection, { start: 11, end: 11 }, "at the start of its first line, nothing selected");
+  assert.equal(m.view.field.value(), "graph TD\nA-->B");
+  assert.deepEqual(m.view.field.selection, { start: 0, end: 0 }, "at the start of its first line, nothing selected");
   escape(m);
   assert.ok(find(m.tree(), `md-frame-${key}`), "Escape shows the frame again");
   await clickAt(m, PARA(m));
   act(m, "mdb-down");
   assert.equal(m.view.activeKey, key, "the keyboard crossing in from the paragraph opens it too");
-  assert.deepEqual(m.view.field.selection, { start: 11, end: 11 });
+  assert.deepEqual(m.view.field.selection, { start: 0, end: 0 });
 });
 
 test("a drag pans the picture with the pointer, clamped; it activates, selects and clicks nothing, and only the diagram draws again", async () => {
@@ -3179,7 +3179,7 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   }
   const contexts = key => table.filter(x => x.keystroke === key).map(x => x.context).sort();
   const actions = key => [...new Set(table.filter(x => x.keystroke === key).map(x => x.action))];
-  assert.deepEqual(contexts("enter"), [`${NOTE} > Input`, `${TEXT} > Input`], "the comment and address boxes save on Enter, which never gets into their field");
+  assert.deepEqual(contexts("enter"), [`${NOTE} > Input`, `${RAW} > Input`, `${TEXT} > Input`], "the comment and address boxes save on Enter, which never gets into their field; code keeps its indent");
   assert.deepEqual(actions("enter"), ["mdb-enter", "mdb-note-save"]);
   assert.deepEqual(contexts("shift-enter"), [`${TEXT} > Input`]);
   for (const key of ["up", "down"]) {
@@ -3206,8 +3206,8 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
     assert.deepEqual(contexts(key), [`${TEXT} > Input`], `${key}: markdown that keeps its formatting, in a text block only; raw blocks keep the field's own`);
     assert.deepEqual(actions(key), [action], key);
   }
-  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText8", "MdRaw8", "MdSource8", "MdNote8"], "the table changed, so its contexts are new ones and the old ones stay inert");
-  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-7]\b/.test(x.context)), [], "no context of an older table");
+  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText9", "MdRaw9", "MdSource9", "MdNote9"], "the table changed, so its contexts are new ones and the old ones stay inert");
+  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-8]\b/.test(x.context)), [], "no context of an older table");
   for (const key of ["backspace", "left", "right"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
   assert.deepEqual(contexts("escape"), [`${NOTE} > Input`, RAW, TEXT], "the comment box takes Escape whatever its field holds; the block fields only give it away");
   assert.deepEqual(actions("escape"), ["mdb-note-cancel", "mdb-escape"]);
@@ -3216,18 +3216,22 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   for (const name of new Set(table.map(x => x.action))) assert.equal(typeof root.handlers[`on_action:${name}`], "function", name);
 });
 
-test("a press on a code block puts the caret on the pressed line and column, which stays under the pointer; on a table, at the pressed cell's start", async () => {
-  const code = "```js\nconst a = 1;\nlet b = 2;\nreturn a + b;\n```", table = "| name | value |\n|------|-------|\n| a    | 12345 |";
-  const m = await page(`Intro\n\n${code}\n\n${table}\n`, { 0: 24, 1: 14 + 26 + 3 * 19.5, 2: 14 + 26 + 60 }, 150);
+test("a press on a code block puts the caret on the pressed line and column and moves nothing, its field showing only the code; on a table, at the pressed cell's start", async () => {
+  const code = "const a = 1;\nlet b = 2;\nreturn a + b;", table = "| name | value |\n|------|-------|\n| a    | 12345 |";
+  const m = await page(`Intro\n\n\`\`\`js\n${code}\n\`\`\`\n\n${table}\n`, { 0: 24, 1: 14 + 26 + 3 * 19.5, 2: 14 + 26 + 60 }, 150);
   const [codeKey, tableKey] = [keyAt(m, 1), keyAt(m, 2)];
-  await clickAt(m, { x: X + 15 + 4 * 7.8 + 1, y: topOf(m, 1) + 14 + 13 + 19.5 + 5 }); // line 2 of the drawn code, column 4
+  await clickAt(m, { x: X + 15 + 4 * 7.8 + 1, y: topOf(m, 1) + 14 + 13 + 2 * 19.5 + 5 }); // line 3 of the drawn code, column 4
   assert.equal(m.view.activeKey, codeKey);
-  assert.equal(m.view.field.value(), code, "a raw block edits as its source, fences included");
-  const at = code.indexOf("let") + 4;
-  assert.deepEqual(m.view.field.selection, { start: at, end: at });
+  assert.equal(m.view.field.value(), code, "the code alone: no fence lines");
+  const third = code.indexOf("return") + 4;
+  assert.deepEqual(m.view.field.selection, { start: third, end: third });
   assert.equal(m.view.field.focused, true);
   assert.equal(must(m.tree(), `md-field-${codeKey}`).style.key_context, `${RAW} rows=many`);
-  assert.equal(m.view.offset, 19.5, "the fence line the field shows above moves the page one row: the line stays under the pointer");
+  assert.equal(m.view.offset, 0, "the field draws the code's rows where Reading did: the page does not move");
+  escape(m);
+  await clickAt(m, { x: X + 15 + 4 * 7.8 + 1, y: topOf(m, 1) + 14 + 13 + 19.5 + 5 }); // line 2, column 4
+  const second = code.indexOf("let") + 4;
+  assert.deepEqual([m.view.activeKey, m.view.field.selection, m.view.offset], [codeKey, { start: second, end: second }, 0]);
   await clickAt(m, { x: X + 15 + 400, y: topOf(m, 2) + 14 + 13 + 30 + 5 }); // the body row, the second column
   assert.equal(m.view.activeKey, tableKey);
   const cell = table.indexOf("12345");
@@ -3408,7 +3412,7 @@ test("a one-row field crosses at once on mdb-down, keeping the column; the key-u
   act(m, "mdb-down"); // held: the repeats glide on
   act(m, "mdb-down");
   assert.equal(m.view.activeKey, keyAt(m, 3), "into the code block, a field of many rows");
-  assert.deepEqual(m.view.field.selection, { start: 4, end: 4 });
+  assert.deepEqual(m.view.field.selection, { start: 0, end: 0 });
   keyUp(m, "down");
   await flush();
   assert.equal(m.view.activeKey, keyAt(m, 3), "the key-up of a press the table took is no edge signal, though the caret is where we put it");
@@ -3418,26 +3422,26 @@ test("a one-row field crosses at once on mdb-down, keeping the column; the key-u
 });
 
 test("a multi-row field crosses only when the key-up readout equals a valid known caret, and never right after a click moved it", async () => {
-  const code = "```\nalpha\nbeta\n```";
-  const m = await page(`${code}\n\nNext\n`, { 0: 26 + 2 * 19.5, 1: 38 });
-  await clickAt(m, { x: X + 15 + 2 * 7.8, y: topOf(m, 0) + 13 + 19.5 + 5 });
+  const code = "alpha\nbeta";
+  const m = await page(`\`\`\`\n${code}\n\`\`\`\n\nNext\n`, { 0: 26 + 2 * 19.5, 1: 38 });
+  await clickAt(m, { x: X + 15 + 2 * 7.8, y: topOf(m, 0) + 13 + 5 });
   const key = keyAt(m, 0), field = m.view.field, beta = code.indexOf("beta");
-  assert.deepEqual(field.selection, { start: beta + 2, end: beta + 2 });
+  assert.deepEqual(field.selection, { start: 2, end: 2 });
   assert.equal(m.view.rows, "many");
-  field.select(code.length - 1); // Down moved the caret a row, natively
+  field.select(beta + 2); // Down moved the caret a row, natively
   keyUp(m, "down");
   await flush();
   assert.equal(m.view.activeKey, key, "the caret moved: no edge");
-  assert.deepEqual(m.view.known, { start: code.length - 1, end: code.length - 1, valid: true });
+  assert.deepEqual(m.view.known, { start: beta + 2, end: beta + 2, valid: true });
   keyUp(m, "down"); // on the last row, Down leaves the caret where it was
   await flush();
   assert.equal(m.view.activeKey, keyAt(m, 1), "the edge: the next block");
   act(m, "mdb-up");
   assert.equal(m.view.activeKey, key);
-  assert.deepEqual(field.selection, { start: beta + 4, end: beta + 4 }, "from below: the end of the last inner line");
+  assert.deepEqual(field.selection, { start: code.length, end: code.length }, "from below: the end of the last line");
   const wrap = () => must(m.tree(), `md-field-${key}`), p = { x: X + 20, y: topOf(m, 0) + 20 };
   fire(wrap(), "on_mouse_down:left", press(p), m.cx);
-  field.select(1); // the click put the caret on the fence line
+  field.select(1); // the click put the caret on the first row
   fire(wrap(), "on_mouse_up:left", press(p), m.cx);
   keyUp(m, "up");
   await flush();
@@ -3445,14 +3449,14 @@ test("a multi-row field crosses only when the key-up readout equals a valid know
   assert.deepEqual(m.view.known, { start: 1, end: 1, valid: true });
 });
 
-test("Left at the start and Right at the end cross blocks, rules skipped; a fenced block is entered inside its fences", async () => {
-  const code = "```\nfirst\nsecond\n```";
-  const m = await page(`Above\n\n${code}\n\n---\n\nBelow\n`, { 0: 24, 1: 14 + 26 + 2 * 19.5, 2: 38, 3: 38 });
+test("Left at the start and Right at the end cross blocks, rules skipped; a code block is entered at the start of its first line or the end of its last", async () => {
+  const code = "first\nsecond";
+  const m = await page(`Above\n\n\`\`\`\n${code}\n\`\`\`\n\n---\n\nBelow\n`, { 0: 24, 1: 14 + 26 + 2 * 19.5, 2: 38, 3: 38 });
   await clickAt(m, { x: X + 500, y: topOf(m, 0) + 10 });
   assert.deepEqual(m.view.field.selection, { start: 5, end: 5 }, "a press past the text lands at its end");
   act(m, "mdb-right-end");
   assert.equal(m.view.activeKey, keyAt(m, 1));
-  assert.deepEqual(m.view.field.selection, { start: 4, end: 4 }, "from above: the start of the first inner line");
+  assert.deepEqual([m.view.field.value(), m.view.field.selection], [code, { start: 0, end: 0 }], "from above: the start of the first line");
   act(m, "mdb-left-start");
   assert.equal(m.view.activeKey, keyAt(m, 0));
   assert.deepEqual(m.view.field.selection, { start: 5, end: 5 }, "back: the end of the block before");
@@ -3462,8 +3466,8 @@ test("Left at the start and Right at the end cross blocks, rules skipped; a fenc
   assert.equal(m.view.activeKey, keyAt(m, 3), "the rule is passed over");
   assert.deepEqual(m.view.field.selection, { start: 0, end: 0 });
   act(m, "mdb-left-start");
-  const end = code.indexOf("second") + 6;
-  assert.deepEqual([m.view.activeKey, m.view.field.selection], [keyAt(m, 1), { start: end, end }], "from below: the end of the last inner line");
+  const end = code.length;
+  assert.deepEqual([m.view.activeKey, m.view.field.selection], [keyAt(m, 1), { start: end, end }], "from below: the end of the last line");
 });
 
 test("the key-up of a held key that crossed blocks reads out the caret its repeats moved, and crosses nothing more", async () => {
@@ -3483,29 +3487,29 @@ test("the key-up of a held key that crossed blocks reads out the caret its repea
   await clickAt(g, { x: X + 24 + 15, y: topOf(g, 0) + 10 });
   act(g, "mdb-down");
   act(g, "mdb-down"); // a held Down glides into the code block
-  assert.deepEqual([g.view.activeKey, g.view.field.selection], [keyAt(g, 2), { start: 4, end: 4 }]);
-  g.view.field.select(6); // and its repeats walk on there natively
+  assert.deepEqual([g.view.activeKey, g.view.field.selection], [keyAt(g, 2), { start: 0, end: 0 }]);
+  g.view.field.select(2); // and its repeats walk on there natively
   keyUp(g, "down");
   await flush();
-  assert.deepEqual([g.view.activeKey, g.view.known], [keyAt(g, 2), { start: 6, end: 6, valid: true }]);
+  assert.deepEqual([g.view.activeKey, g.view.known], [keyAt(g, 2), { start: 2, end: 2, valid: true }]);
   escape(g);
   await g.key("enter");
-  assert.deepEqual(g.view.field.selection, { start: 6, end: 6 }, "Escape kept the caret where the repeats left it");
+  assert.deepEqual(g.view.field.selection, { start: 2, end: 2 }, "Escape kept the caret where the repeats left it");
 });
 
-test("a fenced block or front matter with nothing between its fences opens on an empty line there, written only once something is typed on it", async () => {
+test("an empty code block opens as an empty field, front matter with nothing between its dashes on an empty line there; each is written only once something is typed", async () => {
   const doc = "Above\n\n```js\n```\n\nBelow\n";
   const m = await page(doc, { 0: 24, 1: 14 + 26 + 19.5, 2: 38 });
   await clickAt(m, { x: X + 500, y: topOf(m, 0) + 10 });
   act(m, "mdb-right-end");
   const key = keyAt(m, 1), field = m.view.field;
   assert.equal(m.view.activeKey, key);
-  assert.deepEqual([field.value(), field.selection], ["```js\n\n```", { start: 6, end: 6 }], "from above: on the empty line, not in the info string");
+  assert.deepEqual([field.value(), field.selection], ["", { start: 0, end: 0 }], "from above: no fence and no info string to step over");
   escape(m);
   assert.equal(m.view.text, doc, "opened and left, nothing is written");
   await clickAt(m, { x: X + 1, y: topOf(m, 2) + 14 + 10 });
   act(m, "mdb-left-start");
-  assert.deepEqual([m.view.activeKey, field.selection], [key, { start: 6, end: 6 }], "from below: the same line");
+  assert.deepEqual([m.view.activeKey, field.selection], [key, { start: 0, end: 0 }], "from below: the same place");
   field.type("x", m.cx);
   assert.equal(m.view.text, "Above\n\n```js\nx\n```\n\nBelow\n");
   escape(m);
@@ -3640,13 +3644,13 @@ test("a fence typed at the start of a paragraph is closed when the block is comm
   assert.equal(state.disk.get(FILE), "```Run it\n```\n\nNext\n\nLast\n");
 });
 
-test("a diagram opens as its source while it is being edited, and is drawn again once left", async () => {
+test("a diagram opens as its source, without fences, while it is being edited, and is drawn again once left", async () => {
   const m = await page(DOC, { 0: 35, 1: 32, 2: 134, 3: 38 });
   const key = keyAt(m, 2);
   await clickAt(m, { x: X + 100, y: topOf(m, 2) + 14 + 50 });
   assert.equal(m.view.activeKey, key);
-  assert.equal(m.view.field.value(), "```mermaid\ngraph TD\nA-->B\n```");
-  assert.deepEqual(m.view.field.selection, { start: 11, end: 11 }, "at the start of its first line");
+  assert.equal(m.view.field.value(), "graph TD\nA-->B");
+  assert.deepEqual(m.view.field.selection, { start: 0, end: 0 }, "at the start of its first line");
   assert.equal(find(m.tree(), `md-diagram-${key}`), null);
   assert.equal(must(m.tree(), `md-field-${key}`).style.key_context, `${RAW} rows=many`);
   escape(m);
@@ -3764,15 +3768,15 @@ test("a caret reveal while typing, then a block above the edited one growing: th
 });
 
 test("typing on line 25 of a 40-line code block in a 500 px viewport keeps the caret row inside the reveal window", async () => {
-  const code = ["```", ...Array.from({ length: 40 }, (_, i) => `line ${i}`), "```"].join("\n");
-  const m = await page(`Intro\n\n${code}\n\nAfter\n`, { 0: 24, 1: 14 + 26 + 40 * 19.5, 2: 38 }, 500);
+  const code = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
+  const m = await page(`Intro\n\n\`\`\`\n${code}\n\`\`\`\n\nAfter\n`, { 0: 24, 1: 14 + 26 + 40 * 19.5, 2: 38 }, 500);
   const line25 = 28 + 24 + 14 + 13 + 25 * 19.5;
   m.view.scrollTo(line25 + 19.5 - 490, m.cx); // line 25 drawn 10 px above the bottom: inside the 72 px the caret keeps clear of
   const offset = m.view.offset;
   await clickAt(m, { x: X + 300, y: line25 - offset + 5 });
   const field = m.view.field, end = code.indexOf("line 25") + 7;
   assert.deepEqual(field.selection, { start: end, end }, "past the line's end: its end");
-  assert.equal(m.view.offset, offset + 19.5, "the click moves the page only by the fence row shown above: the line stays under the pointer");
+  assert.equal(m.view.offset, offset, "the click moves nothing: the line stays under the pointer");
   const inWindow = () => {
     const row = field.value().slice(0, field.selection.start).split("\n").length - 1, y = 28 + 24 + 14 + 13 + row * 19.5;
     return y >= m.view.offset + 24 && y + 19.5 <= m.view.offset + 500 - 72;
@@ -4080,10 +4084,10 @@ test("pasting an image (no text on the clipboard) does nothing; text on one line
   assert.equal(m.view.text, "Hello there\n\n```\ncode\n```\n", "a line break ending the clipboard's text is left out");
   await clickAt(m, { x: X + 15 + 4 * 7.8, y: topOf(m, 1) + 14 + 13 + 5 });
   assert.equal(m.view.activeKey, keyAt(m, 1));
-  await caretTo(m, 9);
+  await caretTo(m, 0);
   m.cx.held = "more\n";
   act(m, "mdb-paste");
-  assert.equal(m.view.text, "Hello there\n\n```\ncode\nmore\n```\n", "a raw block takes the clipboard's text exactly");
+  assert.equal(m.view.text, "Hello there\n\n```\nmore\ncode\n```\n", "a raw block takes the clipboard's text exactly");
   act(m, "mdb-undo");
   assert.equal(m.view.text, "Hello there\n\n```\ncode\n```\n", "a paste is an entry of its own");
 });
@@ -4616,7 +4620,7 @@ test("Shift+Enter writes a backslash and the line end, which the page draws as a
   assert.equal(m.view.text, "Hello world\\\nagain\n\n# Head line\n");
 });
 
-test("Backspace at the start: an item becomes a paragraph, a paragraph joins the one above with the caret at the join, below a code block it lands at the end of its last inner line", async () => {
+test("Backspace at the start: an item becomes a paragraph, a paragraph joins the one above with the caret at the join, below a code block it lands at the end of its last line", async () => {
   const doc = "First\n\n- item\n\nSecond\n\n```\ncode\nmore\n```\n\nAfter\n";
   const m = await page(doc, { 0: 24, 1: 38, 2: 38, 3: 14 + 26 + 2 * 19.5, 4: 38 });
   await openBlock(m, 1, 0);
@@ -4633,8 +4637,8 @@ test("Backspace at the start: an item becomes a paragraph, a paragraph joins the
   assert.equal(m.view.text, doc, "one Cmd+Z");
   await openBlock(m, 4, 0);
   act(m, "mdb-backspace-start");
-  const end = "```\ncode\nmore".length;
-  assert.deepEqual([m.view.text, ...editing(m)], [doc, keyAt(m, 3), "```\ncode\nmore\n```", { start: end, end }], "into the code, nothing changed");
+  const end = "code\nmore".length;
+  assert.deepEqual([m.view.text, ...editing(m)], [doc, keyAt(m, 3), "code\nmore", { start: end, end }], "into the code, nothing changed");
 });
 
 test("Backspace at the start of a heading or quote makes it a paragraph; of a nested item, moves it out; of an emptied paragraph, removes it", async () => {
@@ -4693,11 +4697,14 @@ test("Delete at the end merges the next paragraph; our own readouts' changes are
   }
 });
 
-test("Down from a one-row block into a code block lands on its first inner line", async () => {
-  const m = await page("Intro\n\n```js\nlet a\n```\n", { 0: 24, 1: 14 + 26 + 19.5 });
+test("Down from a one-row block into a one-row code block keeps the column; into a longer one it lands at the start of its first line", async () => {
+  const m = await page("Intro\n\n```js\nlet a\n```\n\n```\nx\ny\n```\n", { 0: 24, 1: 14 + 26 + 19.5, 2: 14 + 26 + 2 * 19.5 });
   await openBlock(m, 0, 2);
   act(m, "mdb-down");
-  assert.deepEqual(editing(m), [keyAt(m, 1), "```js\nlet a\n```", { start: 6, end: 6 }]);
+  assert.deepEqual(editing(m), [keyAt(m, 1), "let a", { start: 2, end: 2 }]);
+  assert.equal(must(m.tree(), `md-field-${keyAt(m, 1)}`).style.key_context, `${RAW} rows=one`, "one line of code is one row: Down crosses at once");
+  act(m, "mdb-down");
+  assert.deepEqual(editing(m), [keyAt(m, 2), "x\ny", { start: 0, end: 0 }]);
 });
 
 test("Tab under a sibling nests the item with its children, Shift+Tab takes it back; each is a single Cmd+Z", async () => {
@@ -4734,7 +4741,7 @@ test("Tab on a paragraph after an item makes it the item's continuation, Shift+T
   assert.equal(m.view.text, doc);
 });
 
-test("Tab in a table selects the next cell and Shift+Tab the one before; past the last cell nothing; Tab in code types four spaces", async () => {
+test("Tab in a table selects the next cell and Shift+Tab the one before; past the last cell nothing; Tab in code with nothing indented types four spaces", async () => {
   const table = "| name | value |\n|------|-------|\n| a    | 12345 |", code = "```\nx\n```";
   const m = await page(`${table}\n\n${code}\n`, { 0: 26 + 60, 1: 14 + 26 + 19.5 });
   await openBlock(m, 0, 2);
@@ -4751,23 +4758,23 @@ test("Tab in a table selects the next cell and Shift+Tab the one before; past th
   act(m, "mdb-shift-tab");
   assert.deepEqual([m.view.field.selection, m.view.known], [a, { ...a, valid: true }]);
   assert.equal(m.view.text, `${table}\n\n${code}\n`);
-  await openBlock(m, 1, 4);
+  await openBlock(m, 1, 0);
   act(m, "mdb-tab");
   assert.equal(m.view.text, `${table}\n\n\`\`\`\n    x\n\`\`\`\n`);
 });
 
-test("```js then Enter gives a closed code block with the caret inside; one Cmd+Z gives the paragraph back", async () => {
+test("```js then Enter gives a closed code block with the caret in its empty field; one Cmd+Z gives the paragraph back", async () => {
   const m = await page("Intro\n\nx\n\nNext\n", { 0: 24, 1: 38, 2: 38 });
   await openBlock(m, 1);
   m.view.field.select(0, 1);
   m.view.field.type("```js", m.cx);
   act(m, "mdb-enter");
   assert.equal(m.view.text, "Intro\n\n```js\n```\n\nNext\n");
-  assert.deepEqual([m.view.doc.blocks.map(b => b.kind), ...editing(m)], [["paragraph", "code", "paragraph"], keyAt(m, 1), "```js\n\n```", { start: 6, end: 6 }]);
+  assert.deepEqual([m.view.doc.blocks.map(b => b.kind), ...editing(m)], [["paragraph", "code", "paragraph"], keyAt(m, 1), "", { start: 0, end: 0 }]);
   act(m, "mdb-undo");
   assert.equal(m.view.text, "Intro\n\nx\n\nNext\n", "one Cmd+Z");
   act(m, "mdb-redo");
-  await openBlock(m, 1, 6);
+  await openBlock(m, 1, 0);
   m.view.field.type("let a", m.cx);
   assert.equal(m.view.text, "Intro\n\n```js\nlet a\n```\n\nNext\n");
   reset();
@@ -4775,7 +4782,7 @@ test("```js then Enter gives a closed code block with the caret inside; one Cmd+
   await clickAt(e, { x: X + 50, y: 28 + e.view.sums[1] + 40 });
   for (const ch of "~~~") e.view.field.type(ch, e.cx);
   act(e, "mdb-enter");
-  assert.deepEqual([e.view.text, ...editing(e)], ["Intro\n\n~~~\n~~~\n", keyAt(e, 1), "~~~\n\n~~~", { start: 4, end: 4 }], "at the end of the file too");
+  assert.deepEqual([e.view.text, ...editing(e)], ["Intro\n\n~~~\n~~~\n", keyAt(e, 1), "", { start: 0, end: 0 }], "at the end of the file too");
 });
 
 test("Enter on an empty item at the top of a list leaves an empty paragraph in its place; one Cmd+Z brings the item back", async () => {
@@ -4985,7 +4992,7 @@ test("Cmd+Enter ticks the box of the task being edited; in a code block it leave
   await openBlock(m, 0, 2);
   act(m, "mdb-cmd-enter");
   assert.deepEqual([m.view.text, ...editing(m)], ["- [x] task\n\n```\ncode\n```\n\nEnd\n", keyAt(m, 0), "task", { start: 2, end: 2 }]);
-  await openBlock(m, 1, 6);
+  await openBlock(m, 1, 4);
   act(m, "mdb-cmd-enter");
   assert.deepEqual([pendingOf(m).kind, m.view.order.indexOf(m.view.pending.key)], ["paragraph", 2]);
   m.view.field.type("x", m.cx);
@@ -5897,7 +5904,7 @@ test("/ after a space opens the menu; / mid-word, before a word, inside backtick
   const doc = "Hello\n\nand\n\nword\n\nrun `ls\n\n```\nx\n```\n\n| a |\n|---|\n| b |\n\n```mermaid\ngraph TD\n```\n\nPaste here\n";
   const m = await page(doc, { 0: 24, 1: 38, 2: 38, 3: 38, 4: 14 + 26 + 3 * 19.5, 5: 14 + 26 + 60, 6: 134, 7: 38 });
   // The carets: the end of each text block, the end of the code's line, of the table's last cell, of the diagram's line.
-  const attempts = [[0, 5, " /", true], [1, 3, "/", false], [2, 0, "/", false], [3, 7, " /", false], [4, 5, " /", false], [5, 15, " /", false], [6, 19, " /", false]];
+  const attempts = [[0, 5, " /", true], [1, 3, "/", false], [2, 0, "/", false], [3, 7, " /", false], [4, 1, " /", false], [5, 15, " /", false], [6, 8, " /", false]];
   for (const [i, at, keys, opens] of attempts) {
     await openBlock(m, i, at);
     typed(m, keys);
@@ -6094,28 +6101,30 @@ test("/text alone in a heading leaves an empty paragraph in its place, written o
   assert.equal(m.view.text, "Intro\n\nx\n\nOutro\n");
 });
 
-test("/code alone in a paragraph replaces it with a closed empty code block, caret on its empty line; in 'Run this /code' the code block follows the paragraph, which keeps 'Run this'", async () => {
+test("/code alone in a paragraph replaces it with a closed empty code block, caret in its empty field; in 'Run this /code' the code block follows the paragraph, which keeps 'Run this'", async () => {
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   typed(m, "/code");
   act(m, "mdb-enter");
   assert.equal(m.view.text, "Intro\n\n```\n\n```\n\nOutro\n");
-  assert.deepEqual(editing(m), [keyAt(m, 1), "```\n\n```", { start: 4, end: 4 }]);
-  assert.equal(contextOf(m), `${RAW} rows=many`);
+  assert.deepEqual(editing(m), [keyAt(m, 1), "", { start: 0, end: 0 }]);
+  assert.equal(contextOf(m), `${RAW} rows=one`);
+  m.view.field.type("ls", m.cx);
+  assert.equal(m.view.text, "Intro\n\n```\nls\n```\n\nOutro\n");
   reset();
   const r = await page("Run this\n\nOutro\n", { 0: 24, 1: 38 });
   await slashed(r, 0, " /code");
   assert.equal(r.view.text, "Run this\n\n```\n\n```\n\nOutro\n");
-  assert.deepEqual(editing(r), [keyAt(r, 1), "```\n\n```", { start: 4, end: 4 }]);
+  assert.deepEqual(editing(r), [keyAt(r, 1), "", { start: 0, end: 0 }]);
   act(r, "mdb-undo");
   assert.equal(r.view.text, "Run this /code\n\nOutro\n", "one Cmd+Z");
 });
 
-test("a pick in a paragraph that its commit parses as a fence, HTML or indented code writes nothing: the raw block stays as typed, '/code' in it, with the menu closed", async () => {
-  for (const [line, text, value, kind] of [
-    ["~~~ /code", "~~~ /code\n~~~", "~~~ /code\n\n~~~", "code"],
-    ["<div> /code", "<div> /code", "<div> /code", "html"],
-    ["    /code", "    /code", "    /code", "code"],
+test("a pick in a paragraph that its commit parses as a fence, HTML or indented code writes nothing: the raw block stays as typed, '/code' in its source, with the menu closed", async () => {
+  for (const [line, text, value, kind, caret] of [
+    ["~~~ /code", "~~~ /code\n~~~", "", "code", 0],
+    ["<div> /code", "<div> /code", "<div> /code", "html", 11],
+    ["    /code", "    /code", "/code", "code", 5],
   ]) {
     reset();
     const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
@@ -6125,24 +6134,24 @@ test("a pick in a paragraph that its commit parses as a fence, HTML or indented 
     const entries = m.view.history.entries.length;
     act(m, "mdb-enter");
     assert.equal(m.view.text, `Intro\n\n${text}\n\nOutro\n`, line);
-    assert.deepEqual(editing(m), [keyAt(m, 1), value, { start: line.length, end: line.length }], `${line}: the caret after the query`);
+    assert.deepEqual(editing(m), [keyAt(m, 1), value, { start: caret, end: caret }], `${line}: the caret after the query, or in the code of the fence it opened`);
     assert.equal(m.view.blockByKey(m.view.activeKey).kind, kind, line);
     assert.equal(m.view.history.entries.length, entries, `${line}: no entry for the pick`);
     assert.equal(menuOf(m), null, line);
   }
 });
 
-test("/mermaid writes the starter flowchart, the block shows its source with the caret at the end of its last line, and Escape asks for the diagram", async () => {
+test("/mermaid writes the starter flowchart, the block shows its source without fences, the caret at the end of its last line, and Escape asks for the diagram", async () => {
   renderer();
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   typed(m, "/mer");
   act(m, "mdb-enter");
-  const source = "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```";
-  assert.equal(m.view.text, `Intro\n\n${source}\n\nOutro\n`);
+  const source = "flowchart TD\n  A[Start] --> B[End]";
+  assert.equal(m.view.text, `Intro\n\n\`\`\`mermaid\n${source}\n\`\`\`\n\nOutro\n`);
   const key = m.view.activeKey;
   assert.equal(m.view.blockByKey(key).kind, "mermaid");
-  assert.deepEqual(editing(m), [key, source, { start: source.length - 4, end: source.length - 4 }]);
+  assert.deepEqual(editing(m), [key, source, { start: source.length, end: source.length }]);
   assert.equal(find(m.tree(), `md-diagram-${key}`), null, "its source while it is open");
   escape(m);
   await flush();
@@ -10575,4 +10584,219 @@ test("the field's Cmd+C of a picture picked in text copies its markdown, a refer
   await clickToken(ref, 1, tokenShowing(ref, 1, "cat"));
   act(ref, "mdb-copy");
   assert.equal(ref.cx.read_from_clipboard(), '![a cat](cat.png "T")');
+});
+
+// A page whose first block is a code block, opened with `range` selected in its field.
+async function inCode(source, range) {
+  reset();
+  const m = await page(source, { 0: 26 + 3 * 19.5 });
+  await openBlock(m, 0);
+  m.view.field.select(range.start, range.end);
+  return m;
+}
+
+test("typing in a code field stays raw: markdown, a slash and Cmd+B change nothing but the typed text, and no bar, menu or token shows", async () => {
+  const m = await page("Intro\n\n```\nx\n```\n", { 0: 24, 1: 14 + 26 + 19.5 });
+  await openBlock(m, 1, 0);
+  typed(m, "# ");
+  m.view.field.select(3);
+  typed(m, " **a** / ");
+  m.view.field.type("\n# h", m.cx);
+  assert.equal(m.view.text, "Intro\n\n```\n# x **a** / \n# h\n```\n");
+  assert.deepEqual([m.view.field.value(), m.view.field.tokens(), menuOf(m)], ["# x **a** / \n# h", [], null]);
+  m.view.field.select(4, 9);
+  keyUp(m, "right", { shift: true });
+  await flush();
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.text, barOf(m)], ["Intro\n\n```\n# x **a** / \n# h\n```\n", null], "Cmd+B writes nothing and no bar shows");
+  escape(m);
+  assert.deepEqual(m.view.doc.blocks.map(b => b.kind), ["paragraph", "code"]);
+});
+
+test("Enter in code starts the new line with the spaces and tabs of the caret's line up to the caret, a selection replaced first", async () => {
+  for (const [code, range, value, caret] of [
+    ["  a", { start: 3, end: 3 }, "  a\n  ", 6],
+    ["\ta", { start: 2, end: 2 }, "\ta\n\t", 4],
+    ["  ab", { start: 2, end: 3 }, "  \n  b", 5],
+    ["    a", { start: 2, end: 2 }, "  \n    a", 5],
+    [" \t x", { start: 4, end: 4 }, " \t x\n \t ", 8],
+  ]) {
+    const m = await inCode(`\`\`\`\n${code}\n\`\`\`\n`, range);
+    act(m, "mdb-enter");
+    assert.deepEqual([m.view.field.value(), m.view.field.selection], [value, { start: caret, end: caret }], JSON.stringify(code));
+    assert.equal(m.view.text, `\`\`\`\n${value}\n\`\`\`\n`);
+    act(m, "mdb-undo");
+    assert.equal(m.view.text, `\`\`\`\n${code}\n\`\`\`\n`, "one Cmd+Z");
+  }
+});
+
+test("Enter in a table, an HTML block or front matter is a plain line break, as the field's own was", async () => {
+  for (const [doc, sizes, at, want] of [
+    ["| a |\n|---|\n| b |\n", { 0: 26 + 60 }, 3, "| a\n |\n|---|\n| b |\n"],
+    ["<div>\n  x\n</div>\n", { 0: 26 + 3 * 19.5 }, 9, "<div>\n  x\n\n</div>\n"],
+    ["---\n  a: 1\n---\n\nText\n", { 0: 2 * 14 + 2 + 18, 1: 38 }, 10, "---\n  a: 1\n\n---\n\nText\n"],
+  ]) {
+    reset();
+    const m = await page(doc, sizes);
+    await openBlock(m, 0, at);
+    act(m, "mdb-enter");
+    assert.deepEqual([m.view.text, m.view.field.selection], [want, { start: at + 1, end: at + 1 }], JSON.stringify(doc));
+  }
+});
+
+test("the third Enter after the last line of code leaves for a new paragraph below, the two blank lines gone; one Cmd+Z brings them back with the caret after them", async () => {
+  const m = await page("```js\nlet a\n```\n\nAfter\n", { 0: 26 + 19.5, 1: 38 });
+  await openBlock(m, 0, 5);
+  act(m, "mdb-enter");
+  act(m, "mdb-enter");
+  assert.deepEqual([m.view.text, ...editing(m)], ["```js\nlet a\n\n\n```\n\nAfter\n", keyAt(m, 0), "let a\n\n", { start: 7, end: 7 }]);
+  act(m, "mdb-enter");
+  assert.equal(m.view.text, "```js\nlet a\n```\n\nAfter\n");
+  assert.deepEqual([pendingOf(m)?.kind, m.view.order.indexOf(m.view.pending?.key)], ["paragraph", 1], "an empty paragraph right below the block");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...editing(m)], ["```js\nlet a\n\n\n```\n\nAfter\n", keyAt(m, 0), "let a\n\n", { start: 7, end: 7 }]);
+  act(m, "mdb-enter");
+  m.view.field.type("x", m.cx);
+  assert.equal(m.view.text, "```js\nlet a\n```\n\nx\n\nAfter\n");
+  reset();
+  const ind = await page("Intro\n\n    a\n\nAfter\n", { 0: 24, 1: 14 + 26 + 19.5, 2: 38 });
+  await openBlock(ind, 1, 1);
+  act(ind, "mdb-enter");
+  act(ind, "mdb-enter");
+  assert.deepEqual([ind.view.text, ...editing(ind)], ["Intro\n\n    a\n    \n    \n\nAfter\n", keyAt(ind, 1), "a\n\n", { start: 3, end: 3 }], "an indented block keeps its blank last lines");
+  act(ind, "mdb-enter");
+  assert.deepEqual([ind.view.text, pendingOf(ind)?.kind, ind.view.order.indexOf(ind.view.pending?.key)], ["Intro\n\n    a\n\nAfter\n", "paragraph", 2]);
+  act(ind, "mdb-undo");
+  assert.deepEqual([ind.view.text, ...editing(ind)], ["Intro\n\n    a\n    \n    \n\nAfter\n", keyAt(ind, 1), "a\n\n", { start: 3, end: 3 }]);
+});
+
+test("Enter on two blank lines in the middle of the code, or with a selection at its end, types a line break and stays", async () => {
+  const m = await inCode("```\na\n\n\nb\n```\n", { start: 3, end: 3 });
+  act(m, "mdb-enter");
+  assert.deepEqual([m.view.text, m.view.pending], ["```\na\n\n\n\nb\n```\n", null]);
+  const s = await inCode("```\na\n\n  \n```\n", { start: 3, end: 5 });
+  act(s, "mdb-enter");
+  assert.deepEqual([s.view.text, s.view.pending, s.view.field.selection], ["```\na\n\n\n\n```\n", null, { start: 4, end: 4 }]);
+});
+
+test("Tab in code types the block's indent unit at a caret, and adds it to every line a selection touches with the same text selected; Shift+Tab takes one unit off; one Cmd+Z each", async () => {
+  const m = await inCode("```\nab\ncd\n```\n", { start: 1, end: 1 });
+  act(m, "mdb-tab");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["```\na    b\ncd\n```\n", { start: 5, end: 5 }], "nothing indented: four spaces");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "```\nab\ncd\n```\n");
+  m.view.field.select(1, 4);
+  act(m, "mdb-tab");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["```\n    ab\n    cd\n```\n", { start: 5, end: 12 }]);
+  act(m, "mdb-shift-tab");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["```\nab\ncd\n```\n", { start: 1, end: 4 }]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["```\n    ab\n    cd\n```\n", { start: 5, end: 12 }], "Cmd+Z selects what was selected");
+  const two = await inCode("```\nif x:\n  y\nz\n```\n", { start: 0, end: 11 });
+  act(two, "mdb-tab");
+  assert.deepEqual([two.view.text, two.view.field.selection], ["```\n  if x:\n    y\n  z\n```\n", { start: 2, end: 17 }], "the smallest indent of two spaces or more");
+  two.view.field.select(11);
+  act(two, "mdb-shift-tab");
+  assert.deepEqual([two.view.text, two.view.field.selection], ["```\n  if x:\n  y\n  z\n```\n", { start: 9, end: 9 }], "a caret: its line only");
+  const tabs = await inCode("```\nf() {\n\tx()\n}\n```\n", { start: 0, end: 12 });
+  act(tabs, "mdb-tab");
+  assert.equal(tabs.view.text, "```\n\tf() {\n\t\tx()\n\t}\n```\n", "a tab in a block indented with tabs");
+  tabs.view.field.select(12);
+  act(tabs, "mdb-shift-tab");
+  assert.deepEqual([tabs.view.text, tabs.view.field.selection], ["```\n\tf() {\n\tx()\n\t}\n```\n", { start: 11, end: 11 }]);
+});
+
+test("Tab and Shift+Tab over three lines or more change only the code: each line keeps the indent and prefix its file line has, and an empty line stays empty", async () => {
+  for (const [name, source, i, sizes, tabbed] of [
+    ["a tab-indented block", "\ta\n\tb\n\tc\n", 0, { 0: 26 + 3 * 19.5 }, "\t    a\n\t    b\n\t    c\n"],
+    ["lines indented less than their fence", "  ```\n a\n b\n c\n  ```\n", 0, { 0: 26 + 3 * 19.5 }, "  ```\n     a\n     b\n     c\n  ```\n"],
+    ["an item's blank line without its prefix", "- item\n\n  ```\n  a\n\n  b\n  c\n  ```\n", 1, { 0: 24, 1: 14 + 26 + 4 * 19.5 }, "- item\n\n  ```\n      a\n\n      b\n      c\n  ```\n"],
+  ]) {
+    reset();
+    const m = await page(source, sizes);
+    await openBlock(m, i);
+    m.view.field.select(0, m.view.field.value().length);
+    act(m, "mdb-tab");
+    assert.equal(m.view.text, tabbed, `${name}: Tab`);
+    act(m, "mdb-shift-tab");
+    assert.equal(m.view.text, source, `${name}: Shift+Tab`);
+    act(m, "mdb-undo");
+    assert.equal(m.view.text, tabbed, `${name}: one Cmd+Z`);
+    act(m, "mdb-undo");
+    assert.equal(m.view.text, source, `${name}: another`);
+  }
+});
+
+test("Tab in a code block below an item indents its code and nests nothing, nor does Shift+Tab move a code block out of its item", async () => {
+  reset();
+  const m = await page("- item\n\n```\nx\n```\n", { 0: 24, 1: 14 + 26 + 19.5 });
+  await openBlock(m, 1, 0);
+  act(m, "mdb-tab");
+  assert.deepEqual([m.view.text, m.view.doc.blocks.map(b => [b.kind, b.depth])], ["- item\n\n```\n    x\n```\n", [["item", 0], ["code", 0]]]);
+  reset();
+  const n = await page("- item\n\n  ```\n  x\n  ```\n", { 0: 24, 1: 14 + 26 + 19.5 });
+  await openBlock(n, 1, 0);
+  act(n, "mdb-shift-tab");
+  assert.deepEqual([n.view.text, n.view.doc.blocks.map(b => [b.kind, b.depth])], ["- item\n\n  ```\n  x\n  ```\n", [["item", 0], ["code", 1]]]);
+});
+
+test("``` typed on a line of a ``` block, or pasted in, makes both fences longer in the same entry: left, it is one block holding that line, and one Cmd+Z takes back both", async () => {
+  const m = await page("```js\na\n```\n\nAfter\n", { 0: 26 + 19.5, 1: 38 });
+  await openBlock(m, 0, 1);
+  act(m, "mdb-enter");
+  typed(m, "```");
+  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], ["````js\na\n```\n````\n\nAfter\n", "a\n```", { start: 5, end: 5 }]);
+  escape(m);
+  assert.deepEqual(m.view.doc.blocks.map(b => [b.kind, b.content]), [["code", "a\n```"], ["paragraph", "After"]]);
+  await m.save();
+  assert.equal(state.disk.get(FILE), "````js\na\n```\n````\n\nAfter\n");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "```js\na\n\n```\n\nAfter\n", "the backticks and the longer fences go together");
+  const p = await inCode("```\na\n```\n\nAfter\n", { start: 1, end: 1 });
+  p.cx.held = "\n```\nb";
+  act(p, "mdb-paste");
+  assert.equal(p.view.text, "````\na\n```\nb\n````\n\nAfter\n");
+  p.view.field.type("!", p.cx);
+  assert.equal(p.view.text, "````\na\n```\nb!\n````\n\nAfter\n", "the field still maps the file");
+  act(p, "mdb-undo");
+  act(p, "mdb-undo");
+  assert.equal(p.view.text, "```\na\n```\n\nAfter\n");
+  const tilde = await inCode("~~~\na\n~~~\n", { start: 1, end: 1 });
+  tilde.view.field.type("\n```", tilde.cx);
+  assert.equal(tilde.view.text, "~~~\na\n```\n~~~\n", "backticks in a ~~~ block change nothing");
+});
+
+test("a code block inside a list item: its field holds only the code, and lines typed there get the item's indent", async () => {
+  const m = await page("- step\n\n  ```sh\n  npm i\n  ```\n- next\n", { 0: 24, 1: 6 + 26 + 19.5, 2: 30 });
+  await openBlock(m, 1, 5);
+  assert.equal(m.view.field.value(), "npm i");
+  act(m, "mdb-enter");
+  m.view.field.type("npm t", m.cx);
+  assert.equal(m.view.text, "- step\n\n  ```sh\n  npm i\n  npm t\n  ```\n- next\n");
+  escape(m);
+  assert.deepEqual(m.view.doc.blocks.map(b => [b.kind, b.depth]), [["item", 0], ["code", 1], ["item", 0]]);
+});
+
+test("the edited code block draws its language label top right, as Reading does; a diagram's source being edited draws mermaid", async () => {
+  const m = await page("```py\nprint()\n```\n\n```Mermaid\ngraph TD\n```\n", { 0: 26 + 19.5, 1: 14 + 120 });
+  const label = i => all(blockAt(m, i), n => n.style.absolute && n.style.top === 6).map(n => textOf(n).trim());
+  await openBlock(m, 0);
+  assert.deepEqual([m.view.activeKey, label(0)], [keyAt(m, 0), ["py"]]);
+  await clickAt(m, { x: X + 100, y: topOf(m, 1) + 14 + 50 });
+  assert.deepEqual([m.view.activeKey, m.view.field.value(), label(1)], [keyAt(m, 1), "graph TD", ["mermaid"]]);
+});
+
+test("Backspace at the start of a block holding code does nothing; in an empty one it takes the block, the caret at the end of the block above", async () => {
+  const m = await page("Above\n\n```\ncode\n```\n", { 0: 24, 1: 14 + 26 + 19.5 });
+  await openBlock(m, 1, 0);
+  act(m, "mdb-backspace-start");
+  assert.deepEqual([m.view.text, ...editing(m)], ["Above\n\n```\ncode\n```\n", keyAt(m, 1), "code", { start: 0, end: 0 }]);
+  reset();
+  const e = await page("Above\n\n```js\n```\n", { 0: 24, 1: 14 + 26 + 19.5 });
+  await openBlock(e, 1);
+  assert.deepEqual(editing(e), [keyAt(e, 1), "", { start: 0, end: 0 }], "an empty block: an empty field");
+  act(e, "mdb-backspace-start");
+  assert.deepEqual([e.view.text, ...editing(e)], ["Above\n", keyAt(e, 0), "Above", { start: 5, end: 5 }]);
+  act(e, "mdb-undo");
+  assert.equal(e.view.text, "Above\n\n```js\n```\n");
 });

@@ -4,7 +4,7 @@ import {
   parse, reparse, field, fieldToDoc, docToField, type, separators, applySplice, diff, counters, isText, split, insertAfter,
   insertBefore, insertAt, mergeIntoPrevious, mergeNext, remove, removeRange, toParagraph, indent, outdent, nest, unnest,
   move, toggleTask, paste, closeFence, fenceGuard, shortcut, codeIndent, FENCE, CLOSE, closes, parseInSteps,
-  retype, insertLines, picturesIn, removePicture,
+  retype, insertLines, picturesIn, removePicture, lengthenFence,
 } from "../mods/herdr-inline-markdown/blocks.js";
 import { visibleMap } from "../mods/herdr-inline-markdown/inline.js";
 import { originals, corpus, docs, htmlKinds, docKinds, random, bigDocument, VARIANTS } from "./markdown-corpus.mjs";
@@ -100,9 +100,9 @@ const KIND_CASES = [
   ["setext heading", "Hello\nWorld\n===\n", ["heading"], ["Hello World"]],
   ["bullet, ordered and task items", "- a\n1. b\n- [x] c\n", ["item", "item", "item"], ["a", "b", "c"]],
   ["a quote with a lazy line", "> a\nb\n> c\n", ["quote"], ["a b c"]],
-  ["fenced code, fences in the field", "```js\nx\n```\n", ["code"], ["```js\nx\n```"]],
-  ["indented code", "    a\n    b\n", ["code"], ["    a\n    b"]],
-  ["mermaid", "```mermaid\ngraph TD\n```\n", ["mermaid"], ["```mermaid\ngraph TD\n```"]],
+  ["fenced code, only its code in the field", "```js\nx\n```\n", ["code"], ["x"]],
+  ["indented code, without its indent", "    a\n    b\n", ["code"], ["a\nb"]],
+  ["mermaid, only its source", "```mermaid\ngraph TD\n```\n", ["mermaid"], ["graph TD"]],
   ["table", "| a | b |\n|---|---|\n| 1 | 2 |\n", ["table"], ["| a | b |\n|---|---|\n| 1 | 2 |"]],
   ["table after a list item and a blank line", "- item\n\n| a |\n|---|\n", ["item", "table"], ["item", "| a |\n|---|"]],
   ["table inside an item", "- | a |\n  |---|\n", ["item", "table"], ["", "| a |\n|---|"]],
@@ -196,7 +196,7 @@ test("nesting follows the container rule: a fence right after an item's first li
   const d = parse("1. Install:\n   ```bash\n   npm i\n   ```\n2. Run\n");
   assert.deepEqual(d.blocks.map(b => [b.kind, b.depth, b.parent]), [["item", 0, -1], ["code", 1, 0], ["item", 0, -1]]);
   assert.equal(field(d, d.blocks[0]).value, "Install:");
-  assert.equal(field(d, d.blocks[1]).value, "```bash\nnpm i\n```");
+  assert.equal(field(d, d.blocks[1]).value, "npm i");
   assert.equal(d.blocks[0].subtreeEnd, d.blocks[1].end);
 });
 
@@ -293,6 +293,111 @@ test("fieldToDoc and docToField: prefix maps to 0, a separator to its side of th
 test("an edit that changes nothing changes no byte", () => {
   const d = parse("- a\n  b\n"), f = field(d, d.blocks[0]);
   assert.equal(type(f, f.value), null);
+});
+
+// One of each kind of code block: its text, the block's index and the code Reading draws.
+const CODE_BLOCKS = [
+  ["a closed ``` block", "Intro\n\n```js\nconst a = 1;\n  return a;\n```\n\nAfter\n", 1, "const a = 1;\n  return a;"],
+  ["a ~~~ block", "~~~\nx\n\ny\n~~~\n", 0, "x\n\ny"],
+  ["an unclosed fence at the end of the file", "Intro\n\n```\nlast\nline", 1, "last\nline"],
+  ["an empty block", "```py\n```\n", 0, ""],
+  ["a fence indented two spaces", "  ```\n  two\n   three\n four\n  ```\n", 0, "two\n three\nfour"],
+  ["an indented block, spaces and a tab", "    a\n\tb\n\n      c\n\nNext\n", 0, "a\nb\n\n  c"],
+  ["a fenced block inside a list item", "- item\n\n  ```sh\n  npm i\n\n    --save\n  ```\n- next\n", 1, "npm i\n\n  --save"],
+  ["a mermaid block", "```mermaid\ngraph TD\nA-->B\n```\n", 0, "graph TD\nA-->B"],
+];
+
+test("the field of a code block holds only what Reading draws: no fences, no indent Reading leaves out, no container prefix", () => {
+  for (const [name, text, i, want] of CODE_BLOCKS) {
+    const d = parse(text), b = d.blocks[i], f = field(d, b);
+    assert.ok(b.kind === "code" || b.kind === "mermaid", name);
+    assert.deepEqual([f.value, b.content], [want, want], name);
+    for (let k = 0; k <= f.value.length; k++) {
+      assert.equal(docToField(f, fieldToDoc(f, k)), k, `${name}: offset ${k}`);
+      if (k < f.value.length && f.value[k] !== "\n") assert.equal(d.text[fieldToDoc(f, k)], f.value[k], `${name}: character ${k}`);
+    }
+  }
+});
+
+test("typing in a code field writes between the fences: each new line typed or pasted gets the container prefix and the code indent", () => {
+  const typed = (text, i, edit) => {
+    const d = parse(text), f = field(d, d.blocks[i]), next = edit(f.value), after = run(d.text, type(f, next)), nd = parse(after);
+    assert.equal(field(nd, nd.blocks[i]).value, next, `${JSON.stringify(text)} re-parses to what was typed`);
+    assert.equal(f.text, after, "the field keeps up");
+    return after;
+  };
+  const item = "- item\n\n  ```sh\n  npm i\n  ```\n";
+  assert.equal(typed(item, 1, v => `${v}x`), "- item\n\n  ```sh\n  npm ix\n  ```\n", "a character");
+  assert.equal(typed(item, 1, v => `${v}\nnext`), "- item\n\n  ```sh\n  npm i\n  next\n  ```\n", "a line break");
+  assert.equal(typed(item, 1, v => `${v}\none\n  two`), "- item\n\n  ```sh\n  npm i\n  one\n    two\n  ```\n", "a paste");
+  assert.equal(typed("  ```\n  two\n  ```\n", 0, v => `${v}\nthree`), "  ```\n  two\n  three\n  ```\n", "the fence's indent");
+  assert.equal(typed("    a\n", 0, v => `${v}\nb`), "    a\n    b\n", "an indented block's four spaces");
+  assert.equal(typed("- item\n\n      code\n", 1, v => `${v}\nmore`), "- item\n\n      code\n      more\n", "inside an item");
+  assert.equal(typed("- item\n\n  ```sh\n  npm i\n\n  ```\n", 1, v => `${v}z`), "- item\n\n  ```sh\n  npm i\n  z\n  ```\n",
+    "typed on a blank line that has no prefix, the line gets it");
+  assert.equal(typed("    a\n\n    b\n", 0, v => v.replace("\n\n", "\nz\n")), "    a\n    z\n    b\n", "so it stays in an indented block");
+});
+
+test("the first character typed in an empty code block writes its line between the fences, closed or not, in an item, with CRLF", () => {
+  for (const [text, i, next, want, more] of [
+    ["```\n```\n", 0, "x", "```\nx\n```\n", "```\nx!\n```\n"],
+    ["```py\n```", 0, "x\ny", "```py\nx\ny\n```", "```py\nx\ny!\n```"],
+    ["```", 0, "x\ny", "```\nx\ny", "```\nx\ny!"],
+    ["Intro\n\n```\n", 1, "x", "Intro\n\n```\nx\n", "Intro\n\n```\nx!\n"],
+    ["- a\n\n  ```\n  ```\n", 1, "x\n", "- a\n\n  ```\n  x\n  \n  ```\n", "- a\n\n  ```\n  x\n  !\n  ```\n"],
+    ["```\r\n```\r\n", 0, "x\ny", "```\r\nx\r\ny\r\n```\r\n", "```\r\nx\r\ny!\r\n```\r\n"],
+  ]) {
+    const d = parse(text), f = field(d, d.blocks[i]);
+    assert.equal(f.value, "", JSON.stringify(text));
+    const s = type(f, next), after = run(d.text, s);
+    assert.equal(after, want, JSON.stringify(text));
+    assert.equal(s.caret, fieldToDoc(f, next.length));
+    assert.equal(run(after, type(f, `${next}!`)), more, `${JSON.stringify(text)}: then typing goes on`);
+  }
+});
+
+test("blank lines typed at the end of an indented block stay in its field, though the block does not hold them", () => {
+  let d = parse("Code:\n\n    a\n\nNext\n");
+  for (const next of ["a\n", "a\n\n", "a\n\n  "]) {
+    const f = field(d, d.blocks[1]);
+    d = parse(run(d.text, type(f, next)));
+    assert.deepEqual([d.blocks[1].content, field(d, d.blocks[1]).value], ["a", next]);
+  }
+  assert.equal(d.text, "Code:\n\n    a\n    \n      \n\nNext\n");
+  assert.equal(field(parse("    a\n\n    \nNext\n"), parse("    a\n\n    \nNext\n").blocks[0]).value, "a", "past a line without the indent, none");
+});
+
+test("lengthenFence: a line typed in a fenced block that would close it makes both fences longer than it, the field kept in step", () => {
+  const typedLine = (text, i, edit) => {
+    const d = parse(text), f = field(d, d.blocks[i]), next = edit(f.value), dd = diff(f.value, next);
+    const after = run(d.text, type(f, next)), g = lengthenFence(f, dd.at, dd.at + dd.inserted.length);
+    return { f, after: g ? run(after, g) : after, g };
+  };
+  const plain = typedLine("```js\na\n```\n\nNext\n", 0, v => `${v}\n\`\`\``);
+  assert.equal(plain.after, "````js\na\n```\n````\n\nNext\n");
+  assert.deepEqual(parse(plain.after).blocks.map(b => [b.kind, field(parse(plain.after), b).value]), [["code", "a\n```"], ["paragraph", "Next"]]);
+  assert.equal(plain.f.text, plain.after, "the field keeps up");
+  for (let k = 0; k <= plain.f.value.length; k++) assert.equal(docToField(plain.f, fieldToDoc(plain.f, k)), k);
+  assert.equal(run(plain.after, type(plain.f, "a\n```\nb")), "````js\na\n```\nb\n````\n\nNext\n", "typing goes on");
+  assert.equal(typedLine("```\na\n```\n", 0, v => `${v}\n\`\`\`\`\``).after, "``````\na\n`````\n``````\n", "longer than the longest");
+  assert.equal(typedLine("```\na\n``````\n", 0, v => `${v}\n\`\`\``).after, "````\na\n```\n``````\n", "a closing fence long enough stays");
+  assert.equal(typedLine("```\na", 0, v => `${v}\n\`\`\``).after, "````\na\n```", "an unclosed fence: the opening one");
+  assert.equal(typedLine("```\n```x\n```\n", 0, v => v.slice(0, -1)).after, "````\n```\n````\n", "a deletion that leaves a closing line");
+  assert.equal(typedLine("  ```\n  a\n  ```\n", 0, v => `${v}\n\`\`\``).after, "  ````\n  a\n  ```\n  ````\n", "under an indented fence");
+  assert.equal(typedLine("  ```\n x\n  ```\n", 0, () => "  ```").after, "  ````\n   ```\n  ````\n",
+    "on a line indented less than its fence, spaces typed at its start count from the file's indent");
+  assert.equal(typedLine("```mermaid\ngraph\n```\n", 0, v => `${v}\n\`\`\``).after, "````mermaid\ngraph\n```\n````\n");
+  const empty = typedLine("```\n```\n", 0, () => "```");
+  assert.equal(empty.after, "````\n```\n````\n", "the first line of an empty block");
+  assert.equal(run(empty.after, type(empty.f, "```\nx")), "````\n```\nx\n````\n");
+  for (const [text, edit] of [
+    ["~~~\na\n~~~\n", v => `${v}\n\`\`\``],
+    ["```\na\n```\n", v => `${v}\n\`\`\`x`],
+    ["```\na\n```\n", v => `${v}\n\`\``],
+    ["```\na\n```\n", v => `${v}\n\t\`\`\``],
+    ["  ```\n  a\n  ```\n", v => `${v}\n  \`\`\``],
+    ["    a\n", v => `${v}\n\`\`\``],
+  ]) assert.equal(typedLine(text, 0, edit).g, null, `${JSON.stringify(text)}: nothing would close it`);
 });
 
 test("new lines use contPrefix and the document EOL; tabs are never converted", () => {
@@ -410,7 +515,7 @@ test("fix-up, empty item above a block it would take in: typing into it adds the
   for (const [text, want, fields] of [
     ["-\nfoo\n", "- x\n\nfoo\n", ["x", "foo"]],
     ["-\n  foo\n", "- x\n\n  foo\n", ["x", "foo"]],
-    ["-\n      baz\n", "- x\n\n      baz\n", ["x", "    baz"]],
+    ["-\n      baz\n", "- x\n\n      baz\n", ["x", "baz"]],
     ["-\n- b\n", "- x\n- b\n", ["x", "b"]],
     ["-\n2. b\n", "- x\n2. b\n", ["x", "b"]],
   ]) {
@@ -779,7 +884,7 @@ test("paste: block lines replace an empty block, split a paragraph, or join inli
   assert.equal(i, "ax\nyb\n");
   const q = parse("> a\n"), qs = run(q.text, paste(q, q.blocks[0], 1, 1, "x\n- y"));
   assert.deepEqual(kinds(parse(qs)), ["quote"]);
-  const raw1 = parse("```\nx\n```\n"), r = run(raw1.text, paste(raw1, raw1.blocks[0], 4, 4, "a\nb"));
+  const raw1 = parse("```\nx\n```\n"), r = run(raw1.text, paste(raw1, raw1.blocks[0], 0, 0, "a\nb"));
   assert.equal(r, "```\na\nbx\n```\n");
 });
 

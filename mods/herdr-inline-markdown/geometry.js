@@ -1,5 +1,4 @@
 // No imports from herdr or gpui-*. Lengths are logical pixels.
-import { codeIndent } from "./blocks.js";
 import { visibleMap } from "./inline.js";
 
 export const COLUMN = { maxWidth: 780, padX: 32, padTop: 28, padBottom: 160 };
@@ -11,8 +10,8 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const WORD = /[\p{L}\p{N}_]/u;
 const NEWLINE = 10, SPACE = 32;
 
-// (x, y) is relative to the block's content box. `target` is { kind, value, fenced, closed, rows, width, height }:
-// `fenced` when the field's first line is a fence or front matter dashes that Reading does not draw, `rows` the
+// (x, y) is relative to the block's content box. `target` is { kind, value, fenced, rows, width, height }:
+// `fenced` when the field's first and last lines are front matter dashes that Reading does not draw, `rows` the
 // measured row count when known. `cal` is { rowPx, advance, monoAdvance }: the row height and the average prose and
 // mono character advances. In prose a press lands on the nearest word edge; `side` "start" or "end" takes the start
 // or the end of the word it falls in instead, for the ends of a selection.
@@ -31,18 +30,15 @@ function lineStarts(lines) {
 function monoPress(t, x, y, cal) {
   const lines = t.value.split("\n"), starts = lineStarts(lines);
   const first = t.fenced ? Math.min(1, lines.length - 1) : 0;
-  const last = Math.max(first, t.fenced && t.closed !== false && lines.length > 2 ? lines.length - 2 : lines.length - 1);
+  const last = Math.max(first, t.fenced && lines.length > 2 ? lines.length - 2 : lines.length - 1);
   const perRow = Math.max(1, Math.floor(t.width / cal.monoAdvance));
   const wrapped = t.rows > last - first + 1;
-  const code = t.kind === "code" || t.kind === "mermaid";
-  const fenceIndent = !code ? 0 : t.fenced ? /^ */.exec(lines[0])[0].length : null;
   let row = Math.max(0, Math.floor(y / cal.rowPx));
   for (let i = first; i <= last; i++) {
-    const indent = codeIndent(lines[i], fenceIndent), drawn = lines[i].length - indent;
-    const rows = wrapped ? Math.max(1, Math.ceil(drawn / perRow)) : 1;
+    const drawn = lines[i].length, rows = wrapped ? Math.max(1, Math.ceil(drawn / perRow)) : 1;
     if (row < rows || i === last) {
       const r = Math.min(row, rows - 1), col = r * (wrapped ? perRow : 0) + Math.round(Math.max(0, x) / cal.monoAdvance);
-      return starts[i] + indent + clamp(col, 0, drawn);
+      return starts[i] + clamp(col, 0, drawn);
     }
     row -= rows;
   }

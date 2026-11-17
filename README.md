@@ -160,37 +160,47 @@ stays bold, a link shows its text in the link colour with no address, code keeps
 comment's text stays highlighted, and escapes and entities show as their characters. No markdown mark
 ever shows in Reading, its `#`, `-`, `1.`, `[ ]` or `>` included; the marks stay in the file, and the Markdown view
 shows them. A word with formatting moves as one piece until the caret is in it: click into it or arrow up to it, and
-the caret stops between its letters. A code block, table, HTML block, front matter or diagram shows its source, fences
-included, in the terminal font, and a diagram is drawn again when you leave it. A paragraph of pictures never shows its
-source: a click [picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as spaces, so it wraps as
-it did on the page, and keeps them in the file.
+the caret stops between its letters. A code block, or a diagram's source, shows only its code, in the terminal font,
+where Reading draws it: its fences stay in the file, out of sight, its language stays at the top right, and a diagram
+is drawn again when you leave it. An indented code block (four spaces, no fence) shows without its indent and stays
+indented. A table, HTML block or front matter shows its source. A paragraph of pictures never shows its source: a click
+[picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as spaces, so it wraps as it did on the
+page, and keeps them in the file.
+
+In code, typing stays as typed: no formatting, shortcut or slash menu. Enter starts the new line with the indent of
+the line the caret is on, and Tab and Shift+Tab indent (see the table). To leave a code block, press Enter three times
+after its last line (the two blank lines go and a new paragraph opens below) or Cmd+Enter (a new paragraph below), or
+Down on its last row or Right at its very end (on to the next block, or a new paragraph after the last block of the
+file). A line that would end the code block early, such as ```` ``` ```` in a block fenced with three backticks, makes
+both fences longer as you type it, so the block keeps that line; the same Cmd+Z takes back the line and the longer
+fences.
 
 | Key or click | What it does |
 |---|---|
-| Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, in a table at the start of the clicked cell (there the second click is exact) |
+| Click | Edits the block under the pointer. In a paragraph, heading, item or quote the caret lands where you click, between the letters of a formatted word too, and nothing on the page moves; in code on the clicked line and column, the page staying put too; in a table at the start of the clicked cell (there the second click is exact) |
 | Click a link | Selects the whole link and shows its [popover](#links) over it; a second click puts the caret in its text |
 | Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
-| Double-click a diagram | Shows its source to edit (a single click does nothing, so a drag or a stray click never opens it) |
+| Double-click a diagram | Shows its source to edit, without its fences (a single click does nothing, so a drag or a stray click never opens it) |
 | Click a picture | [Picks it](#pictures): a ring around it and its menu over it. A double-click or a right-click does the same, a linked picture included. A picture inside a line of text is selected whole with the same menu, and a second click puts the caret in its alt text |
 | Cmd+click a linked picture | Opens its link, as Cmd+click on a link in text does, also in a file you can't edit |
 | Click a checkbox | Ticks or unticks it |
-| Enter | At the end of a block: a new one below (a list continues). At the start: a new one above. In the middle: splits the block, and the formatting goes on on both sides: Enter inside a bold, coloured, highlighted, underlined or code run leaves both halves with it, inside a link both halves link to its address, and in commented text the first half keeps the comment. In a web address, an autolink or a picture the split goes after it, so it is never cut. On an empty item: out a level, then out of the list. In code: a new line |
+| Enter | At the end of a block: a new one below (a list continues). At the start: a new one above. In the middle: splits the block, and the formatting goes on on both sides: Enter inside a bold, coloured, highlighted, underlined or code run leaves both halves with it, inside a link both halves link to its address, and in commented text the first half keeps the comment. In a web address, an autolink or a picture the split goes after it, so it is never cut. On an empty item: out a level, then out of the list. In code: a new line that starts with the spaces and tabs the caret's line has before the caret; at the end of the code, the third Enter after its last line leaves for a new paragraph below, taking the two blank lines away. In a table, HTML block or front matter: a line break |
 | Shift+Enter | A line break inside the block, written as `\` at the end of the line; in inline code the code closes before the break and opens again after it, as code can't hold one. In a heading it is Enter |
 | Cmd+Enter | Ticks the task being edited; in a code block, leaves it for a new paragraph below |
 | Backspace / Delete | In a paragraph, heading, item or quote what is left keeps its formatting: a bold run keeps its marks while a letter of it is left and they go with its last letter; a link keeps its address and commented text its comment the same way, and a link or comment whose text all went goes whole. A letter typed where you deleted takes the formatting of the first letter deleted, so a typo at the end of a bold word is retyped bold. Option+Backspace and a selection deleted or cut work the same |
 | Typing over a selection | The typed text takes the formatting of the selection's first letter. Typing over a clicked link renames it and keeps its address; the same in commented text |
 | Typing | Text typed inside a formatted word has its formatting, typed right after or before it is plain, and typed markdown works as a shortcut (`**bold**` turns bold as you close it). A character that would make hidden marks show is written so that it shows as typed |
-| Backspace at the start | A heading or quote becomes a paragraph; an item moves out a level, then becomes a paragraph; a paragraph joins the one above, or picks the last picture of a paragraph of pictures above it. An empty block goes |
+| Backspace at the start | A heading or quote becomes a paragraph; an item moves out a level, then becomes a paragraph; a paragraph joins the one above, or picks the last picture of a paragraph of pictures above it. An empty block goes, an empty code block with its fences; in a code block holding code it does nothing |
 | Delete at the end | Joins the next paragraph, heading or item to this one, removes the rule after it, or picks the first picture of a paragraph of pictures after it |
 | Joining blocks | Every letter of both keeps its formatting and shows as before: a bold word at the end of one and another at the start of the next become one bold word, and a `*` that showed as a character still does. The caret lands at the join |
-| Tab / Shift+Tab | Nests / un-nests a list item with its sub-items; in a table, selects the next / previous cell; in code, Tab types four spaces |
+| Tab / Shift+Tab | Nests / un-nests a list item with its sub-items; in a table, selects the next / previous cell. In code, Tab types the block's indent at the caret: a tab when its lines are indented with tabs, else its smallest indent of two spaces or more, else four spaces. With a selection Tab indents every line it touches except empty ones, and Shift+Tab takes one indent off them, or off the caret's line; the same text stays selected. A code block is never nested into an item this way |
 | Option+Up / Down | Moves the block (an item with its sub-items) above or below its neighbour |
 | Arrow keys | Move inside the block, and on to the block above or below at its edge; into a paragraph of pictures they pick its first picture from above, its last from below |
 | Page Up / Page Down | Scrolls a page and takes the caret along |
 | Escape | Closes a link's popover, else the format bar's open menu, else the format bar when it shows, else stops editing; Enter picks up where you were. In the address box it goes back to the popover |
 | Cmd+Z / Cmd+Shift+Z | Undo and redo everything, in Reading and Markdown and across switching between them. Undo puts the caret back where it was before the key, and a deleted or typed-over selection comes back selected; a picture changed or deleted comes back picked |
-| Cmd+C / Cmd+X | In a paragraph, heading, item or quote: copies the selection as markdown that keeps its formatting and stands on its own (part of a bold word is copied bold, part of a link as a link to its address, a picture whole, line breaks kept); comments are left out, their text kept. Cmd+X then deletes the selection as Backspace does. In a code block or table they copy the source |
+| Cmd+C / Cmd+X | In a paragraph, heading, item or quote: copies the selection as markdown that keeps its formatting and stands on its own (part of a bold word is copied bold, part of a link as a link to its address, a picture whole, line breaks kept); comments are left out, their text kept. Cmd+X then deletes the selection as Backspace does. In a code block they copy the code, in a table the source |
 | Cmd+V | Pasted markdown (a chat answer, say) arrives as blocks: its headings, lists and code. Pasted into a paragraph, heading, item or quote, text keeps its own formatting and takes the formatting of where it lands, as typing does: inside a bold word it is bold too, and over a selection it takes its first letter's. A mark that pairs with nothing on the clipboard (`**wo`) is pasted as the characters it shows. Paragraphs or blocks pasted in the middle of a block split it there as Enter does: the first pasted paragraph joins the text before, the last joins the text after, and lists, rules and code in between arrive as the blocks they write |
 | Cmd+B / Cmd+I / Cmd+U / Cmd+Shift+X | In a paragraph, heading, item or quote: bold, italic, underline or strikethrough on the selection, all or nothing. If every letter of the selection has it already, the key takes it off all of them; otherwise it puts it on all of them, so a selection that is partly bold becomes all bold first. Text outside the selection keeps its formatting: a bold run the selection cuts is split, and runs that end up touching join into one. Every other formatting stays (bold-italic text that loses bold stays italic; a link keeps its address, a comment its note). The same letters stay selected, so the key again undoes it. Spaces at the ends of the selection stay outside. On a caret in a word they act on the word; elsewhere they write nothing and set the formatting of what you type next there, which stays one run as you type on (Cmd+B, `word`, Cmd+B, `s` gives **word**s) |
 | Cmd+Shift+C | The same for inline code: other formatting goes around the code (`` **`x`** ``), and making formatted text code keeps its formatting, splitting the code where it changes |
@@ -211,10 +221,12 @@ uncoloured.
 
 At the start of a paragraph, `# ` … `###### ` makes a heading, `- `, `* ` or `+ ` a bullet, `1. ` or `1) ` a numbered
 item, `[] ` or `[ ] ` a task, and `> ` a quote; Cmd+Z right after gives back what you typed. ```` ```js ```` then Enter
-starts a code block with the caret inside it, and `---`, `***` or `___` then Enter makes a rule. A block you open and
-leave empty disappears and writes nothing to the file.
+starts an empty code block with the caret in it, and `---`, `***` or `___` then Enter makes a rule. A block you open
+and leave empty disappears and writes nothing to the file; a code block you empty keeps its fences.
 
 **Known limits:** in code blocks and tables the first click puts the caret near the click, and the second is exact;
+code has no syntax colours; blank lines typed at the end of an indented code block show while you edit it but not in
+Reading, which leaves them out as markdown does;
 selecting across blocks selects whole blocks (the middle of one block to the middle of another needs the Markdown
 view); a drag inside a formatted word that the caret is not in selects the whole word; typing never re-wraps the
 source; input methods that compose characters (Japanese, Chinese) may misbehave with Enter, and inside or next to

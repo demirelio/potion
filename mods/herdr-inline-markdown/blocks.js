@@ -55,6 +55,7 @@ const HTML_END_MARK = [null, null, "-->", "?>", ">", "]]>"];
 
 const TEXT_KINDS = new Set(["paragraph", "heading", "item", "quote"]);
 export const isText = b => TEXT_KINDS.has(b.kind);
+export const isCode = b => b.kind === "code" || b.kind === "mermaid";
 
 export const applySplice = (text, s) => text.slice(0, s.start) + s.insert + text.slice(s.end);
 
@@ -778,11 +779,16 @@ export function codeIndent(line, fenceIndent = null) {
   return n;
 }
 
+// The lines of code block `b` that Reading draws: those between its fences, or all of an indented block's.
+const codeLines = b => (b.fence ? b.lines.slice(1, b.closed ? -1 : undefined) : b.lines);
+const fenceIndentOf = b => (b.fence ? b.fenceIndent || 0 : null);
+const INDENTED_CODE = "    ";
+
 function baseRender(text, b) {
   const L = b.lines, s0 = b.start;
-  if (b.kind === "code" || b.kind === "mermaid") {
-    const fenceIndent = b.fence ? b.fenceIndent || 0 : null, drawn = b.fence ? L.slice(1, b.closed ? -1 : undefined) : L;
-    return drawn.map(l => {
+  if (isCode(b)) {
+    const fenceIndent = fenceIndentOf(b);
+    return codeLines(b).map(l => {
       const line = lineText(text, b, l);
       return line.slice(codeIndent(line, fenceIndent));
     }).join("\n");
@@ -1037,6 +1043,42 @@ export function fenceGuard(doc, splice) {
   return null;
 }
 
+// The length of the fence run of a line of code field `f` that would close its fence as the parser reads it, else 0.
+// `ws` is the indent its file line has before what the field shows.
+function closingRun(f, line, ws) {
+  const m = CLOSE.exec(" ".repeat(ws) + line);
+  return m && m[1][0] === f.fence[0] && m[1].length >= f.fence.length ? m[1].length : 0;
+}
+
+// After field range [from, to) of code field `f` was typed, the splice that makes both its fences longer than the
+// longest line of that range that would close them, or null when none would. `f` follows the splice.
+export function lengthenFence(f, from, to) {
+  if (!f.code || !f.fence) return null;
+  const v = f.value, a = from > 0 ? v.lastIndexOf("\n", from - 1) + 1 : 0, nl = v.indexOf("\n", to);
+  let longest = 0, k = firstSepFrom(f, a);
+  for (const line of v.slice(a, nl < 0 ? v.length : nl).split("\n")) {
+    longest = Math.max(longest, closingRun(f, line, k === 0 ? f.ws0 : f.seps[k - 1].ws));
+    k++;
+  }
+  if (!longest) return null;
+  const mark = f.fence[0], n = longest + 1, more = n - f.fence.length, closed = f.closeTail >= 0;
+  const closeEnd = closed ? f.end - f.closeTail : f.openAt, moreClose = closed ? Math.max(0, n - f.closeLen) : 0;
+  const between = f.text.slice(f.openAt, closeEnd);
+  const s = { start: f.openAt, end: closeEnd, insert: mark.repeat(more) + between + mark.repeat(moreClose) };
+  if (f.seps.length) {
+    moveGap(f, 0);
+    f.gd += more;
+  }
+  f.start0 += more;
+  f.line0 += more;
+  f.openAt += more;
+  f.end += more + moreClose;
+  f.closeLen = Math.max(f.closeLen, n);
+  f.fence = mark.repeat(n);
+  f.text = applySplice(f.text, s);
+  return s;
+}
+
 // For each line break of quote `b`: whether it is a soft break inside a paragraph the quote holds (`soft`), and the
 // column that paragraph's text starts at in the quote's inner lines (`need`), or -1 inside a nested quote.
 function quoteSoft(text, b) {
@@ -1068,7 +1110,82 @@ function quoteSoft(text, b) {
   return { soft, need };
 }
 
+// The fence run of the line whose content begins at `p`, past the spaces before it: { start, end }.
+function fenceRun(text, p) {
+  let start = p;
+  while (isSpace(text.charCodeAt(start))) start++;
+  const ch = text.charCodeAt(start);
+  let end = start;
+  while (text.charCodeAt(end) === ch) end++;
+  return { start, end };
+}
+
+// The parse leaves blank lines at the end of an indented code block out of it, but one carrying the block's whole
+// prefix, as Enter at the end of the code writes it, belongs to its field. -> { eol, next } of that line, or null.
+function blankCodeLine(text, p, prefix) {
+  const nl = text.indexOf("\n", p), eol = nl < 0 ? text.length : nl > p && text.charCodeAt(nl - 1) === CR ? nl - 1 : nl;
+  const line = text.slice(p, eol);
+  return line.startsWith(prefix) && BLANK.test(line) ? { eol, next: nl < 0 ? text.length : nl + 1 } : null;
+}
+
+// The field of a code block or a diagram's source: the code Reading draws, so its fences never show. `contPrefix` is
+// what a new line starts with: the container's prefix, then the fence's indent or an indented block's four spaces.
+// With no line between its fences the field is empty, and the first text typed writes a line there (`opensLine`).
+// `openAt` is where the opening fence's run ends; `closeTail` is how far the block's end lies past the closing fence's
+// run, -1 for a fence left open. A line's `ws` (`ws0` for the first) is the indent past its container's prefix that
+// the field leaves out: Reading's for a line of the file, `writtenIndent` for a line the field writes.
+function codeFieldOf(text, b, eol) {
+  const L = b.lines, s0 = b.start, fenced = Boolean(b.fence), fenceIndent = fenceIndentOf(b), lines = codeLines(b);
+  const writtenIndent = fenced ? fenceIndent : INDENTED_CODE.length;
+  const f = {
+    block: b, kind: b.kind, raw: true, code: true, text, eol, contPrefix: b.contPrefix + " ".repeat(writtenIndent),
+    value: "", seps: [], g: 0, gf: 0, gd: 0, start0: 0, line0: 0, ws0: writtenIndent, writtenIndent, end: b.end, containerCols: 0,
+    emptyMarker: false, tightSuffix: false, childOnMarker: false, opensLine: false,
+    fence: b.fence, fenceIndent: fenceIndent ?? 0, openAt: -1, closeLen: 0, closeTail: -1,
+  };
+  if (fenced) {
+    f.openAt = fenceRun(text, s0 + L[0].body).end;
+    if (b.closed) {
+      const close = fenceRun(text, s0 + L.at(-1).body);
+      f.closeLen = close.end - close.start;
+      f.closeTail = b.end - close.end;
+    }
+  }
+  if (!lines.length) {
+    f.start0 = f.line0 = s0 + L[0].eol;
+    f.opensLine = true;
+    return f;
+  }
+  const parts = [];
+  let at = 0, prevEol = -1;
+  const addLine = (lineStart, from, lineEol, ws) => {
+    if (prevEol < 0) {
+      f.start0 = from;
+      f.line0 = lineStart;
+      f.ws0 = ws;
+    } else {
+      f.seps.push({ at, start: prevEol, eol: prevEol, next: lineStart, end: from, shown: "\n", ws, need: -1 });
+      parts.push("\n");
+      at++;
+    }
+    parts.push(text.slice(from, lineEol));
+    at += lineEol - from;
+    prevEol = lineEol;
+  };
+  for (const l of lines) {
+    const body = s0 + l.body, lineEol = s0 + l.eol, ws = codeIndent(text.slice(body, lineEol), fenceIndent);
+    addLine(s0 + l.start, body + ws, lineEol, ws);
+  }
+  for (let p = b.end, line; !fenced && p < b.gapEnd && (line = blankCodeLine(text, p, f.contPrefix)); p = line.next) {
+    addLine(p, p + f.contPrefix.length, line.eol, writtenIndent);
+  }
+  f.value = parts.join("");
+  f.g = f.seps.length;
+  return f;
+}
+
 function fieldOf(text, b, eol) {
+  if (isCode(b)) return codeFieldOf(text, b, eol);
   const raw = !isText(b), L = b.lines, s0 = b.start, q = b.kind === "quote" ? quoteSoft(text, b) : null;
   const p0 = text.slice(s0 + L[0].start, s0 + L[0].body);
   const f = {
@@ -1171,6 +1288,16 @@ function interrupts(body, rel, lazy) {
   return /^(?:[-+*]|1[.)])[ \t]+\S/.test(s) || SETEXT.test(rule);
 }
 
+// Where code field `f`'s line `i0`, starting at field offset `lineStart`, begins in the document, when that line is
+// blank, lacks the block's whole prefix and is about to hold `typed`; else -1. A blank line inside a container often
+// has no prefix, and text typed on it as it is would leave the block. `start` is where the field line begins.
+function bareLineStart(f, i0, lineStart, start, typed) {
+  const lineEnd = i0 < f.seps.length ? sepAt(f, i0) : f.value.length;
+  if (lineEnd !== lineStart || !typed) return -1;
+  const at = i0 > 0 ? f.seps[i0 - 1].next : f.line0, have = f.text.slice(at, start);
+  return have !== f.contPrefix && BLANK.test(have) ? at : -1;
+}
+
 // The typing splice: field `f` now holds `next`. -> { start, end, insert, caret, fieldCaret } (caret: a document
 // offset, fieldCaret: the same place in the field), with `f` updated in place, or null when nothing changed. `caret`,
 // the field caret before the change when known, says where an insert or a backspace happened inside a run of equal
@@ -1222,6 +1349,23 @@ export function type(f, next, caret, linePrefix) {
     trail = " ";
     f.tightSuffix = false;
   }
+  const opensLine = f.opensLine && old === "";
+  if (opensLine) {
+    lead = eol + f.contPrefix;
+    f.opensLine = false;
+  }
+  const bare = f.code && !opensLine ? bareLineStart(f, i0, lineStart, start, pieces[0] + (pieces.length === 1 ? tail : "")) : -1;
+  if (bare >= 0) {
+    lead = f.contPrefix;
+    start = bare;
+    if (i0 > 0) {
+      f.seps[i0 - 1].end = bare + lead.length;
+      f.seps[i0 - 1].ws = f.writtenIndent;
+    } else {
+      f.start0 = bare + lead.length;
+      f.ws0 = f.writtenIndent;
+    }
+  }
   if (!f.raw) {
     const body = old.slice(lineStart, a) + pieces[0] + (pieces.length === 1 ? tail : "");
     if (pieces.length === 1 && BLANK.test(body) && (i0 > 0 || f.kind === "item" || f.kind === "quote")) {
@@ -1263,12 +1407,16 @@ export function type(f, next, caret, linePrefix) {
     }
   }
   if (markerSpace) f.start0 += 1;
+  if (opensLine) {
+    f.line0 = start + eol.length;
+    f.start0 = start + lead.length;
+  }
   const insert = lead + middle + trail;
   const docDelta = insert.length - (end - start), fieldDelta = ins.length - r;
   const base = start + lead.length;
   const newSeps = made.map(m => {
     const e = base + m.docAt;
-    return { at: m.fieldAt, start: e, eol: e, next: e + eol.length, end: e + eol.length + m.prefix.length, shown: "\n", ws: 0, need: -1 };
+    return { at: m.fieldAt, start: e, eol: e, next: e + eol.length, end: e + eol.length + m.prefix.length, shown: "\n", ws: f.code ? f.writtenIndent : 0, need: -1 };
   });
   if (dropAfter) moveGap(f, i1 + 1);
   const from = dropBefore ? i0 - 1 : i0, count = i1 + (dropAfter ? 1 : 0) - from;
