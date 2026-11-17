@@ -4,7 +4,7 @@
 // indices. No imports.
 
 const OPEN = "{==", CLOSE = "==}", NOTE_OPEN = "{>>", NOTE_CLOSE = "<<}";
-const BACKSLASH = 92, BACKTICK = 96, BRACE = 123, EQUALS = 61, LESS = 60;
+const BACKSLASH = 92, BACKTICK = 96, BRACE = 123, EQUALS = 61, LESS = 60, PIPE = 124, NEWLINE = 10, BLANK_CHAR = 32, TAB = 9;
 const MAY_HOLD = /\{(?:==|>>)/;
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
@@ -151,7 +151,9 @@ function replaced(text, fill) {
 }
 
 // The markdown Reading draws: marked text highlighted (its formatting still renders), the marks and the comment gone.
-export const showComments = (text, color) => replaced(text, c => highlight(c.kind === "point" ? POINT : text.slice(c.from, c.to), color));
+// `deep` ({ at, color }): the comment starting at `at` is highlighted in `color` instead.
+export const showComments = (text, color, deep = null) =>
+  replaced(text, c => highlight(c.kind === "point" ? POINT : text.slice(c.from, c.to), c.start === deep?.at ? deep.color : color));
 
 // A comment is one line, and `<<}` in it would end it early.
 export const oneLine = note => String(note ?? "").replace(LINE_BREAK, " ").replaceAll(NOTE_CLOSE, "<< }").trim();
@@ -226,19 +228,95 @@ export function addComment(value, range, note, when = null) {
   return { value: value.slice(0, sel.start) + written + value.slice(sel.end), start: caret, end: caret };
 }
 
+function noteSwapped(value, c, next) {
+  if (next === c.note) return null;
+  const caret = c.end + next.length - c.note.length;
+  return { value: value.slice(0, c.noteAt) + next + value.slice(c.noteAt + c.note.length), start: caret, end: caret };
+}
+
 // Comment `c` of `value` (commentsIn) with its text swapped for `note`, its time kept, the caret after it; null when
 // nothing changes.
 export function editComment(value, c, note) {
   const text = oneLine(note);
-  if (!text || c.note === null) return null;
-  const next = stamped(text, readNote(c.note).when);
-  if (next === c.note) return null;
-  const caret = c.end + next.length - c.note.length;
-  return { value: value.slice(0, c.noteAt) + next + value.slice(c.noteAt + c.note.length), start: caret, end: caret };
+  return !text || c.note === null ? null : noteSwapped(value, c, stamped(text, readNote(c.note).when));
 }
 
 // Comment `c` taken off `value`, its marked text kept and selected.
 export function resolveComment(value, c) {
   const kept = value.slice(c.from, c.to);
   return { value: value.slice(0, c.start) + kept + value.slice(c.end), start: c.start, end: c.start + kept.length };
+}
+
+// An unescaped `|` ends a table cell, wherever it is, and Herdr's parser (micromark's rules) reads `\\` as one escape
+// before it: a note's `|` is written `\|`, the backslashes right before it doubled.
+const PIPE_RUN = /(\\*)\|/g, ESCAPED_PIPE_RUN = /(\\*)\\\|/g;
+const cellEscaped = note => note.replace(PIPE_RUN, (_, run) => `${run}${run}\\|`);
+const cellUnescaped = note => note.replace(ESCAPED_PIPE_RUN, (_, run) => `${run.slice(0, run.length >> 1)}|`);
+const escapes = (text, i) => text.charCodeAt(i) === BACKSLASH && (text.charCodeAt(i + 1) === BACKSLASH || text.charCodeAt(i + 1) === PIPE);
+
+function startsWithPipe(text, i) {
+  while (text.charCodeAt(i) === BLANK_CHAR || text.charCodeAt(i) === TAB) i++;
+  return text.charCodeAt(i) === PIPE;
+}
+
+// The end of the cell that offset `from` is in: its next unescaped pipe, else its line's end.
+function cellEnd(text, from) {
+  for (let i = from; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    if (ch === NEWLINE || ch === PIPE) return i;
+    if (escapes(text, i)) i++;
+  }
+  return text.length;
+}
+
+function trimmedRange(text, start, end) {
+  while (start < end && SPACE.test(text[start])) start++;
+  while (end > start && SPACE.test(text[end - 1])) end--;
+  return { start, end };
+}
+
+// -> the comments of a table's text that have a note (commentsIn's `comment`), in text order, each with the cell its start
+// is in: `row` its drawn row (0 the header; the delimiter row is not drawn), `column` from 0, `cell` the cell's text
+// range without the spaces at its ends, and `note` unescaped, so readNote finds its time. One pass over the text, as
+// tableCells per comment costs milliseconds in a long table.
+export function cellComments(value) {
+  const out = [];
+  let i = 0, line = 0, lineStart = 0, pipes = 0, lastPipe = -1;
+  for (const c of commentsIn(value)) {
+    if (c.note === null) continue;
+    for (; i < c.start; i++) {
+      const ch = value.charCodeAt(i);
+      if (ch === NEWLINE) { line++; lineStart = i + 1; pipes = 0; lastPipe = -1; }
+      else if (escapes(value, i)) i++;
+      else if (ch === PIPE) { pipes++; lastPipe = i; }
+    }
+    const column = pipes - (startsWithPipe(value, lineStart) ? 1 : 0);
+    const cell = trimmedRange(value, lastPipe < 0 ? lineStart : lastPipe + 1, cellEnd(value, c.end));
+    out.push({ comment: c, row: Math.max(0, line - 1), column, cell, note: cellUnescaped(c.note) });
+  }
+  return out;
+}
+
+// -> { value, start, end }: table cell `cell` (trimmed, as tableCells gives it) commented with `note`, stamped with `when`
+// when given, the note's pipes escaped, the caret after the comment: all of the cell's text marked, or an empty cell
+// given a point comment with a space each side. Null for an empty note; { refused: "overlap" } for a cell that holds a
+// comment or a highlight already.
+export function addCellComment(value, cell, note, when = null) {
+  const text = oneLine(note), { start, end } = cell;
+  if (!text) return null;
+  if (commentsIn(value).some(c => c.start < end && c.end > start)) return { refused: "overlap" };
+  const comment = `${NOTE_OPEN}${cellEscaped(stamped(text, when))}${NOTE_CLOSE}`;
+  if (start === end) {
+    const before = start > 0 && !SPACE.test(value[start - 1]) ? " " : "", after = value.charCodeAt(start) === PIPE ? " " : "";
+    const caret = start + before.length + comment.length;
+    return { value: value.slice(0, start) + before + comment + after + value.slice(start), start: caret, end: caret };
+  }
+  const written = `${OPEN}${value.slice(start, end)}${CLOSE}${comment}`, caret = start + written.length;
+  return { value: value.slice(0, start) + written + value.slice(end), start: caret, end: caret };
+}
+
+// editComment for a comment in a table cell (cellComments' `comment`): its note read and written as a cell holds it.
+export function editCellComment(value, c, note) {
+  const text = oneLine(note);
+  return !text || c.note === null ? null : noteSwapped(value, c, cellEscaped(stamped(text, readNote(cellUnescaped(c.note)).when)));
 }

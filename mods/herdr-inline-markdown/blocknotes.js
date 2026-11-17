@@ -1,9 +1,10 @@
 // Comments on a code block, a diagram or a table: point comments, one per line, in a paragraph of their own right
 // after the block (its next sibling), which then reads as the block's comments and not as text. Which block owns which
-// paragraph, and the splices that add, edit and resolve those comments; and those of a comment on a picture of a
-// paragraph of pictures, written around the picture. No imports from herdr or gpui-*.
+// paragraph, and the splices that add, edit and resolve those comments; those of a comment on a picture of a paragraph
+// of pictures, written around the picture; and those that edit and resolve a comment in a table's cell. No imports
+// from herdr or gpui-*.
 import { field, fieldToDoc, insertAfter, picturesIn, remove, removeRange } from "./blocks.js";
-import { addComment, commentsIn, editComment, pointComment } from "./comments.js";
+import { addComment, cellComments, commentsIn, editCellComment, editComment, pointComment } from "./comments.js";
 
 const OWNER_KINDS = new Set(["code", "mermaid", "table"]);
 const BRACE = 123;
@@ -160,4 +161,27 @@ export function editPictureNote(doc, b, i, note) {
 export function resolvePictureNote(doc, b, i) {
   const p = picturesIn(doc, b)[i];
   return p && p.start !== p.from ? { start: p.start, end: p.end, insert: doc.text.slice(p.from, p.to), caret: p.start } : null;
+}
+
+function cellNoteOf(doc, b, index) {
+  const f = field(doc, b), found = cellComments(f.value)[index];
+  return found ? { f, c: found.comment } : null;
+}
+
+// Table b's cell comment `index` with its text swapped for `note`, its time kept, its pipes escaped; null when nothing
+// would change.
+export function editCellNote(doc, b, index, note) {
+  const found = cellNoteOf(doc, b, index), next = found && editCellComment(found.f.value, found.c, note);
+  if (!next) return null;
+  const { f, c } = found, start = fieldToDoc(f, c.noteAt), end = fieldToDoc(f, c.noteAt + c.note.length);
+  return { start, end, insert: next.value.slice(c.noteAt, c.noteAt + c.note.length + next.value.length - f.value.length), caret: start };
+}
+
+// Table b's cell comment `index` taken off: its marks and note go, the cell's text stays (a point comment alone leaves
+// the cell empty). Null when there is none.
+export function resolveCellNote(doc, b, index) {
+  const found = cellNoteOf(doc, b, index);
+  if (!found) return null;
+  const { f, c } = found, at = x => fieldToDoc(f, x), start = at(c.start);
+  return { start, end: at(c.end), insert: doc.text.slice(at(c.from), at(c.to)), caret: start };
 }

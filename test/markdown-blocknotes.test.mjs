@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parse, reparse, applySplice } from "../mods/herdr-inline-markdown/blocks.js";
 import {
-  addBlockNote, addPictureNote, blockUnit, counters, editBlockNote, editPictureNote, notesAfter, ownerOf, pairNotes, removeWithNotes,
-  resolveBlockNote, resolvePictureNote,
+  addBlockNote, addPictureNote, blockUnit, counters, editBlockNote, editCellNote, editPictureNote, notesAfter, ownerOf, pairNotes,
+  removeWithNotes, resolveBlockNote, resolveCellNote, resolvePictureNote,
 } from "../mods/herdr-inline-markdown/blocknotes.js";
 import { picturesOf } from "../mods/herdr-inline-markdown/lib.js";
 
@@ -141,4 +141,17 @@ test("editing a picture's comment swaps its text and keeps its time; resolving i
   assert.equal(resolvePictureNote(d, b, 0), null, "a picture with no comment");
   const lit = "{==![a](a.png)==}\n", l = picturesAt(lit);
   assert.equal(run(lit, resolvePictureNote(l.d, l.b, 0)), "![a](a.png)\n", "a highlight alone goes too");
+});
+
+test("a cell's comment edited keeps its time and escapes its pipes; resolved, it leaves the cell's text, a point comment alone an empty cell; a table in a list item keeps its indentation", () => {
+  const top = "| a | {==b==}{>>2026-11-17 09:00 \\| why?<<} |\n|---|---|\n| {>>2026-11-17 09:05 \\| here<<} | c |\n";
+  for (const text of [top, `- item\n\n${top.replace(/^/gm, "  ").trimEnd()}\n\nEnd\n`, top.replaceAll("\n", "\r\n")]) {
+    const d = parse(text), t = ownerAt(d, "table"), why = JSON.stringify(text);
+    assert.equal(run(text, editCellNote(d, t, 0, "why | not")), text.replace("\\| why?", "\\| why \\| not"), why);
+    assert.equal(run(text, editCellNote(d, t, 1, "there")), text.replace("\\| here", "\\| there"), why);
+    assert.deepEqual([editCellNote(d, t, 0, "why?"), editCellNote(d, t, 0, " "), editCellNote(d, t, 2, "x")], [null, null, null], `${why}: unchanged, emptied, none there`);
+    assert.equal(run(text, resolveCellNote(d, t, 0)), text.replace("{==b==}{>>2026-11-17 09:00 \\| why?<<}", "b"), why);
+    assert.equal(run(text, resolveCellNote(d, t, 1)), text.replace("{>>2026-11-17 09:05 \\| here<<}", ""), why);
+    assert.equal(resolveCellNote(d, t, 2), null, why);
+  }
 });

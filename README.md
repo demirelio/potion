@@ -391,6 +391,28 @@ before the editor stored times are like that). Only the comment's text is ever s
   the paragraph where it is, as ordinary text; a code block given the Mermaid language keeps its comments. In a narrow
   pane the block shows their count at its top (left of a code block's language chip, its Comment button left of the
   count), and its card's Edit opens the comment box over the block; the frame goes when the box closes.
+- **In table cells.** A comment on one cell is written in the cell, around its text, and every `|` in the comment,
+  the time's separator too, is written `\|`, since a bare `|` would end the cell (a `\` right before a `|` is doubled):
+
+  ```
+  | Name  | Size                                                   |
+  |-------|--------------------------------------------------------|
+  | apple | {==12==}{>>2026-11-17 09:00 \| too big for one row?<<} |
+  | pear  | {>>2026-11-17 09:05 \| fill this in<<}                 |
+  ```
+
+  A point comment alone in a cell is that empty cell's comment. Reading highlights the commented text in the cell (a
+  point comment as a highlighted 💬) and leaves the comment out; the Markdown view, and the table's source while you
+  edit it, show it as written. Each comment's card sits beside the row holding it, after the table's own cards; while
+  you edit the table's source, beside the line holding it. The rows are taken to be one line each, so under a cell that
+  wraps the cards of later rows sit a little high. A click on the card makes it active: the card stands out and the
+  cell's commented text turns the deeper ochre (no frame on the table). Edit and Resolve work as on any card: Edit keeps
+  the time and writes the `|` escaped again, Resolve takes the marks and the comment off and leaves the cell's text.
+  Each is one undo step, and undo opens nothing. In a narrow pane the table's count counts its cells' comments with its
+  own, and its card lists its own first, then each cell's under that cell's text as Reading shows it. Any CriticMarkup
+  in a table reads this way: several comments in one cell, or one on part of a cell's text. Adding a comment to a cell
+  from the page comes with the table cells; until then the table's Comment button and Cmd+Alt+M comment the whole
+  table, and a cell's comment is written by hand, or by an agent, in the form above.
 - **On pictures.** A picture's menu (see [Pictures](#pictures)) has a Comment button first, and Cmd+Alt+M with a
   picture picked does the same: a new card opens beside the picture, level with its top, and the picture gets a 2 px
   frame in the highlight colour while you write, its menu staying. Enter writes the comment with the time; Escape or

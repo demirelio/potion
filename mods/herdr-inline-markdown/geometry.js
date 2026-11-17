@@ -126,6 +126,14 @@ function tablePress(t, x, y) {
   return cells.length ? cells[Math.min(c, cells.length - 1)].start : drawn[r].start;
 }
 
+// How Herdr's TextView draws a table (gpui-kit text/node.rs render_table, render_table_rows): a 1 px frame round its
+// rows; each row its line of text with `py` px above and below, and a 1 px rule under it but the last.
+export const TABLE_VIEW = { frame: 1, py: 7, rule: 1 };
+
+// The top of drawn row `row` (0 the header) of a table whose rows hold one line `lineH` px tall each, from the top of
+// what holds it, `inset` px above its frame. A cell that wraps makes its row taller and puts the rows after it lower.
+export const tableRowTop = (row, lineH, inset = 0) => inset + TABLE_VIEW.frame + row * (2 * TABLE_VIEW.py + lineH + TABLE_VIEW.rule);
+
 // -> { start, end } of the neighbouring cell's trimmed text, or null past the first or last cell.
 export function nextCell(value, caret, dir) {
   const all = tableCells(value).filter(r => !r.delimiter).flatMap(r => r.cells);

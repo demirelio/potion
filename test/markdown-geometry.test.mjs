@@ -7,7 +7,7 @@ import {
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
   barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
-  CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace,
+  CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, TABLE_VIEW, tableRowTop,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
@@ -77,6 +77,14 @@ test("tables give the cell start, the delimiter row skipped", () => {
   assert.equal(pressToField(t, 10, 35, cal), value.indexOf("a    |"));
   assert.equal(pressToField(t, 350, 80, cal), value.indexOf("6"));
   assert.deepEqual(tableCells("a | b\n--|--\nx | y | z\n | x").map(r => r.cells.length), [2, 2, 3, 1]);
+});
+
+test("a table's drawn rows of one line each: the frame's 1 px, then per row 7 px above and below its line and a 1 px rule", () => {
+  assert.deepEqual(TABLE_VIEW, { frame: 1, py: 7, rule: 1 });
+  assert.equal(tableRowTop(0, 21), 1, "the header under the frame");
+  assert.equal(tableRowTop(1, 21), 1 + 7 + 21 + 7 + 1);
+  assert.equal(tableRowTop(3, 21, 13), 13 + 1 + 3 * 36, "from the top of what holds it, `inset` above the frame");
+  assert.equal(tableRowTop(2, 19.5, 13), 13 + 1 + 2 * 34.5);
 });
 
 test("Tab in a table selects the next cell's trimmed text; past the last cell, nothing", () => {

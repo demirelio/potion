@@ -5,7 +5,7 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureName, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -19,8 +19,8 @@ import { editOf, formatAt, mend } from "./mend.js";
 import { MARK_BITS } from "./restyle.js";
 import { copyOf, holdsBlocks, joinRuns, pasteInto, pasteParagraphs, splitRuns } from "./seams.js";
 import { addLink, clipboardAddress, linkAddress, pictureCut, pictureForm, setAddress, setPicture, unlink } from "./links.js";
-import { addComment, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, timeLabel } from "./comments.js";
-import { addBlockNote, addPictureNote, blockUnit, editBlockNote, editPictureNote, notesAfter, ownerOf, ownsNotes, pairNotes, removeWithNotes, resolveBlockNote, resolvePictureNote } from "./blocknotes.js";
+import { addComment, cellComments, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, showComments, timeLabel } from "./comments.js";
+import { addBlockNote, addPictureNote, blockUnit, editBlockNote, editCellNote, editPictureNote, notesAfter, ownerOf, ownsNotes, pairNotes, removeWithNotes, resolveBlockNote, resolveCellNote, resolvePictureNote } from "./blocknotes.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
 import { Block, CALIBRATED, Column, FRAMED, FRONT_BOX, BOX, INDENT, MARKER_W, PICTURE_FRAME, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, parsedInline, visibleMap } from "./inline.js";
@@ -118,6 +118,10 @@ const NOTE_CLIP = 80;
 const NOTE_ROWS = 12;
 const BLOCK_NOTES_MEMO = "block-notes", PICTURE_NOTES_MEMO = "picture-notes";
 const COUNT_CHIP_GAP = 4;
+// Where Reading's TextView draws a table: under its box's 1 px border and padding, each row a line of the cell style.
+const TABLE_INSET = 1 + BOX.py, CELL_LINE_H = STYLES.cell.size * STYLES.cell.lh;
+const holdsComments = b => isText(b) || b.kind === "table";
+const shownText = markdown => parseInline(markdown).chars.map(c => c.text).join("").trim();
 const noted = text => commentsIn(text).filter(c => c.note !== null);
 // The comments of a paragraph of pictures (picturesOf's `list`) in the order they are written, each with the index of
 // its picture and what names that picture.
@@ -439,8 +443,8 @@ function mappedThrough(edits, p) {
 
 // What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, its text blocks drawn
 // by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a commented
-// picture picked with its float, the comments of the quote, the js block and the picture on their cards in the margin
-// while a new comment's card is being written, and the js block's language menu open.
+// picture picked with its float, the comments of the quote, the js block, a table cell and the picture on their cards in
+// the margin while a new comment's card is being written, and the js block's language menu open.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
@@ -453,7 +457,7 @@ const FIXTURE = [
   "{>>2026-11-17 09:00 | why 42?<<}", "",
   "```mermaid", "graph TD", "A-->B", "```", "",
   "    indented code", "",
-  "| Column | Other |", "|--------|-------|", "| a      | b     |", "",
+  "| Column | Other |", "|--------|-------|", "| a      | {==b==}{>>2026-11-17 09:00 \\| on a cell<<} |", "",
   "<div>Some html</div>", "",
   "<!-- a comment -->", "",
   "***", "",
@@ -566,11 +570,13 @@ export class Editor {
     // measured height of the active card.
     this.card = null; this.note = null; this.highlight = highlightColor(theme()); this.deep = deepHighlightColor(theme()); this.notesFor = null;
     this.margin = null; this.cards = null; this.cardMemo = new Map(); this.raised = null;
-    // A code block's, diagram's or table's comments, and those on the pictures of a paragraph of pictures: `pairing`
-    // which block owns which comments paragraph in `doc` (blocknotes.js), `blockNote` the active one of them ({ key: the
-    // block's, index, editing }), `blockAdd` the one being written for one activation ({ key: the block's, act, caret:
-    // the block's own when it is the edited one, picture: the index of the picture it goes on, else -1 }).
-    this.pairing = null; this.blockNote = null; this.blockAdd = null;
+    // A code block's, diagram's or table's comments, those on the pictures of a paragraph of pictures and those in a
+    // table's cells: `pairing` which block owns which comments paragraph in `doc` (blocknotes.js), `cellMemo` each
+    // table's cell comments as its cards show them, `blockNote` the active one of them ({ key: the block's, index,
+    // editing, cell: whether it is in a cell }), `blockAdd` the one being written for one activation ({ key: the
+    // block's, act, caret: the block's own when it is the edited one, picture: the index of the picture it goes on or
+    // -1 }).
+    this.pairing = null; this.cellMemo = new Map(); this.blockNote = null; this.blockAdd = null;
     this.noteField = TextareaState.new({ placeholder: "Add a comment…" });
     this.noteField.set_auto_grow(1, NOTE_ROWS);
     this.noteField.on("submit", (_e, cx) => this.submitNote(cx));
@@ -1425,7 +1431,7 @@ export class Editor {
   forget(key) {
     const e = this.entities.get(key);
     if (e) { try { e.release(); } catch { /* already gone */ } }
-    for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames, this.cardMemo]) m.delete(key);
+    for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames, this.cardMemo, this.cellMemo]) m.delete(key);
     this.zoomed.delete(key);
     this.releaseField(this.disown(key));
     if (this.hoverFrame === key) this.hoverFrame = null;
@@ -1743,7 +1749,7 @@ export class Editor {
 
   dataFor(blocks, i, width) {
     const b = blocks[i], look = lookOf(b), cal = this.calOf(look.style), marker = markerOf(b);
-    const text = look.look === "text" ? displayText(b, this.highlight) : look.look === "boxed" ? b.render : b.content;
+    const text = look.look === "text" ? displayText(b, this.highlight) : b.kind === "table" ? this.tableText(b) : look.look === "boxed" ? b.render : b.content;
     const space = spaceBefore(blocks, i, this.doc.blocks);
     return {
       key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color,
@@ -1762,14 +1768,14 @@ export class Editor {
 
   // A text block shows its comments' count where notesPlace puts it, unless they show as cards in the margin; the edited
   // one counts what its field holds. A code block, diagram or table shows its comments paragraph's count level with its
-  // top, left of a code block's language chip where the chip would be under it; a paragraph of pictures its pictures'
-  // comments' count level with its top.
+  // top (a table's with the comments in its cells), left of a code block's language chip where the chip would be under
+  // it; a paragraph of pictures its pictures' comments' count level with its top.
   notesData(b, look, space, cal, width) {
-    const owned = this.shownNotes(b.key), pictures = look.look === "picture";
-    const notes = this.margin ? 0 : owned ? owned.points.length : pictures ? this.pictureNotes(b).length
+    const owned = this.shownNotes(b.key), pictures = look.look === "picture", table = b.kind === "table", own = owned ? owned.points.length : 0;
+    const notes = this.margin ? 0 : table ? own + this.cellNotesOf(b).cards.length : owned ? own : pictures ? this.pictureNotes(b).length
       : look.look === "text" ? noted(b.key === this.activeKey ? this.seen : b.content).length : 0;
     if (!notes) return { notes: 0, notesX: 0, notesY: 0 };
-    const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: owned || pictures ? NOTES.h : cal.row });
+    const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: owned || table || pictures ? NOTES.h : cal.row });
     const chip = owned ? this.chipData(b) : NO_STRIP, beside = chip.chipW ? this.chipIn({ space, chipW: chip.chipW }) : null;
     if (beside && at.x + NOTES.w > beside.x) return { notes, notesX: beside.x - COUNT_CHIP_GAP - NOTES.w, notesY: beside.y + (CHIP.h - NOTES.h) / 2 };
     return { notes, notesX: at.x, notesY: at.y };
@@ -1811,11 +1817,25 @@ export class Editor {
     return count && overlap(box, count) ? { ...box, x: count.x - B.gap - B.size, y: count.y + (NOTES.h - B.size) / 2 } : box;
   }
 
-  // A paragraph of pictures frames the pictures themselves instead (pictureFrames).
+  // A paragraph of pictures frames the pictures themselves instead (pictureFrames); a table's active cell comment deepens
+  // its cell's text (tableText).
   framedAs(b) {
     if (b.image) return "";
-    if (this.blockNote?.key === b.key) return FRAMED.active;
+    if (this.blockNote?.key === b.key && !this.blockNote.cell) return FRAMED.active;
     return this.blockAdd?.key === b.key && this.blockAddOpen() ? FRAMED.adding : "";
+  }
+
+  // What Reading's TextView draws of table b: the comments in its cells highlighted as in text, the active one's in the
+  // deeper colour, their marks and notes left out; kept with its cell comments while it draws the same. The table being
+  // edited shows its source in its field instead.
+  tableText(b) {
+    if (b.key === this.activeKey) return b.render;
+    const memo = this.cellNotesOf(b), n = this.blockNote, kept = memo.look;
+    const at = n?.cell && n.key === b.key ? memo.cards[n.index]?.c.start ?? -1 : -1;
+    if (kept?.render === b.render && kept.at === at && kept.highlight === this.highlight && kept.deep === this.deep) return kept.text;
+    const text = showComments(b.content, this.highlight, at < 0 ? null : { at, color: this.deep }) + b.render.slice(b.content.length);
+    memo.look = { render: b.render, at, highlight: this.highlight, deep: this.deep, text };
+    return text;
   }
 
   // `answer` says how one picture of the paragraph stands, as { state, path, width, height, error }: Images.get's answer.
@@ -4789,18 +4809,18 @@ export class Editor {
   blockNoteBox(adding) {
     if (adding) return this.blockBoxPlace(adding.key, adding.picture);
     const n = this.blockNoteEditing() ? this.blockNote : null;
-    return n && this.blockBoxPlace(n.key, this.notePicture(n.key, n.index));
+    return n && this.blockBoxPlace(n.key, this.notePicture(n.key, n.index), n.cell ? n.index : -1);
   }
 
   // The box writing or editing block `key`'s comment where no margin shows its card: over the block's top edge, under
-  // it when there is no room above, at the block's left; over picture `picture` of a paragraph of pictures as its
-  // float would be. Null while that edge is out of the pane.
-  blockBoxPlace(key, picture = -1) {
+  // it when there is no room above, at the block's left; over the row of a table's cell comment `cell` the same way;
+  // over picture `picture` of a paragraph of pictures as its float would be. Null while that edge is out of the pane.
+  blockBoxPlace(key, picture = -1, cell = -1) {
     if (picture >= 0) return this.placeOverPicture(key, picture, NOTE_BOX);
-    const i = this.at.get(key), d = this.data.get(key);
+    const i = this.at.get(key), d = this.data.get(key), card = cell >= 0 ? this.blockNotesOf(key, true)[cell] : null;
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
     const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
-    const top = COLUMN.padTop + this.sums[i] + d.space - this.offset;
+    const top = COLUMN.padTop + (card ? this.cellTop(i, d, card) : this.sums[i] + d.space) - this.offset;
     return popoverPlace({ firstTop: top, lastTop: top, rowH: 0, size: NOTE_BOX, viewW, viewH, x: columnLeft(viewW, this.margin) + d.depth * INDENT });
   }
 
@@ -5616,26 +5636,37 @@ export class Editor {
   }
 
   // The comments of the card's block as its field shows them (a soft line break a space), a code block's, diagram's or
-  // table's as its comments paragraph's field does, a paragraph of pictures' as pictureNotes gives them (both `block`);
-  // null when it has none.
+  // table's as its comments paragraph's field does, then a table's cells' (`cell`, each with its `index` among them and
+  // its cell's text as Reading shows it), a paragraph of pictures' as pictureNotes gives them (all `block`); null when it
+  // has none.
   cardComments() {
     const key = this.card?.key, b = key ? this.blockByKey(key) : null, owned = b ? this.shownNotes(key) : null;
     if (b?.image) {
       const list = this.pictureNotes(b);
       return list.length ? { b, f: null, list, block: true } : null;
     }
-    if (!b || (!owned && !isText(b))) return null;
-    const f = fieldOf(this.doc, owned ? owned.para : b), list = noted(f.value);
-    return list.length ? { b, f, list, block: Boolean(owned) } : null;
+    if (!b || (!owned && !holdsComments(b))) return null;
+    const f = owned ? fieldOf(this.doc, owned.para) : isText(b) ? fieldOf(this.doc, b) : null, list = f ? noted(f.value) : [];
+    if (b.kind === "table") {
+      const memo = this.cellNotesOf(b);
+      for (const card of memo.cards) list.push({ kind: card.c.kind, note: card.note, name: this.cellName(memo, card), cell: true, index: card.index });
+    }
+    return list.length ? { b, f, list, block: !isText(b) } : null;
+  }
+
+  cellName(memo, card) {
+    card.name ??= shownText(memo.value.slice(card.cell.start, card.cell.end));
+    return card.name;
   }
 
   // Edit on the card: the block opens with the comment's marked text selected (a point comment's place), and the box
-  // holds the comment. A block's comment is edited in the box over the block, which opens nothing.
+  // holds the comment. A block's comment, a table cell's among them, is edited in the box over the block, which opens
+  // nothing.
   editNote(i, cx) {
     const found = this.cardComments(), c = found?.list[i];
     if (!c || !this.editable()) return;
     if (found.block) {
-      this.pickBlockNote(found.b.key, i, cx);
+      this.pickBlockNote(found.b.key, c.cell ? c.index : i, cx, Boolean(c.cell));
       return this.startBlockEdit(cx);
     }
     const range = { start: c.from, end: c.to };
@@ -5649,7 +5680,7 @@ export class Editor {
     this.commit(cx);
     const found = this.cardComments(), c = found?.list[i];
     if (!c) return;
-    if (found.block) return this.resolveBlockNoteAt(found.b.key, i, cx);
+    if (found.block) return this.resolveBlockNoteAt(found.b.key, c.cell ? c.index : i, cx, Boolean(c.cell));
     const next = resolveComment(found.f.value, c);
     this.change(docSplice(found.f, marksEdits(found.f.value, next.value)), cx);
   }
@@ -5679,7 +5710,8 @@ export class Editor {
       .children(found.list.map((c, i) => this.cardEntry(c.name ?? (c.kind === "comment" ? found.f.value.slice(c.from, c.to) : ""), c, i, writable, new Date(), t)));
   }
 
-  // `marked`: what the comment is on, as its first line: the marked text, a picture's name, or nothing for a point.
+  // `marked`: what the comment is on, as its first line: the marked text, a picture's name, a table cell's whole text,
+  // or nothing for a point outside a table.
   cardEntry(marked, c, i, writable, now, t) {
     const button = (id, label, run) => div().id(id).h(24).px(8).flex().items_center().rounded(6).cursor_pointer()
       .bg(t.hover).text_color(t.foreground)
@@ -5701,23 +5733,24 @@ export class Editor {
     if (this.notesFor?.doc !== this.doc) {
       const byKey = new Map();
       for (const b of this.doc.blocks) {
-        const n = isText(b) ? noted(b.content).length : 0;
+        const n = holdsComments(b) ? noted(b.content).length : 0;
         if (n) byKey.set(b.key, n);
       }
       this.notesFor = { doc: this.doc, byKey, total: [...byKey.values()].reduce((sum, n) => sum + n, 0) };
     }
     const { byKey, total } = this.notesFor, b = this.activeKey && !this.pending ? this.blockByKey(this.activeKey) : null;
-    return b && isText(b) ? total - (byKey.get(b.key) ?? 0) + noted(this.seen).length : total;
+    return b && holdsComments(b) ? total - (byKey.get(b.key) ?? 0) + noted(this.seen).length : total;
   }
 
   // The comment that is active in the edited block: picked by a press on its text or its card, or being edited; a
   // comment being written is `adding`. Else a code block's, diagram's or table's comment being written, or its active
-  // comment (`block`, its `index`), a picture's among them. -> { key, start, editing, adding, id } or null.
+  // comment (`block`, its `index`), a picture's and a table cell's (`cell`) among them. -> { key, start, editing, adding,
+  // id } or null.
   activeComment() {
     const a = this.blockAddNow();
     if (a) return { key: a.key, index: -1, block: true, editing: true, adding: true, id: `add:${a.key}:${a.picture}` };
     const n = this.blockNoteNow();
-    if (n) return { key: n.key, index: n.index, block: true, editing: n.editing, adding: false, id: `block:${n.key}:${n.index}:${n.editing}` };
+    if (n) return { key: n.key, index: n.index, block: true, cell: Boolean(n.cell), editing: n.editing, adding: false, id: `block:${n.key}:${n.cell ? "cell:" : ""}${n.index}:${n.editing}` };
     if (!this.activeKey || this.pending) return null;
     if (this.noteOpen()) {
       const n = this.note;
@@ -5731,9 +5764,9 @@ export class Editor {
 
   // The margin's cards in document order: one per comment of the window's text blocks (the edited one's as its field
   // holds them), each level with the row its text starts on, one per comment of its code blocks, diagrams and tables,
-  // level with the block's top, one per commented picture, level with the picture's top, and one for a comment being
-  // written; each pushed down off the one before. Worked out again only when something they are placed by has changed,
-  // not on every draw.
+  // level with the block's top, then one per comment in a table's cells, level with its row, one per commented picture,
+  // level with the picture's top, and one for a comment being written; each pushed down off the one before. Worked out
+  // again only when something they are placed by has changed, not on every draw.
   cardList() {
     const m = this.margin;
     if (!m || !this.doc || this.sums.length !== this.blocks.length + 1) return [];
@@ -5754,7 +5787,9 @@ export class Editor {
 
   blockCards(key, focus, list) {
     const i = this.at.get(key), b = this.blocks[i], active = key === this.activeKey, owned = b && this.shownNotes(key);
-    if (owned) return this.ownerCards(i, b, owned.para, focus, list);
+    if (owned) this.ownerCards(i, b, owned.para, focus, list);
+    if (b?.kind === "table") return this.cellCards(i, b, focus, list, owned ? owned.points.length + 1 : 1);
+    if (owned) return;
     if (b?.image) return this.pictureCards(i, b, focus, list);
     if (!b || !isText(b) || b === this.pending?.block || (!active && !this.notesFor.byKey.has(key))) return;
     const memo = active ? { value: this.seen, cards: cardsOf(this.seen) } : this.cardMemoOf(b);
@@ -5779,6 +5814,35 @@ export class Editor {
     return memo;
   }
 
+  // `after`: the table's own cards and the one written on it come first.
+  cellCards(i, b, focus, list, after) {
+    if (b.key !== this.activeKey && !this.notesFor.byKey.has(b.key)) return;
+    const d = this.data.get(b.key);
+    this.blockNoteCards(i, b, this.cellNotesOf(b), focus, list, card => ({ at: after + card.index, want: this.cellTop(i, d, card) }), true);
+  }
+
+  // The page y that cell comment `card` of table data d (page index i) is level with: its row's top as Reading's TextView
+  // draws a table of one-line rows, or while the table's source is edited, the top of the line holding the comment.
+  cellTop(i, d, card) {
+    if (d.key === this.activeKey) return this.caretTop(i, card.c.start);
+    return this.sums[i] + d.space + tableRowTop(card.row, CELL_LINE_H, TABLE_INSET);
+  }
+
+  // Table b's cell comments as its cards show them (comments.js cellComments: each comment with its cell, row and note;
+  // its time, text and card look), read from the edited table's field, else from its content, and kept while that
+  // stays the same.
+  cellNotesOf(b) {
+    const value = b.key === this.activeKey ? this.seen : b.content, kept = this.cellMemo.get(b.key);
+    if (kept?.value === value) return kept;
+    const cards = cellComments(value).map((x, index) => {
+      const { when, text } = readNote(x.note);
+      return { c: x.comment, index, row: x.row, cell: x.cell, note: x.note, when, text, look: cardLook({ text, header: true }) };
+    });
+    const memo = { value, cards, look: null };
+    this.cellMemo.set(b.key, memo);
+    return memo;
+  }
+
   // Each level with its picture's top, in the pictures' order.
   pictureCards(i, b, focus, list) {
     const d = this.data.get(b.key);
@@ -5797,12 +5861,13 @@ export class Editor {
     return memo;
   }
 
-  // One `block` card a comment of block b (page index i), placed by `placeOf(card)` -> { at, want }.
-  blockNoteCards(i, b, memo, focus, list, placeOf) {
+  // One `block` card a comment of block b (page index i), placed by `placeOf(card)` -> { at, want }; `cell` for the
+  // comments in a table's cells.
+  blockNoteCards(i, b, memo, focus, list, placeOf, cell = false) {
     for (const card of memo.cards) {
-      const { c, index, when, text } = card, mine = Boolean(focus?.block) && focus.key === b.key && focus.index === index, id = `md-card-${b.key}-${index}`;
-      const look = mine ? cardLook({ text, header: true, full: true }) : card.look;
-      list.push({ id, key: b.key, index, c, when, text: look.text, i, ...placeOf(card), h: this.raisedH(id, look.h), active: mine, editing: mine && focus.editing, block: true });
+      const { c, index, when, text } = card, mine = Boolean(focus?.block) && focus.key === b.key && Boolean(focus.cell) === cell && focus.index === index;
+      const id = cell ? `md-card-${b.key}-cell-${index}` : `md-card-${b.key}-${index}`, look = mine ? cardLook({ text, header: true, full: true }) : card.look;
+      list.push({ id, key: b.key, index, c, when, text: look.text, i, ...placeOf(card), h: this.raisedH(id, look.h), active: mine, editing: mine && focus.editing, block: true, cell });
     }
   }
 
@@ -5887,7 +5952,7 @@ export class Editor {
       .child(svg(ICON("message-square")).size(13).flex_none().text_color(t.dim))
       .child(div().id(`${e.id}-time`).flex_1().min_w(0).truncate().text_size(CARD_TIME_SIZE).text_color(t.dim).child(timeLabel(e.when, now) || "Comment"))
       .when(buttons && !e.editing, el => el.child(button("edit", "pencil", "Edit", cx => this.cardDown(e, true, cx))))
-      .when(buttons, el => el.child(button("resolve", "check", "Resolve", cx => (e.block ? this.resolveBlockNoteAt(e.key, e.index, cx) : this.resolveCard(e, cx))))));
+      .when(buttons, el => el.child(button("resolve", "check", "Resolve", cx => (e.block ? this.resolveBlockNoteAt(e.key, e.index, cx, e.cell) : this.resolveCard(e, cx))))));
     if (e.editing) {
       out.push(div().id(`${e.id}-input`).w_full().key_context(NOTE)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -5914,7 +5979,7 @@ export class Editor {
   cardDown(e, onText, cx) {
     if (!this.editable() || !e.c || this.activeComment()?.editing) return;
     if (e.block) {
-      if (!e.active || this.picked) this.pickBlockNote(e.key, e.index, cx);
+      if (!e.active || this.picked) this.pickBlockNote(e.key, e.index, cx, e.cell);
       if (onText) this.startBlockEdit(cx);
       return;
     }
@@ -5970,27 +6035,34 @@ export class Editor {
 
   blockNoteNow() {
     const n = this.blockNote;
-    return n && this.doc && n.index < this.blockNotesOf(n.key).length ? n : null;
+    return n && this.doc && n.index < this.blockNotesOf(n.key, n.cell).length ? n : null;
   }
 
   // Block `key`'s comments as its cards show them: a code block's, diagram's or table's from its comments paragraph, a
-  // paragraph of pictures' from around its pictures; [] for none.
-  blockNotesOf(key) {
+  // paragraph of pictures' from around its pictures, a table's `cell` comments from its cells; [] for none.
+  blockNotesOf(key, cell = false) {
+    if (cell) {
+      const b = this.blockByKey(key);
+      return b?.kind === "table" ? this.cellNotesOf(b).cards : [];
+    }
     const owned = this.notesNow().owners.get(key);
     if (owned) return owned.points;
     const b = this.blockByKey(key);
     return b?.image ? this.pictureNotes(b) : [];
   }
 
-  // The splices that edit and resolve block b's comment `index`, and what their history entry says: one of a block
-  // opens nothing when undone or redone, one of a picture picks the picture (its start, the splice's caret).
-  noteEdit(b, index, note) {
+  // The splices that edit and resolve block b's comment `index` (among its `cell` comments, for those of a table's
+  // cells), and what their history entry says: one of a block opens nothing when undone or redone, one of a picture
+  // picks the picture (its start, the splice's caret).
+  noteEdit(b, index, note, cell = false) {
+    if (cell) return editCellNote(this.doc, b, index, note);
     if (!b.image) return editBlockNote(this.doc, b, index, note);
     const at = this.notePicture(b.key, index);
     return at < 0 ? null : editPictureNote(this.doc, b, at, note);
   }
 
-  noteResolve(b, index) {
+  noteResolve(b, index, cell = false) {
+    if (cell) return resolveCellNote(this.doc, b, index);
     if (!b.image) return resolveBlockNote(this.doc, b, index);
     const at = this.notePicture(b.key, index);
     return at < 0 ? null : resolvePictureNote(this.doc, b, at);
@@ -6016,22 +6088,23 @@ export class Editor {
   }
 
   // A press on a block's or a picture's card: its comment active and the block, or the picture, framed, opening nothing;
-  // a picked picture is let go. The editing of another block ends and the page has the keyboard; the block itself, when
-  // edited, stays so with the keyboard in its field.
-  pickBlockNote(key, index, cx) {
+  // a picked picture is let go. A table cell's comment (`cell`) deepens its cell's text instead of a frame. The editing
+  // of another block ends and the page has the keyboard; the block itself, when edited, stays so with the keyboard in
+  // its field.
+  pickBlockNote(key, index, cx, cell = false) {
     this.closeCard(cx);
     this.setSel(null, cx);
     this.unpick(cx);
     this.letLanguagesGo(cx);
     if (this.activeKey && this.activeKey !== key) this.deactivate(cx);
-    this.setBlockNote({ key, index, editing: false }, cx);
+    this.setBlockNote({ key, index, editing: false, cell }, cx);
     this.giveBackKeyboard();
   }
 
   startBlockEdit(cx) {
     const n = this.blockNoteNow();
     if (!n || !this.editable()) return;
-    const text = noteText(this.blockNotesOf(n.key)[n.index].note);
+    const text = noteText(this.blockNotesOf(n.key, n.cell)[n.index].note);
     this.setBlockNote({ ...n, editing: true }, cx);
     this.guard(() => {
       this.noteField.set_value(text);
@@ -6044,9 +6117,9 @@ export class Editor {
   saveBlockNote(cx) {
     const n = this.blockNoteNow(), text = this.noteField.value();
     if (!n?.editing) return;
-    if (!oneLine(text)) return this.resolveBlockNoteAt(n.key, n.index, cx);
+    if (!oneLine(text)) return this.resolveBlockNoteAt(n.key, n.index, cx, n.cell);
     this.commit(cx);
-    const b = this.blockByKey(n.key), s = b && this.noteEdit(b, n.index, text);
+    const b = this.blockByKey(n.key), s = b && this.noteEdit(b, n.index, text, n.cell);
     this.setBlockNote(this.editedBlockNote(n), cx);
     if (s) this.change(s, cx, this.noteMeta(b, s));
     this.giveBackKeyboard();
@@ -6180,10 +6253,10 @@ export class Editor {
     this.revealCaret(cx);
   }
 
-  resolveBlockNoteAt(key, index, cx) {
+  resolveBlockNoteAt(key, index, cx, cell = false) {
     if (!this.editable()) return;
     this.commit(cx);
-    const b = this.blockByKey(key), s = b && this.noteResolve(b, index);
+    const b = this.blockByKey(key), s = b && this.noteResolve(b, index, cell);
     this.endBlockNote(cx);
     if (s) this.change(s, cx, this.noteMeta(b, s));
     this.checkMargin(cx);

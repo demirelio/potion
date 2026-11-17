@@ -2977,6 +2977,9 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.equal(all(written, n => n.kind === "textarea")[0].state, view.noteField, "the card of the comment being written");
   const jsCard = must(t, `md-card-${code[0].key}-0`);
   assert.ok(find(jsCard, `md-card-${code[0].key}-0-time`) && textOf(must(jsCard, `md-card-${code[0].key}-0-text`)).trim() === "why 42?", "the js block's comment on its card");
+  const table = view.doc.blocks.find(b => b.kind === "table").key, cells = all(must(t, `md-block-${table}`), n => n.kind === "textview")[0].markdown;
+  assert.ok(!cells.includes("{>>") && cells.includes(`<mark color="${highlightColor(theme())}">b</mark>`), "the table's cell comment: its text highlighted, its markup hidden");
+  assert.equal(textOf(must(t, `md-card-${table}-cell-0-text`)).trim(), "on a cell", "and its card");
   audit(t);
 });
 
@@ -7939,7 +7942,7 @@ const WIDE_PANE = 1400;
 const WIDE = marginLayout(WIDE_PANE);
 const XW = WIDE.pageLeft + 32;
 const widePage = (disk, sizes, viewH = 600) => page(disk, sizes, viewH, WIDE_PANE);
-const cardsOf = (m, t = m.tree()) => all(t, n => /^md-card-[^-]+-\d+$|^md-card-new$/.test(n.id ?? ""));
+const cardsOf = (m, t = m.tree()) => all(t, n => /^md-card-[^-]+-(?:cell-)?\d+$|^md-card-new$/.test(n.id ?? ""));
 const cardId = (m, i, n = 0) => `md-card-${keyAt(m, i)}-${n}`;
 const cardAt = (m, i, n = 0, t = m.tree()) => find(t, cardId(m, i, n));
 // A card's top in the scrolled page, where the column starts 28 px down.
@@ -12218,4 +12221,188 @@ test("a picture inside a line of text: its float's Comment comments the picture'
     await clickToken(m, 1, tokenShowing(m, 1, "a "), { share: 0.1 });
     assert.deepEqual([m.view.elementNow()?.kind, Boolean(floatOf(m))], ["image", true], "the picture, the innermost element");
   });
+});
+
+// Comments in table cells, written in the cell with every | of the note escaped. The blocks: Intro (0), the table (1)
+// with a comment in its header's first cell, in the second row's second and a point comment alone in the third row's
+// second, its own comments paragraph (2, hidden), End (3).
+const CELL_DOC = [
+  "Intro", "",
+  "| {==Name==}{>>2026-11-16 21:00 \\| a header<<} | Size |",
+  "|---|---|",
+  "| apple | {==12==}{>>2026-11-16 20:51 \\| too big?<<} |",
+  "| pear | {>>2026-11-15 09:00 \\| fill in<<} |",
+  "",
+  "{>>on the table<<}", "",
+  "End", "",
+].join("\n");
+const CELL_ROW = 7 + STYLES.cell.size * STYLES.cell.lh + 7 + 1;
+const CELL_SIZES = { 0: 24, 1: 14 + 26 + 4 * CELL_ROW, 3: 38 };
+const cellCard = (m, key, n, t = m.tree()) => find(t, `md-card-${key}-cell-${n}`);
+// Where a card level with drawn row `row` of table `key` goes: TextView's table in its box, each row one line, framed.
+const rowLevel = (m, key, row) => levelWith(m, key) + 1 + BOX.py + 1 + row * CELL_ROW;
+
+test("Reading draws a table's cell comments as highlighted text, notes and marks hidden, a point comment a highlighted 💬; the table's source while edited and an HTML block show them as written", async () => {
+  const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), light = highlightColor(theme());
+  assert.equal(viewAt(m, 1).markdown, [
+    `| <mark color="${light}">Name</mark> | Size |`, "|---|---|", `| apple | <mark color="${light}">12</mark> |`, `| pear | <mark color="${light}">${POINT}</mark> |`,
+  ].join("\n"));
+  await openKey(m, table);
+  assert.equal(m.view.field.value(), CELL_DOC.split("\n").slice(2, 6).join("\n"), "edited: the source, comments and all");
+  reset();
+  const html = "<div>{==x==}{>>y<<}</div>\n\nEnd\n", h = await page(html, { 0: 14 + 26 + 21, 1: 38 });
+  assert.equal(viewAt(h, 0).markdown, "<div>{==x==}{>>y<<}</div>", "an HTML block's box as before");
+});
+
+test("in the margin each comment in a table's cells is a card level with its row's top, after the table's own, in row order and pushed down as all cards are; while the table's source is edited, level with the line holding it", async () => {
+  await atTime(NOW, async () => {
+    const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), t = m.tree();
+    const ids = [`md-card-${table}-0`, ...[0, 1, 2].map(n => `md-card-${table}-cell-${n}`)], texts = ["on the table", "a header", "too big?", "fill in"];
+    const wants = [levelWith(m, table), ...[0, 1, 2].map(row => rowLevel(m, table, row))];
+    assert.deepEqual(cardsOf(m, t).map(n => n.id), ids);
+    assert.deepEqual(m.view.cardList().map(e => 28 + e.want), wants, "the table's own at its top, each cell's at its row's");
+    assert.deepEqual(cardsOf(m, t).map(n => n.style.top), stacked(wants.map((w, i) => [w, lookOfCard(texts[i]).h])));
+    assert.deepEqual(ids.map(id => textOf(must(t, `${id}-text`)).trim()), texts, "the notes read through their escaped pipes");
+    assert.deepEqual(ids.slice(1).map(id => textOf(must(t, `${id}-time`)).trim()), ["9:00 PM", "8:51 PM", "Nov 15"]);
+    audit(t);
+    m.view.commentPress(table, m.cx);
+    assert.deepEqual(cardsOf(m).map(n => n.id), [ids[0], NEW_CARD_ID, ...ids.slice(1)], "a new comment on the whole table: after its own, before its cells'");
+    act(m, "mdb-note-cancel");
+    await openKey(m, table);
+    const d = m.view.data.get(table), line = levelWith(m, table) + BOX.py + 1;
+    assert.deepEqual(m.view.cardList().map(e => 28 + e.want), [levelWith(m, table), line, line + 2 * d.row, line + 3 * d.row], "the source's first, third and fourth lines");
+    assert.deepEqual(cardsOf(m).map(n => n.id), ids);
+  });
+});
+
+test("a press on a cell comment's card makes it active: the card raised, that cell's marked text in the deep ochre and no frame on the table; Escape, another card's press or a press elsewhere ends it", async () => {
+  await atTime(NOW, async () => {
+    const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), [light, deep] = [highlightColor(theme()), deepHighlightColor(theme())];
+    cardPress(m, `md-card-${table}-cell-1`);
+    await flush();
+    let t = m.tree();
+    assert.deepEqual([isRaised(cellCard(m, table, 1, t)), isRaised(cellCard(m, table, 0, t)), frameOf(m, table, t), m.view.activeKey], [true, false, null, null]);
+    assert.ok(find(t, `md-card-${table}-cell-1-edit`) && find(t, `md-card-${table}-cell-1-resolve`), "Edit and Resolve");
+    const shown = viewAt(m, 1, t).markdown;
+    assert.ok(shown.includes(`<mark color="${deep}">12</mark>`) && shown.includes(`<mark color="${light}">Name</mark>`) && shown.includes(`<mark color="${light}">${POINT}</mark>`), shown);
+    audit(t);
+    await m.key("escape");
+    t = m.tree();
+    assert.deepEqual([isRaised(cellCard(m, table, 1, t)), viewAt(m, 1, t).markdown.includes(deep)], [false, false], "Escape ends it");
+    cardPress(m, `md-card-${table}-cell-2`);
+    assert.ok(viewAt(m, 1).markdown.includes(`<mark color="${deep}">${POINT}</mark>`), "a point comment's 💬 deep");
+    cardPress(m, `md-card-${table}-0`);
+    await flush();
+    t = m.tree();
+    assert.deepEqual([isRaised(cellCard(m, table, 2, t)), isRaised(cellCard(m, table, 0, t)), isRaised(blockCard(m, table, 0, t)), Boolean(frameOf(m, table, t)), viewAt(m, 1, t).markdown.includes(deep)],
+      [false, false, true, true, false], "the table's own comment: its frame, the cells back in the highlight colour");
+    cardPress(m, `md-card-${table}-cell-0`);
+    await flush();
+    t = m.tree();
+    assert.deepEqual([frameOf(m, table, t), isRaised(cellCard(m, table, 0, t)), isRaised(blockCard(m, table, 0, t))], [null, true, false], "and back: the cell's first, not the table's first");
+    await clickAt(m, { x: leftOf(m) + 10, y: pageTop(m, keyAt(m, 3)) + 14 + 5 });
+    assert.deepEqual([isRaised(cellCard(m, table, 0)), m.view.activeKey], [false, keyAt(m, 3)], "a press elsewhere ends it and acts as usual");
+  });
+});
+
+test("a cell comment's card edits in place: Enter writes the note escaped with its time as one entry, Escape leaves it, an emptied one resolves; Resolve leaves the cell's text; undo opens nothing", async () => {
+  await atTime(NOW, async () => {
+    const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), id = `md-card-${table}-cell-1`;
+    cardPress(m, id);
+    cardPress(m, `${id}-text`);
+    await flush();
+    assert.deepEqual([m.view.noteField.value(), m.view.noteField.focused, m.view.boxOpen(), must(cellCard(m, table, 1), `${id}-input`).style.key_context], ["too big?", true, true, NOTE], "the note unescaped, without its stamp");
+    writeNote(m, "too | big");
+    const entries = m.view.history.entries.length, edited = CELL_DOC.replace("\\| too big?", "\\| too \\| big");
+    act(m, "mdb-note-save");
+    assert.deepEqual([m.view.text, m.view.history.entries.length, isRaised(cellCard(m, table, 1)), textOf(must(m.tree(), `${id}-time`)).trim()], [edited, entries + 1, true, "8:51 PM"], "escaped, one entry, its time kept, active again");
+    cardPress(m, `${id}-edit`);
+    writeNote(m, "never mind");
+    act(m, "mdb-note-cancel");
+    assert.deepEqual([m.view.text, isRaised(cellCard(m, table, 1)), m.view.boxOpen()], [edited, true, false], "Escape: nothing changed, still active");
+    rootKey(m, "cmd-z");
+    assert.deepEqual([m.view.text, m.view.activeKey, m.view.handle.focused], [CELL_DOC, null, true], "undo opens nothing");
+    cardPress(m, id);
+    fire(must(m.tree(), `${id}-resolve`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+    const resolved = CELL_DOC.replace("{==12==}{>>2026-11-16 20:51 \\| too big?<<}", "12");
+    assert.deepEqual([m.view.text, m.view.blockNote, cellCard(m, table, 2)], [resolved, null, null], "the cell's text kept");
+    cardPress(m, id);
+    cardPress(m, `${id}-text`);
+    writeNote(m, " ");
+    act(m, "mdb-note-save");
+    assert.equal(m.view.text, resolved.replace(" {>>2026-11-15 09:00 \\| fill in<<} |", "  |"), "emptied: resolved, a point comment alone leaves its cell empty");
+    rootKey(m, "cmd-z");
+    rootKey(m, "cmd-z");
+    assert.deepEqual([m.view.text, m.view.activeKey], [CELL_DOC, null]);
+    rootKey(m, "cmd-shift-z");
+    assert.deepEqual([m.view.text, m.view.activeKey], [resolved, null], "nor does redo");
+  });
+});
+
+test("a table in a list item keeps its indentation through a cell comment's edit and resolve", async () => {
+  const listed = "- item\n\n  | a | {==b==}{>>2026-11-16 20:51 \\| why?<<} |\n  |---|---|\n  | {>>here<<} | c |\n\nEnd\n";
+  const m = await widePage(listed, { 0: 24, 1: 14 + 26 + 3 * CELL_ROW, 2: 38 }), table = keyOfKind(m, "table");
+  cardPress(m, `md-card-${table}-cell-0`);
+  cardPress(m, `md-card-${table}-cell-0-text`);
+  writeNote(m, "why | not");
+  act(m, "mdb-note-save");
+  const edited = listed.replace("\\| why?", "\\| why \\| not");
+  assert.equal(m.view.text, edited);
+  fire(must(m.tree(), `md-card-${table}-cell-0-resolve`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+  assert.equal(m.view.text, edited.replace("{==b==}{>>2026-11-16 20:51 \\| why \\| not<<}", "b"));
+  cardPress(m, `md-card-${table}-cell-0`);
+  fire(must(m.tree(), `md-card-${table}-cell-0-resolve`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+  assert.equal(m.view.text, "- item\n\n  | a | b |\n  |---|---|\n  |  | c |\n\nEnd\n");
+});
+
+test("counts take in cell comments: the footer, the margin for a file whose only comment is in a cell, and in a narrow pane the table's count and its card, its own comment first, each cell's named by the cell's text as shown, with Edit (the box over the cell's row) and Resolve", async () => {
+  await atTime(NOW, async () => {
+    const only = "Intro\n\n| a | b |\n|---|---|\n| {==**x** \\| y==}{>>why?<<} | 2 |\n\nEnd\n";
+    const w = await widePage(only, { 0: 24, 1: 14 + 26 + 2 * CELL_ROW, 2: 38 });
+    assert.ok(w.view.margin && cellCard(w, keyOfKind(w, "table"), 0), "a cell's comment alone makes room for the margin");
+    reset();
+    const n = await narrowPage(only, { 0: 24, 1: 14 + 26 + 2 * CELL_ROW, 2: 38 }), nt = keyOfKind(n, "table"), nd = n.view.data.get(nt);
+    await clickAt(n, { x: leftOf(n) + nd.notesX + 5, y: pageTop(n, nt) + nd.notesY + 5 });
+    assert.equal(textOf(must(n.tree(), "md-note-0")), "x | y why? Edit Resolve", "the cell's text as Reading shows it");
+    reset();
+    const m = await narrowPage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), t = m.tree(), d = m.view.data.get(table);
+    assert.deepEqual([textOf(must(t, `md-notes-${table}`)).trim(), textOf(must(t, "md-comments")), cardsOf(m, t), d.notesY], ["4", "4 comments", [], d.space], "its own and its cells', level with its top");
+    const count = () => clickAt(m, { x: leftOf(m) + d.notesX + 5, y: pageTop(m, table) + d.notesY + 5 });
+    await count();
+    const card = must(m.tree(), "md-notes-card");
+    assert.deepEqual([0, 1, 2, 3].map(i => textOf(must(card, `md-note-${i}`))), ["on the table Edit Resolve", "Name 9:00 PM a header Edit Resolve", "12 8:51 PM too big? Edit Resolve", "Nov 15 fill in Edit Resolve"]);
+    cardPress(m, "md-note-edit-2");
+    const box = must(m.tree(), "md-note"), top = pageTop(m, table) + d.space + 1 + BOX.py + 1 + CELL_ROW, over = top - BAR.gap - NOTE_BOX.h;
+    assert.deepEqual([box.style.top, box.style.left, m.view.noteField.value(), m.view.noteField.focused, cardOf(m)], [over >= BAR.margin ? over : top + BAR.gap, leftOf(m), "too big?", true, null], "the box over the cell's row");
+    writeNote(m, "a | b");
+    act(m, "mdb-note-save");
+    const edited = CELL_DOC.replace("\\| too big?", "\\| a \\| b");
+    assert.deepEqual([m.view.text, noteBoxOf(m), m.view.blockNote], [edited, null, null]);
+    await count();
+    cardPress(m, "md-note-resolve-3");
+    const resolved = edited.replace(" {>>2026-11-15 09:00 \\| fill in<<} |", "  |");
+    assert.equal(m.view.text, resolved);
+    assert.equal(textOf(must(m.tree(), `md-notes-${table}`)).trim(), "3");
+    await openKey(m, table);
+    m.view.field.select(m.view.field.value().length);
+    for (const ch of " {>>n<<}") m.view.field.type(ch, m.cx);
+    m.view.redraw([table], m.cx);
+    const counted = m.tree();
+    assert.deepEqual([textOf(must(counted, `md-notes-${table}`)).trim(), textOf(must(counted, "md-comments"))], ["4", "4 comments"], "the edited table counts what its field holds");
+  });
+});
+
+test("a table's cell comments are read once per table text: not again for a draw, a scroll or an active comment, again when its text changes", async () => {
+  const m = await widePage(CELL_DOC, CELL_SIZES), table = keyOfKind(m, "table"), memo = m.view.cellMemo.get(table);
+  assert.ok(memo?.cards.length === 3);
+  m.tree();
+  m.view.scrollTo(10, m.cx);
+  m.tree();
+  m.view.redraw([table], m.cx);
+  cardPress(m, `md-card-${table}-cell-0`);
+  m.tree();
+  assert.equal(m.view.cellMemo.get(table), memo, "the same");
+  fire(must(m.tree(), `md-card-${table}-cell-0-resolve`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+  m.tree();
+  assert.equal(m.view.cellMemo.get(table).cards.length, 2, "read again");
 });
