@@ -192,6 +192,54 @@ test("a long row followed by text is told apart at once, not after trying every 
   assert.deepEqual(imageFlags(`${"![a](x) \t ".repeat(60)}\n`), [true]);
 });
 
+const PICTURE_NOTE = "{>>2026-11-17 09:00 | why this one?<<}";
+
+test("a picture wrapped in a highlight, with at most one comment after it, leaves a paragraph of pictures one", () => {
+  assert.deepEqual(imageFlags(`{==![a](x.png)==}${PICTURE_NOTE}\n`), [true], "one commented picture");
+  assert.deepEqual(imageFlags(`![a](x.png) {==![b](y.png)==}${PICTURE_NOTE}\t{==![c](z.png)==}\n`), [true], "a row: bare, commented, highlighted");
+  assert.deepEqual(imageFlags(`{==[![a](x.svg)](y)==}${PICTURE_NOTE}\n{==![b](z.png)==}{>>n<<}\n ![c](w.png)\n`), [true], "a linked one whole, stacked");
+  assert.deepEqual(imageFlags("{==![a](x.png)==}{>>a < b and <<c<<}![b](y.png)\n"), [true], "a < in the note; no space before the next");
+});
+
+test("a word beside a commented picture, a second comment, a comment after a bare picture, an unclosed or broken note, or a highlight around two pictures keep the paragraph text", () => {
+  for (const text of [
+    `{==![a](x.png)==}${PICTURE_NOTE} word\n`,
+    `{==![a](x.png)==}${PICTURE_NOTE}{>>again<<}\n`,
+    `![a](x.png)${PICTURE_NOTE}\n`,
+    "{==![a](x.png)==}{>>never closed\n",
+    "{==![a](x.png)==}{>>almost<<\n",
+    "{==![a](x.png)==}{>>two\nlines<<}\n",
+    "{==![a](x.png)\n",
+    "{==![a](x.png) ![b](y.png)==}{>>both<<}\n",
+  ]) assert.deepEqual(imageFlags(text).filter(Boolean), [], JSON.stringify(text));
+});
+
+test("a long row of commented pictures followed by text, and a long unclosed note, are told apart at once", () => {
+  assert.deepEqual(imageFlags(`${"{==![a](x)==}{>>n<<}   ".repeat(60)}x\n`), [false]);
+  assert.deepEqual(imageFlags(`{==![a](x)==}{>>${"a<".repeat(2500)}\n`), [false]);
+  assert.deepEqual(imageFlags(`${"{==![a](x)==}{>>n<<} \t ".repeat(60)}\n`), [true]);
+});
+
+test("picturesIn: a commented picture's whole markdown, its own picture inside the highlight, and its comment's text and place; a picture written in a comment is none", () => {
+  const text = "# T\n\n{==![a](a.png)==}{>>n<<} ![b](b.png)\n{==[![c](c.png)](u)==}\n", d = parse(text), at = s => text.indexOf(s);
+  assert.deepEqual(picturesIn(d, d.blocks[1]), [
+    { start: at("{==![a]"), end: at(" ![b]"), from: at("![a]"), to: at("==}{>>n"), note: "n", noteAt: at("n<<}") },
+    { start: at("![b]"), end: at("![b]") + 11, from: at("![b]"), to: at("![b]") + 11, note: null, noteAt: -1 },
+    { start: at("{==[![c]"), end: text.length - 1, from: at("[![c]"), to: text.length - 4, note: null, noteAt: -1 },
+  ]);
+  const inNote = parse("{==![a](a.png)==}{>>see ![b](b.png)<<}\n");
+  assert.deepEqual(sourcesIn(inNote, inNote.blocks[0]), ["{==![a](a.png)==}{>>see ![b](b.png)<<}"]);
+  const item = parse("- item\n\n  {==![a](a.png)==}{>>n<<}\n  ![b](b.png)\n");
+  assert.deepEqual(sourcesIn(item, item.blocks[1]), ["{==![a](a.png)==}{>>n<<}", "![b](b.png)"]);
+});
+
+test("removePicture: a commented picture goes with its highlight and its comment, as a bare one goes", () => {
+  const row = `![a](a.png) {==![b](b.png)==}${PICTURE_NOTE} ![c](c.png)\n`;
+  assert.deepEqual([1, 2].map(i => withoutPicture(row, i)), ["![a](a.png) ![c](c.png)\n", `![a](a.png) {==![b](b.png)==}${PICTURE_NOTE}\n`]);
+  assert.equal(withoutPicture(`![a](a.png)\n{==![b](b.png)==}${PICTURE_NOTE}\n![c](c.png)\n`, 1), "![a](a.png)\n![c](c.png)\n", "alone on its line");
+  assert.equal(withoutPicture(`# T\n\n{==[![b](b.png)](u)==}${PICTURE_NOTE}\n\nEnd\n`, 0), "# T\n\nEnd\n", "the only one, linked");
+});
+
 test("nesting follows the container rule: a fence right after an item's first line is its child", () => {
   const d = parse("1. Install:\n   ```bash\n   npm i\n   ```\n2. Run\n");
   assert.deepEqual(d.blocks.map(b => [b.kind, b.depth, b.parent]), [["item", 0, -1], ["code", 1, 0], ["item", 0, -1]]);

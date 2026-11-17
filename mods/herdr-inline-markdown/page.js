@@ -48,6 +48,10 @@ export const CALIBRATED = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "mono", "sma
 
 // A code block's, diagram's or table's frame: while one of its comments is active, or while one is written on it.
 export const FRAMED = { active: "active", adding: "adding" };
+// A picture's frame in a paragraph of pictures, one letter a picture: none, in the highlight colour, or in the deeper
+// one of an active comment.
+export const PICTURE_FRAME = { none: "-", light: "h", deep: "d" };
+const frameColors = (letters, t) => [...letters].map(l => (l === PICTURE_FRAME.deep ? deepHighlightColor(t) : l === PICTURE_FRAME.light ? highlightColor(t) : null));
 
 const RAW_KINDS = new Set(["code", "mermaid", "table", "html", "frontmatter", "hr", "definition"]);
 export const isRaw = kind => RAW_KINDS.has(kind);
@@ -182,7 +186,10 @@ function rendered(owner, d, t) {
     const frame = view && { key: d.key, w: d.frameW, h: d.frameH, ml: d.frameMl, natW: d.natW, natH: d.natH, image: d.imgKey, dim: d.imgDim, selected: d.selected, view, comment };
     return diagramBlock({ id: `md-diagram-${d.key}`, source: d.text, d: owner.shown.get(d.key) ?? { state: "pending" }, frame, t, mono });
   }
-  if (d.look === "picture") return pictureBlock({ id: `md-pictures-${d.key}`, ...owner.pictureOf(d.key, d.pictureW), selected: d.selected, picked: d.picked, t });
+  if (d.look === "picture") {
+    const frames = frameColors(d.pictureFrames, t);
+    return pictureBlock({ id: `md-pictures-${d.key}`, ...owner.pictureOf(d.key, d.pictureW), selected: d.selected, picked: d.picked, frames, t });
+  }
   return div().w_full().h(RULE_H).flex().items_center().child(div().w_full().h(1).bg(t.border));
 }
 

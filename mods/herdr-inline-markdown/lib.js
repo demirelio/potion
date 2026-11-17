@@ -1,5 +1,5 @@
 // Pure helpers for the Markdown reader/editor and its picker. No imports from herdr or gpui-*: node tests load this file as it is.
-import { IMAGE_ITEM, IMAGE_ONLY } from "./blocks.js";
+import { IMAGE_ITEM, IMAGE_ONLY, pictureSpans } from "./blocks.js";
 
 export const MARKDOWN_EXT = /\.(md|markdown|mdown|mkd|mkdn|mdx)$/i;
 export const isMarkdown = name => MARKDOWN_EXT.test(String(name ?? ""));
@@ -100,15 +100,27 @@ const destinationOf = raw => {
 
 const unescapeAlt = alt => alt.replace(/\\([!-/:-@[-`{-~])/g, "$1");
 
-// -> [{ alt, src, href }], one per image of an image-only paragraph's content (`href` is null unless the image is
-// linked), else [].
+const ONE_PICTURE = new RegExp(`^(?:${IMAGE_ITEM.source})`);
+const imageOf = m => (m[4] === undefined
+  ? { alt: unescapeAlt(m[1]), src: destinationOf(m[2]), href: destinationOf(m[3]) || null }
+  : { alt: unescapeAlt(m[4]), src: destinationOf(m[5]), href: null });
+
+// -> [{ alt, src, href, marked, comment }], one per picture of an image-only paragraph's content, else []. `href` is
+// null unless the picture is linked; `marked` when it is wrapped in a highlight, and `comment` the one after that,
+// { note, index: its place among the paragraph's comments }, or null.
 export function picturesOf(content) {
   const text = String(content ?? "");
   if (!IMAGE_ONLY.test(text)) return [];
-  return [...text.matchAll(IMAGE_ITEM)].map(m => (m[4] === undefined
-    ? { alt: unescapeAlt(m[1]), src: destinationOf(m[2]), href: destinationOf(m[3]) || null }
-    : { alt: unescapeAlt(m[4]), src: destinationOf(m[5]), href: null }));
+  let comments = 0;
+  return pictureSpans(text).map(p => ({
+    ...imageOf(ONE_PICTURE.exec(text.slice(p.from, p.to))),
+    marked: p.start !== p.from,
+    comment: p.note === null ? null : { note: p.note, index: comments++ },
+  }));
 }
+
+// What names a picture where its markdown can't show: its alt text, else its file's name.
+export const pictureName = p => p.alt || basename(p.src) || "Picture";
 
 const NOT_AN_ADDRESS = "Not a picture address";
 
@@ -164,8 +176,6 @@ export function writtenAddress(typed) {
   const unsafe = SCHEME.test(text) ? /[()<>\n\r]/g : /%(?![0-9A-Fa-f]{2})|[()?#<>\n\r]/g;
   return angledIfSpaced(text.replace(unsafe, c => ADDRESS_ESCAPES[c]));
 }
-
-const ONE_PICTURE = new RegExp(`^(?:${IMAGE_ITEM.source})`);
 
 // [start, end) of a picture's alt text and of its address (as destinationOf reads it), or null for no picture.
 function pictureRanges(source) {

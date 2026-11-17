@@ -9,7 +9,7 @@ import {
   MARKDOWN_EXT, isMarkdown, hash, dirname, basename, joinPath, normalizePath, tildePath, resolveLink,
   filterFiles, newFileName, uniqueName, fileKey, stats, modeOf, toggleMode, remember, trimMap,
   markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, isLight, mix, mermaidConfig, diagramKey, DIAGRAM_COLORS, sharpName,
-  toSource, sourceToDoc, docToSource, sourceSplice, eolOf, picturesOf, pictureSource, touches,
+  toSource, sourceToDoc, docToSource, sourceSplice, eolOf, picturesOf, pictureName, pictureSource, touches,
   isPictureName, copyName, pictureLink, pictureMarkdown, escapeAlt, writtenAddress, pictureWithAlt, pictureWithAddress,
 } from "../mods/herdr-inline-markdown/lib.js";
 import { diff, parse } from "../mods/herdr-inline-markdown/blocks.js";
@@ -447,11 +447,12 @@ test("diagramKey changes with the source, the config and the renderer version", 
 });
 
 test("picturesOf: one entry per image, with its alt, its address, and the link it sits in", () => {
-  assert.deepEqual(picturesOf("![logo](img/logo.png)"), [{ alt: "logo", src: "img/logo.png", href: null }]);
-  assert.deepEqual(picturesOf("[![build](https://x.io/b.svg)](https://x.io/ci)"), [{ alt: "build", src: "https://x.io/b.svg", href: "https://x.io/ci" }]);
+  const bare = { marked: false, comment: null };
+  assert.deepEqual(picturesOf("![logo](img/logo.png)"), [{ alt: "logo", src: "img/logo.png", href: null, ...bare }]);
+  assert.deepEqual(picturesOf("[![build](https://x.io/b.svg)](https://x.io/ci)"), [{ alt: "build", src: "https://x.io/b.svg", href: "https://x.io/ci", ...bare }]);
   assert.deepEqual(picturesOf("[![a](x.svg)](y) ![b](z.png)\t[![](w.png)](v)\n![c](u.png)"), [
     { alt: "a", src: "x.svg", href: "y" }, { alt: "b", src: "z.png", href: null }, { alt: "", src: "w.png", href: "v" }, { alt: "c", src: "u.png", href: null },
-  ]);
+  ].map(p => ({ ...p, ...bare })));
 });
 
 test("picturesOf: a title and the <…> around an address are dropped, and the spaces around it", () => {
@@ -465,7 +466,7 @@ test("picturesOf: a title and the <…> around an address are dropped, and the s
   assert.equal(src("![a]()"), "");
   assert.equal(src("![a](<>)"), "");
   const linked = picturesOf('[![a](x.png "t")](<https://x.io/a b> "t2")')[0];
-  assert.deepEqual(linked, { alt: "a", src: "x.png", href: "https://x.io/a b" });
+  assert.deepEqual(linked, { alt: "a", src: "x.png", href: "https://x.io/a b", marked: false, comment: null });
 });
 
 test("picturesOf: an empty link address is no link", () => {
@@ -478,6 +479,25 @@ test("picturesOf: a backslash escapes a bracket or a backslash in the alt, and a
   assert.equal(picturesOf("![a\\\\](x.png)")[0].alt, "a\\");
   assert.equal(picturesOf("[![a \\]](x.png)](y)")[0].alt, "a ]");
   assert.deepEqual(picturesOf("![a\\](x.png)"), [], "the only ] is escaped, so the image is never closed");
+});
+
+test("picturesOf: a picture wrapped in a highlight is marked and gets the comment after it, with its place among the paragraph's comments", () => {
+  const text = "{==![a](x.png)==}{>>2026-11-17 09:00 | first<<} ![b](y.png) {==[![c](z.png)](https://e.com)==}{>>second<<}\n{==![d\\]](w.png)==}";
+  assert.deepEqual(picturesOf(text), [
+    { alt: "a", src: "x.png", href: null, marked: true, comment: { note: "2026-11-17 09:00 | first", index: 0 } },
+    { alt: "b", src: "y.png", href: null, marked: false, comment: null },
+    { alt: "c", src: "z.png", href: "https://e.com", marked: true, comment: { note: "second", index: 1 } },
+    { alt: "d]", src: "w.png", href: null, marked: true, comment: null },
+  ]);
+  assert.deepEqual(picturesOf("{==![a](x.png)==}{>>n<<}"), [{ alt: "a", src: "x.png", href: null, marked: true, comment: { note: "n", index: 0 } }]);
+  assert.deepEqual(picturesOf("{==![a](x.png)==}{>>see ![b](y.png)<<}").map(p => p.alt), ["a"], "a picture written in a comment is none");
+  for (const other of ["{==![a](x.png)==}{>>n<<} word", "{==![a](x.png)==}{>>n<<}{>>m<<}", "{==![a](x.png)==}{>>n", "![a](x.png){>>n<<}"]) {
+    assert.deepEqual(picturesOf(other), [], JSON.stringify(other));
+  }
+});
+
+test("pictureName: a picture's alt text, else its file's name, else Picture", () => {
+  assert.deepEqual([{ alt: "A cat", src: "img/cat.png" }, { alt: "", src: "img/cat.png" }, { alt: "", src: "" }].map(pictureName), ["A cat", "cat.png", "Picture"]);
 });
 
 test("picturesOf: anything that is not only images is []", () => {

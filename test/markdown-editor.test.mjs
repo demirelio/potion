@@ -2489,9 +2489,9 @@ test("pictures: a click picks a linked picture and opens nothing; Cmd+click open
   assert.deepEqual([m.cx.opened, pickedNow(m)], [[], [keyAt(m, 1), 0]]);
   await doubleClickAt(m, onPicture(m));
   assert.deepEqual([m.cx.opened, m.view.activeKey], [[], null]);
-  assert.deepEqual(floatButtons(m), ["change", "alt", "copy", "open", "link", "delete"]);
-  assert.deepEqual(["change", "alt", "copy", "open", "link", "delete"].map(name => must(m.tree(), `md-picture-${name}`).style.tooltip),
-    ["Change picture", "Alt text", "Copy address", "Open picture", "Open link", "Delete picture"]);
+  assert.deepEqual(floatButtons(m), ["comment", "change", "alt", "copy", "open", "link", "delete"]);
+  assert.deepEqual(["comment", "change", "alt", "copy", "open", "link", "delete"].map(name => must(m.tree(), `md-picture-${name}`).style.tooltip),
+    ["Comment (Cmd+Alt+M)", "Change picture", "Alt text", "Copy address", "Open picture", "Open link", "Delete picture"]);
   pictureButton(m, "link");
   assert.deepEqual(m.cx.opened, ["https://e.com/page"]);
   await cmdClickAt(m, onPicture(m));
@@ -2965,7 +2965,9 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   const pictureKey = view.doc.blocks.find(b => b.image).key, picture = imageOf(t, `md-pictures-${pictureKey}`);
   assert.deepEqual([picture.path, picture.style.w, picture.style.h], ["mods/herdr-inline-markdown/file-markdown.svg", 32, 32], "a real picture, so check draws an image");
   assert.ok(find(t, `md-pictures-${pictureKey}-0-picked`), "picked, with its ring");
-  assert.deepEqual(all(must(t, "md-picture"), n => n.kind === "svg").map(n => n.path.split("/").at(-1)), ["image-up.svg", "type.svg", "copy.svg", "external-link.svg", "trash-2.svg"], "and its float, every button a file can have");
+  assert.deepEqual(all(must(t, "md-picture"), n => n.kind === "svg").map(n => n.path.split("/").at(-1)), ["message-square-plus.svg", "image-up.svg", "type.svg", "copy.svg", "external-link.svg", "trash-2.svg"], "and its float, every button a file can have");
+  assert.equal(must(t, `md-pictures-${pictureKey}-0-comment`).style.border_color, highlightColor(theme()), "its comment's frame");
+  assert.equal(textOf(must(t, `md-card-${pictureKey}-0-text`)).trim(), "a comment on the picture", "and its card");
   const quote = view.doc.blocks.find(b => b.kind === "quote");
   const remark = view.blockField(quote.key).tokens().filter(x => x.token.id.startsWith("h:")).map(x => x.token.label);
   assert.deepEqual(remark, ["a ", "remark."], "a comment, its words tokens drawn highlighted");
@@ -10337,9 +10339,9 @@ test("a press on a picture's icon or its alt text in a line of text picks it: it
   const t = m.tree(), float = must(t, "md-picture");
   assert.deepEqual([m.view.activeKey, m.view.field.selection, barOf(m)], [key, { start: 4, end: 25 }, null], "the whole picture, its float and not the bar");
   assert.deepEqual([pictureAddressOf(m), must(t, "md-picture-address").style.tooltip], ["cat.png", "cat.png"]);
-  assert.deepEqual(floatButtons(m), ["change", "alt", "copy", "open", "delete"]);
-  assert.deepEqual(["change", "alt", "copy", "open", "delete"].map(name => must(t, `md-picture-${name}`).style.tooltip),
-    ["Change picture", "Alt text", "Copy address", "Open picture", "Delete picture"]);
+  assert.deepEqual(floatButtons(m), ["comment", "change", "alt", "copy", "open", "delete"]);
+  assert.deepEqual(["comment", "change", "alt", "copy", "open", "delete"].map(name => must(t, `md-picture-${name}`).style.tooltip),
+    ["Comment (Cmd+Alt+M)", "Change picture", "Alt text", "Copy address", "Open picture", "Delete picture"]);
   assert.deepEqual([float.style.top + float.style.h + BAR.gap, float.style.left], [fieldOrigin(m, 1).y, fieldOrigin(m, 1).x + 4 * advance], "over the pressed token, at the picture's start");
   assert.equal(drawnText(m.view.field), "See a cat here");
   assertNoPictureSource(m, "cat.png", "picked");
@@ -10375,7 +10377,7 @@ test("a picture inside a link is picked rather than the link, its float has Open
   const m = await inText("Intro\n\nSee [![a cat](cat.png)](https://e.com/page) here\n\nOther\n"), CMD = { ...NO_MODS, platform: true };
   await clickToken(m, 1, tokenShowing(m, 1, "cat"));
   assert.deepEqual([m.view.field.selection, popoverOf(m), pictureAddressOf(m)], [{ start: 4, end: 43 }, null, "cat.png"]);
-  assert.deepEqual(floatButtons(m), ["change", "alt", "copy", "open", "link", "delete"]);
+  assert.deepEqual(floatButtons(m), ["comment", "change", "alt", "copy", "open", "link", "delete"]);
   pictureButton(m, "link");
   assert.deepEqual(m.cx.opened, ["https://e.com/page"]);
   assertNoPictureSource(m, "https://e.com/page", "picked in its link");
@@ -11924,4 +11926,296 @@ test("the Markdown view forgets the pointer: back in Reading a diagram frame's �
   assert.deepEqual([f.view.mode, Boolean(find(f.tree(), `md-frame-tools-${key}`))], ["reading", false]);
   over();
   assert.ok(find(f.tree(), `md-frame-tools-${key}`), "the pointer over it again");
+});
+
+// A picture's comment is written around it, `{==![alt](address)==}{>>…<<}`; the picture shows a frame, the comment a card.
+const PIC_NOTE = "{>>2026-11-16 20:51 | why this one?<<}", C_NOTE = "{>>2026-11-15 09:00 | and c<<}";
+// a bare, b and c commented, d highlighted with no comment and missing.
+const PIC_ROW = `# Title\n\n![a](a.png) {==![b](b.png)==}${PIC_NOTE} {==![c](c.png)==}${C_NOTE} {==![d](gone.png)==}\n\nBye\n`;
+const PIC_STACK = `# Title\n\n{==![a](a.png)==}${PIC_NOTE}\n![b](b.png)\n{==![c](c.png)==}${C_NOTE}\n\nBye\n`;
+const TALL_SHOT = png(2000, 400);
+// Pictures a, b and c loaded and every block measured, in a pane `width` wide; `tall` ones are wider than the column,
+// so each takes a row of its own.
+async function notedPictures(disk, { width = WIDE_PANE, tall = false } = {}) {
+  for (const name of ["a", "b", "c"]) files.set(`${DIR}/${name}.png`, tall ? TALL_SHOT : SHOT);
+  const m = await mount({ disk });
+  viewportOf(m, width, 600);
+  await flush();
+  const sizes = {};
+  m.view.blocks.forEach((b, i) => {
+    const d = m.view.data.get(b.key);
+    sizes[i] = d.look === "picture" ? d.space + d.pictureH : 30;
+  });
+  await heights(m, sizes);
+  return m;
+}
+const onPic = (m, n, i = 1) => {
+  const d = m.view.data.get(keyAt(m, i)), box = pictureBox(m, n, i);
+  return { x: leftOf(m) + d.depth * INDENT + box.x + 5, y: topOf(m, i) + d.space + box.y + 5 };
+};
+const picFrame = (m, n, i = 1, t = m.tree()) => find(t, `md-pictures-${keyAt(m, i)}-${n}-comment`);
+const frameColor = (m, n, i = 1, t = m.tree()) => picFrame(m, n, i, t)?.style.border_color ?? null;
+// Where a card level with picture n's top goes, in the scrolled page.
+const picLevel = (m, n, i = 1) => levelWith(m, keyAt(m, i)) + pictureBox(m, n, i).y;
+
+test("a paragraph of pictures holding commented ones is still pictures: a commented or highlighted picture framed 2 px in the highlight colour on its box's edge, a failed box's frame rounded; each comment's card level with its picture's top, side by side or stacked; no markdown drawn", async () => {
+  await atTime(NOW, async () => {
+    const m = await notedPictures(PIC_ROW), key = keyAt(m, 1), t = m.tree(), light = highlightColor(theme());
+    assert.equal(m.view.doc.blocks[1].image, true, "a paragraph of pictures");
+    assert.ok(find(t, picsOf(m)), "drawn as pictures");
+    assert.deepEqual(all(blockAt(m, 1, t), n => n.kind === "textview" || n.kind === "textarea"), [], "never as text");
+    assert.deepEqual([0, 1, 2, 3].map(n => frameColor(m, n, 1, t)), [null, light, light, light], "b and c commented, d highlighted");
+    const b = pictureBox(m, 1), frame = picFrame(m, 1, 1, t);
+    assert.deepEqual([frame.style.left, frame.style.top, frame.style.w, frame.style.h, frame.style.border_2, frame.style.rounded], [b.x, b.y, b.w, b.h, true, undefined]);
+    assert.equal(picFrame(m, 3, 1, t).style.rounded, 8, "the box of a picture that can't be shown, rounded as it is");
+    assert.deepEqual(cardsOf(m, t).map(n => n.id), [`md-card-${key}-0`, `md-card-${key}-1`], "a card a comment, none for the highlight alone");
+    assert.deepEqual(cardsOf(m, t).map(n => n.style.top), stacked([[picLevel(m, 1), lookOfCard("why this one?").h], [picLevel(m, 2), lookOfCard("and c").h]]), "level with the row's top, in order");
+    assert.deepEqual([0, 1].map(n => [textOf(must(t, `md-card-${key}-${n}-time`)).trim(), textOf(must(t, `md-card-${key}-${n}-text`)).trim()]), [["8:51 PM", "why this one?"], ["Nov 15", "and c"]]);
+    audit(t);
+    reset();
+    const s = await notedPictures(PIC_STACK, { tall: true });
+    assert.ok(pictureBox(s, 2).y > pictureBox(s, 0).y + lookOfCard("why this one?").h + CARDS.gap, "stacked, a row each");
+    assert.deepEqual(cardsOf(s).map(n => n.style.top), [picLevel(s, 0), picLevel(s, 2)], "each level with its picture's top");
+  });
+});
+
+test("in a narrow pane a paragraph of pictures shows its comments' count level with its top; its card names each picture by its alt text, else its file's name, never its markdown; Edit opens the box over that picture, Resolve takes the comment off", async () => {
+  await atTime(NOW, async () => {
+    const doc = `# Title\n\n{==![](a.png)==}${PIC_NOTE} {==![The c](c.png)==}${C_NOTE}\n\nBye\n`;
+    const m = await notedPictures(doc, { width: NARROW_PANE }), key = keyAt(m, 1), d = m.view.data.get(key);
+    assert.deepEqual([m.view.margin, d.notes, d.notesY, textOf(badgeOf(m, 1)).trim()], [null, 2, d.space, "2"]);
+    await clickCount(m, 1);
+    const entries = [0, 1].map(n => textOf(must(cardOf(m), `md-note-${n}`)));
+    assert.ok(entries[0].startsWith("a.png") && entries[0].includes("why this one?"), entries[0]);
+    assert.ok(entries[1].startsWith("The c") && entries[1].includes("and c"), entries[1]);
+    assert.ok(entries.every(e => !/!\[|\]\(|\{==|\{>>/.test(e)), "no markdown");
+    cardPress(m, "md-note-edit-1");
+    const box = must(m.tree(), "md-note");
+    assert.deepEqual([box.style.left, box.style.top], [leftOf(m) + pictureBox(m, 1).x, pictureTop(m, 1) - BAR.gap - NOTE_BOX.h], "over the picture's top edge, at its left");
+    assert.deepEqual([m.view.noteField.value(), m.view.noteField.focused, frameColor(m, 1), cardOf(m)], ["and c", true, deepHighlightColor(theme()), null]);
+    writeNote(m, "changed c");
+    saveNote(m);
+    const edited = doc.replace("09:00 | and c", "09:00 | changed c");
+    assert.deepEqual([m.view.text, noteBoxOf(m), frameColor(m, 1)], [edited, null, highlightColor(theme())], "saved; the box closed, the comment no longer active");
+    await clickCount(m, 1);
+    cardPress(m, "md-note-resolve-0");
+    assert.deepEqual([m.view.text, m.view.doc.blocks[1].image, m.view.data.get(key).notes], [edited.replace(`{==![](a.png)==}${PIC_NOTE}`, "![](a.png)"), true, 1]);
+  });
+});
+
+test("a press on a picture comment's card makes it active, the card raised and the picture's frame deep, picking nothing and letting a picked picture go; Escape and a press elsewhere end it", async () => {
+  await atTime(NOW, async () => {
+    const m = await notedPictures(PIC_ROW), key = keyAt(m, 1), deep = deepHighlightColor(theme()), light = highlightColor(theme());
+    await clickAt(m, onPic(m, 0));
+    assert.deepEqual(pickedNow(m), [key, 0]);
+    cardPress(m, `md-card-${key}-0`);
+    let t = m.tree();
+    assert.deepEqual([isRaised(blockCard(m, key, 0, t)), frameColor(m, 1, 1, t), frameColor(m, 2, 1, t)], [true, deep, light]);
+    assert.equal(frameOf(m, key, t), null, "the picture framed, not the whole block");
+    assert.deepEqual([m.view.picked, floatOf(m), ringsOf(m, t), m.view.activeKey], [null, null, [], null], "nothing picked");
+    rootKey(m, "escape");
+    t = m.tree();
+    assert.deepEqual([isRaised(blockCard(m, key, 0, t)), frameColor(m, 1, 1, t)], [false, light], "Escape ends it");
+    cardPress(m, `md-card-${key}-1`);
+    assert.deepEqual([isRaised(blockCard(m, key, 1)), frameColor(m, 2)], [true, deep]);
+    await clickAt(m, { x: leftOf(m) + 10, y: topOf(m, 2) + 20 });
+    assert.deepEqual([isRaised(blockCard(m, key, 1)), frameColor(m, 2)], [false, light], "a press elsewhere ends it");
+  });
+});
+
+test("in the margin a press on a commented picture picks it, its ring outside its frame and its float showing, and makes its comment active; picking another picture ends it, Escape ends both; in a narrow pane only the float shows", async () => {
+  await atTime(NOW, async () => {
+    const m = await notedPictures(PIC_ROW), key = keyAt(m, 1), deep = deepHighlightColor(theme()), light = highlightColor(theme());
+    await clickAt(m, onPic(m, 1));
+    let t = m.tree();
+    assert.deepEqual([pickedNow(m), Boolean(floatOf(m)), ringsOf(m, t), frameColor(m, 1, 1, t), isRaised(blockCard(m, key, 0, t))], [[key, 1], true, [`md-pictures-${key}-1-picked`], deep, true]);
+    rootKey(m, "right");
+    t = m.tree();
+    assert.deepEqual([pickedNow(m), frameColor(m, 1, 1, t), isRaised(blockCard(m, key, 0, t)), isRaised(blockCard(m, key, 1, t))], [[key, 2], light, false, false], "picking another ends it");
+    await clickAt(m, onPic(m, 2));
+    assert.deepEqual([frameColor(m, 2), isRaised(blockCard(m, key, 1))], [deep, true]);
+    rootKey(m, "escape");
+    t = m.tree();
+    assert.deepEqual([m.view.picked, frameColor(m, 2, 1, t), isRaised(blockCard(m, key, 1, t))], [null, light, false], "Escape lets both go");
+    await clickAt(m, onPic(m, 1));
+    cardPress(m, `md-card-${key}-0`);
+    assert.deepEqual([m.view.picked, floatOf(m), isRaised(blockCard(m, key, 0))], [null, null, true], "a press on its card: the comment alone");
+    await clickAt(m, onPic(m, 1));
+    rightClickAt(m, { x: leftOf(m) + 10, y: topOf(m, 2) + 20 });
+    assert.deepEqual([m.view.picked, isRaised(blockCard(m, key, 0)), frameColor(m, 1)], [null, false, light], "a right-press elsewhere lets both go");
+    m.view.locked = "Read-only: unusual characters";
+    await clickAt(m, onPic(m, 1));
+    assert.deepEqual([pickedNow(m), isRaised(blockCard(m, key, 0))], [[key, 1], false], "a file that can't be edited: picked, its card as it was");
+    reset();
+    const n = await notedPictures(PIC_ROW, { width: NARROW_PANE });
+    await clickAt(n, onPic(n, 1));
+    t = n.tree();
+    assert.deepEqual([pickedNow(n), Boolean(floatOf(n)), find(t, "md-card-float"), frameColor(n, 1, 1, t), cardOf(n)], [[keyAt(n, 1), 1], true, null, light, null], "the float alone");
+  });
+});
+
+test("a picture's comment is edited on its card, Enter keeping its time as one undo step and Escape leaving it, and resolved, the paragraph still pictures; undo and redo of each pick the picture", async () => {
+  await atTime(NOW, async () => {
+    const m = await notedPictures(PIC_ROW), key = keyAt(m, 1), edited = PIC_ROW.replace("20:51 | why this one?", "20:51 | why b?");
+    cardPress(m, `md-card-${key}-0-text`);
+    assert.deepEqual([cardInput(blockCard(m, key, 0))?.state, m.view.noteField.value(), m.view.noteField.focused], [m.view.noteField, "why this one?", true], "edited on its card");
+    writeNote(m, "not this");
+    act(m, "mdb-note-cancel");
+    assert.deepEqual([m.view.text, isRaised(blockCard(m, key, 0)), cardInput(blockCard(m, key, 0))], [PIC_ROW, true, null], "Escape leaves it, active");
+    cardPress(m, `md-card-${key}-0-edit`);
+    writeNote(m, "why b?");
+    saveNote(m);
+    assert.deepEqual([m.view.text, m.view.history.entries.length, isRaised(blockCard(m, key, 0))], [edited, 1, true]);
+    rootKey(m, "cmd-z");
+    assert.deepEqual([m.view.text, pickedNow(m), m.view.activeKey], [PIC_ROW, [key, 1], null], "undo picks the picture");
+    rootKey(m, "cmd-shift-z");
+    assert.deepEqual([m.view.text, pickedNow(m)], [edited, [key, 1]], "and redo");
+    cardPress(m, `md-card-${key}-1`);
+    cardPress(m, `md-card-${key}-1-resolve`);
+    const resolved = edited.replace(`{==![c](c.png)==}${C_NOTE}`, "![c](c.png)");
+    assert.deepEqual([m.view.text, m.view.doc.blocks[1].image, m.view.history.entries.length, cardsOf(m).map(n => n.id)], [resolved, true, 2, [`md-card-${key}-0`]]);
+    rootKey(m, "cmd-z");
+    assert.deepEqual([m.view.text, pickedNow(m)], [edited, [key, 2]]);
+  });
+});
+
+test("a picture's comment saved emptied is resolved: its highlight and comment go, the paragraph still pictures, one undo step that picks the picture", async () => {
+  const m = await notedPictures(PIC_ROW), key = keyAt(m, 1), resolved = PIC_ROW.replace(`{==![c](c.png)==}${C_NOTE}`, "![c](c.png)");
+  cardPress(m, `md-card-${key}-1`);
+  cardPress(m, `md-card-${key}-1-edit`);
+  writeNote(m, "  ");
+  saveNote(m);
+  assert.deepEqual([m.view.text, m.view.doc.blocks[1].image, m.view.history.entries.length, m.view.blockNote, cardsOf(m).map(n => n.id)], [resolved, true, 1, null, [`md-card-${key}-0`]]);
+  rootKey(m, "cmd-z");
+  assert.deepEqual([m.view.text, pickedNow(m)], [PIC_ROW, [key, 2]]);
+});
+
+test("the picture float's first button is Comment: in the margin a new card opens level with the picture's top, the picture framed in the highlight colour, the float staying; Enter wraps exactly that picture with the stamped comment, one undo step, the picture still picked; Cmd+Alt+M does the same", async () => {
+  await atTime(NOW, async () => {
+    const m = await notedPictures(PIC_ROW), key = keyAt(m, 1), light = highlightColor(theme());
+    await clickAt(m, onPic(m, 0));
+    let t = m.tree();
+    assert.deepEqual(floatButtons(m), ["comment", "change", "alt", "copy", "open", "delete"]);
+    const button = must(t, "md-picture-comment");
+    assert.deepEqual([button.style.tooltip, all(button, n => n.kind === "svg")[0].path], [COMMENT_TIP, COMMENT_ICON]);
+    pictureButton(m, "comment");
+    t = m.tree();
+    const card = must(t, NEW_CARD_ID);
+    assert.deepEqual(cardsOf(m, t).map(n => n.id), [NEW_CARD_ID, `md-card-${key}-0`, `md-card-${key}-1`], "before the cards of the pictures after it");
+    assert.deepEqual([card.style.top, isRaised(card), cardInput(card)?.state, m.view.noteField.value(), m.view.noteField.focused], [picLevel(m, 0), true, m.view.noteField, "", true]);
+    assert.deepEqual([frameColor(m, 0, 1, t), Boolean(floatOf(m)), pickedNow(m)], [light, true, [key, 0]], "framed, the float staying");
+    audit(t);
+    writeNote(m, "why a?");
+    m.view.handle.focused = false;
+    saveNote(m);
+    const written = PIC_ROW.replace("![a](a.png)", "{==![a](a.png)==}{>>2026-11-16 22:00 | why a?<<}");
+    t = m.tree();
+    assert.deepEqual([m.view.text, m.view.history.entries.length, pickedNow(m), newCardOf(m, t), Boolean(floatOf(m)), m.view.handle.focused], [written, 1, [key, 0], null, true, true]);
+    assert.deepEqual([textOf(must(t, `md-card-${key}-0-text`)).trim(), isRaised(blockCard(m, key, 0, t))], ["why a?", false], "its card, not active");
+    rootKey(m, "cmd-z");
+    assert.deepEqual([m.view.text, pickedNow(m)], [PIC_ROW, [key, 0]], "undo takes it out, the picture picked");
+    rootKey(m, "alt-cmd-m", CMD_ALT_M);
+    assert.deepEqual([Boolean(newCardOf(m)), m.view.noteField.focused, frameColor(m, 0)], [true, true, light], "Cmd+Alt+M");
+    m.view.handle.focused = false;
+    saveNote(m);
+    assert.deepEqual([m.view.text, newCardOf(m), pickedNow(m), frameColor(m, 0), m.view.handle.focused], [PIC_ROW, null, [key, 0], null, true], "an empty Enter writes nothing");
+  });
+});
+
+test("in a file with no comment yet the float becomes the comment box in its place, Escape going back to the float; Enter writes a linked picture's comment around all of it, the picture still picked, and the margin comes", async () => {
+  await atTime(NOW, async () => {
+    const m = await pictured(LINKED), key = keyAt(m, 1);
+    await clickAt(m, onPicture(m));
+    rootKey(m, "alt-cmd-m", CMD_ALT_M);
+    const t = m.tree(), box = must(t, "md-note");
+    assert.deepEqual([floatOf(m), box.style.key_context, box.style.left, box.style.top], [null, NOTE, X, pictureTop(m, 0) - BAR.gap - NOTE_BOX.h], "the box in the float's place");
+    assert.deepEqual([all(box, n => n.kind === "textarea")[0].state, m.view.noteField.focused, m.view.noteField.options.placeholder, frameColor(m, 0, 1, t)], [m.view.noteField, true, "Add a comment…", highlightColor(theme())]);
+    m.view.handle.focused = false;
+    act(m, "mdb-note-cancel");
+    assert.deepEqual([noteBoxOf(m), Boolean(floatOf(m)), pickedNow(m), m.view.text, m.view.handle.focused], [null, true, [key, 0], LINKED, true], "Escape: back to the float");
+    pictureButton(m, "comment");
+    assert.ok(noteBoxOf(m) && !floatOf(m), "the float's Comment: the same box");
+    writeNote(m, "a badge");
+    saveNote(m);
+    assert.equal(m.view.text, "# Title\n\n{==[![x](a.png)](https://e.com/page)==}{>>2026-11-16 22:00 | a badge<<}\n\nBye\n");
+    assert.deepEqual([pickedNow(m), Boolean(floatOf(m)), Boolean(m.view.margin), Boolean(blockCard(m, key, 0))], [[key, 0], true, true, true], "still picked; the margin for its card");
+  });
+});
+
+test("Comment or Cmd+Alt+M on a picture that has a comment opens that comment for editing: on its card in the margin, the float staying; in a narrow pane in the box in the float's place, Escape going back to the float; a new one there too", async () => {
+  await atTime(NOW, async () => {
+    const m = await notedPictures(PIC_ROW), key = keyAt(m, 1);
+    await clickAt(m, onPic(m, 1));
+    pictureButton(m, "comment");
+    assert.deepEqual([cardInput(blockCard(m, key, 0))?.state, m.view.noteField.value(), newCardOf(m), Boolean(floatOf(m))], [m.view.noteField, "why this one?", null, true]);
+    writeNote(m, "why b?");
+    saveNote(m);
+    assert.deepEqual([m.view.text, pickedNow(m)], [PIC_ROW.replace("20:51 | why this one?", "20:51 | why b?"), [key, 1]]);
+    reset();
+    const n = await notedPictures(PIC_ROW, { width: NARROW_PANE }), nk = keyAt(n, 1);
+    await clickAt(n, onPic(n, 2));
+    rootKey(n, "alt-cmd-m", CMD_ALT_M);
+    const box = must(n.tree(), "md-note");
+    assert.deepEqual([floatOf(n), n.view.noteField.value(), box.style.left, frameColor(n, 2)], [null, "and c", leftOf(n) + pictureBox(n, 2).x, deepHighlightColor(theme())]);
+    act(n, "mdb-note-cancel");
+    assert.deepEqual([noteBoxOf(n), Boolean(floatOf(n)), pickedNow(n), frameColor(n, 2), n.view.text], [null, true, [nk, 2], highlightColor(theme()), PIC_ROW]);
+    await clickAt(n, onPic(n, 0));
+    pictureButton(n, "comment");
+    assert.ok(noteBoxOf(n) && !floatOf(n) && !newCardOf(n), "a new one in the box too");
+    writeNote(n, "why a?");
+    saveNote(n);
+    assert.deepEqual([n.view.text, pickedNow(n)], [PIC_ROW.replace("![a](a.png)", "{==![a](a.png)==}{>>2026-11-16 22:00 | why a?<<}"), [nk, 0]]);
+  });
+});
+
+test("a commented picture's Change and Alt text rewrite the picture inside its highlight; Delete and Cmd+X take it with its highlight and comment as one step, whose undo brings both back, picked", async () => {
+  const doc = `# Title\n\n![a](a.png) {==![b](b.png)==}${PIC_NOTE}\n\nBye\n`;
+  const m = await notedPictures(doc), key = keyAt(m, 1);
+  await clickAt(m, onPic(m, 1));
+  pictureButton(m, "alt");
+  m.view.altField.set_value("the b");
+  act(m, "mdb-note-save");
+  const named = doc.replace("![b](b.png)", "![the b](b.png)");
+  assert.deepEqual([m.view.text, pickedNow(m)], [named, [key, 1]]);
+  files.set(`${DIR}/new.png`, OTHER);
+  await changeTo(m, chosen(`${DIR}/new.png`));
+  const changed = named.replace("(b.png)", "(new.png)");
+  assert.deepEqual([m.view.text, pickedNow(m)], [changed, [key, 1]]);
+  rootKey(m, "backspace");
+  assert.deepEqual([m.view.text, pickedNow(m), m.view.history.entries.length], ["# Title\n\n![a](a.png)\n\nBye\n", [key, 0], 3]);
+  rootKey(m, "cmd-z");
+  assert.deepEqual([m.view.text, pickedNow(m)], [changed, [key, 1]], "both back, picked");
+  rootKey(m, "cmd-x");
+  assert.deepEqual([m.cx.read_from_clipboard(), m.view.text], [`{==![the b](new.png)==}${PIC_NOTE}`, "# Title\n\n![a](a.png)\n\nBye\n"]);
+});
+
+test("Delete or Cmd+X of a picture whose comment is active ends that comment: the commented picture picked after it shows its own comment as it was, not active", async () => {
+  const doc = `# Title\n\n{==![a](a.png)==}${PIC_NOTE} {==![b](b.png)==}${C_NOTE}\n\nBye\n`, left = `# Title\n\n{==![b](b.png)==}${C_NOTE}\n\nBye\n`;
+  const m = await notedPictures(doc), key = keyAt(m, 1), light = highlightColor(theme());
+  for (const k of ["backspace", "cmd-x"]) {
+    await clickAt(m, onPic(m, 0));
+    assert.deepEqual([pickedNow(m), isRaised(blockCard(m, key, 0)), frameColor(m, 0)], [[key, 0], true, deepHighlightColor(theme())], `${k}: a's comment active`);
+    rootKey(m, k);
+    const t = m.tree();
+    assert.deepEqual([m.view.text, pickedNow(m), m.view.blockNote, isRaised(blockCard(m, key, 0, t)), frameColor(m, 0, 1, t)], [left, [key, 0], null, false, light], `${k}: b picked, its comment not active`);
+    rootKey(m, "cmd-z");
+    assert.deepEqual([m.view.text, pickedNow(m)], [doc, [key, 0]], `${k}: undo brings a back, picked`);
+  }
+});
+
+test("a picture inside a line of text: its float's Comment comments the picture's source as a selection is commented, the new card level with its row; a press on that picture then picks the picture, not its comment", async () => {
+  await atTime(NOW, async () => {
+    const doc = 'Intro\n\nSee ![a cat](cat.png "T") here\n\nOther {==x==}{>>n<<}\n';
+    const m = await page(doc, { 0: 24, 1: 24, 2: 38 }, 600, WIDE_PANE);
+    await clickToken(m, 1, tokenShowing(m, 1, "a "), { share: 0.1 });
+    assert.deepEqual(floatButtons(m), ["comment", "change", "alt", "copy", "open", "delete"]);
+    pictureButton(m, "comment");
+    const card = must(m.tree(), NEW_CARD_ID);
+    assert.deepEqual([card.style.top, floatOf(m), m.view.noteField.focused], [wantTop(m, 1), null, true], "a new card level with the picture's row, the float gone");
+    writeNote(m, "a cat?");
+    saveNote(m);
+    assert.equal(m.view.text, 'Intro\n\nSee {==![a cat](cat.png "T")==}{>>2026-11-16 22:00 | a cat?<<} here\n\nOther {==x==}{>>n<<}\n');
+    await clickToken(m, 1, tokenShowing(m, 1, "a "), { share: 0.1 });
+    assert.deepEqual([m.view.elementNow()?.kind, Boolean(floatOf(m))], ["image", true], "the picture, the innermost element");
+  });
 });

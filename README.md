@@ -207,7 +207,7 @@ fences.
 | Cmd+Shift+C | The same for inline code: other formatting goes around the code (`` **`x`** ``), and making formatted text code keeps its formatting, splitting the code where it changes |
 | Cmd+Shift+H | The same for a highlight |
 | Cmd+K | Opens the [address box](#links) under the selection, offering the web or mail address the clipboard holds; Enter makes the selection a link to what you typed. On a caret in a word it links the word; elsewhere Enter writes the address as a link. In a link the box holds its address, to change it |
-| Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret. In a code block, diagram source or table you are editing, or with one of them selected as a block, a comment on the whole block |
+| Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret. In a code block, diagram source or table you are editing, or with one of them selected as a block, a comment on the whole block. With a picture picked, a comment on that picture (its own, when it has one) |
 | Select text in a paragraph, heading, item or quote | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block or table not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
@@ -350,8 +350,8 @@ before the editor stored times are like that). Only the comment's text is ever s
 - **Resolve** takes the comment and its marks off; the marked text stays, selected. It is one undo step, whose undo
   brings the comment back with its time.
 - **Narrower panes**, and a file with no comment yet, have no margin. A new comment is written in a small box over the
-  selection (over a code block, diagram or table, its top edge), with the time too. A count at the right of a block's
-  first row says how many comments it holds, also while the block is being edited; a click on it opens a card listing
+  selection (over a code block, diagram or table, its top edge; over a picture, in its menu's place), with the time
+  too. A count at the right of a block's first row says how many comments it holds, also while the block is being edited; a click on it opens a card listing
   them: the marked text, the time, the comment, and **Edit** (the block opens with the marked text selected and the
   box holds the comment) and **Resolve**. A click on
   commented text shows that comment's card over it, with Edit and Resolve; Edit, or a click on the card's text, opens
@@ -391,6 +391,33 @@ before the editor stored times are like that). Only the comment's text is ever s
   the paragraph where it is, as ordinary text; a code block given the Mermaid language keeps its comments. In a narrow
   pane the block shows their count at its top (left of a code block's language chip, its Comment button left of the
   count), and its card's Edit opens the comment box over the block; the frame goes when the box closes.
+- **On pictures.** A picture's menu (see [Pictures](#pictures)) has a Comment button first, and Cmd+Alt+M with a
+  picture picked does the same: a new card opens beside the picture, level with its top, and the picture gets a 2 px
+  frame in the highlight colour while you write, its menu staying. Enter writes the comment with the time; Escape or
+  Enter with nothing typed writes nothing. Either way the picture stays picked; a click elsewhere writes nothing and
+  lets the picture go. Without a margin the comment is written in a small box in the menu's place, and Escape there
+  goes back to the menu. A picture holds one comment: on a picture that has one, Comment and Cmd+Alt+M open it for
+  editing. The comment is written around the picture's markdown (a linked picture's whole), so a person or an agent
+  adds one by writing:
+
+  ```
+  {==![a chart](images/chart.png)==}{>>2026-11-17 09:00 | the y axis needs a unit<<}
+  ```
+
+  A paragraph of pictures stays one with any of its pictures written so: one comment right after each, and nothing
+  besides the pictures (a word, or a second comment after one, makes it text). `{==![a](a.png)==}` alone is a picture
+  with a highlight: framed, with no card. Reading frames a commented picture in the highlight colour on its edge, so
+  nothing moves, and shows its comment as a card level with the picture's top, in the order the pictures are written.
+  A click on the card makes it active (the card stands out, the frame turns the deeper ochre) and lets a picked picture
+  go; a click on a commented picture picks it, its ring outside the frame, and makes its comment active too. Escape, a
+  click elsewhere or picking another picture ends it. Edit and Resolve work as on any card (Resolve takes the marks and
+  the comment off and leaves the picture), each one undo step whose undo picks the picture. Change picture and Alt
+  text rewrite only the picture inside the marks; Delete picture and Cmd+X take the comment with it. In a narrow pane a
+  paragraph of pictures shows its comments' count at its top, its card names each picture by its alt text, else its
+  file's name, and Edit opens the box over that picture; a click on a commented picture shows its menu only. A picture
+  inside a line of text is commented as text is: its menu's Comment writes an ordinary comment around the picture, its
+  card level with the picture's row, and a click on the picture still picks the picture; its comment is reached from
+  its card.
 - **Reading** highlights the marked text in a muted ochre as light as the page (dark brown on a dark theme, whatever
   its tint, soft beige on a light one), the colour `<mark>` highlights get too, its formatting still drawn, and leaves out the marks
   and the comment; a comment at a point shows as a highlighted 💬. A highlight with no comment (`{==text==}`) is
@@ -446,8 +473,9 @@ never under 75 % or over 100 % (mermaid's own size).
 
 A paragraph made only of images is drawn as pictures in Reading: `![alt](address)`, one or several, on one line or on
 several. A linked image, `[![alt](address)](https://…)`, counts too, so the row of badges at the top of a README is
-drawn. An image inside a line of text, an HTML `<img>` and a reference-style image (`![alt][ref]`) show as a picture
-icon and the alt text, and a click picks them too (see **Pictures in text** below).
+drawn, and so does a picture with a [comment](#comments) written around it. An image inside a line of text, an HTML
+`<img>` and a reference-style image (`![alt][ref]`) show as a picture icon and the alt text, and a click picks them
+too (see **Pictures in text** below).
 
 - **Adding pictures:** pick them or drop them, in a note on this computer that you can edit. **Image** in the
   [slash menu](#slash-menu) opens the macOS file dialog, which offers PNG, JPEG, GIF, WebP, BMP and SVG files (not
@@ -480,6 +508,7 @@ icon and the alt text, and a click picks them too (see **Pictures in text** belo
   view still shows the source.
 - **The menu** shows the picture's address as written in the file (cut in the middle when long, all of it in its
   tooltip) and these buttons:
+  - **Comment:** a comment on the picture, or its own when it has one (see [Comments](#comments), on pictures).
   - **Change picture:** the macOS file dialog for one picture, opened in the picture's folder (where Image opens it
     for a web picture). The file you choose takes the picture's place, linked where it is or copied into `images/` as
     Image does; the alt text, title and link stay, except an alt text that was the old file's name, which becomes the
@@ -494,15 +523,16 @@ icon and the alt text, and a click picks them too (see **Pictures in text** belo
     button shows a check until the menu closes.
   - **Open picture:** the file in your default app, a web picture in the browser; a `data:` picture has no file to open.
   - **Open link**, on a linked picture: follows its link.
-  - **Delete picture:** removes the picture (a linked one with its link), its whole line when it stood alone on one,
-    and the paragraph when it was the only one. The picture before it is picked, else the one after it.
+  - **Delete picture:** removes the picture (a linked one with its link, a commented one with its comment), its whole
+    line when it stood alone on one, and the paragraph when it was the only one. The picture before it is picked, else
+    the one after it.
 
   Each change is one Cmd+Z, which brings the picture back picked.
 - **Keys** while a picture is picked: Backspace or Delete deletes it, Enter starts a new paragraph below the pictures,
   Left and Right pick the picture before or after it and leave the paragraph at its ends, Up and Down leave it at
-  once, Escape lets it go. Cmd+C copies its markdown as the file writes it (`![alt](address)`, with its link around it
-  when it has one) and Cmd+X cuts it as Delete does; pasted into a line of text it is a picture there, and pasted alone
-  into a new paragraph it makes a paragraph of pictures. Page Up, Page Down, space, Home and End scroll and keep it
+  once, Escape lets it go, Cmd+Alt+M comments it. Cmd+C copies its markdown as the file writes it (`![alt](address)`,
+  with its link around it when it has one, and its comment) and Cmd+X cuts it as Delete does; pasted into a line of
+  text it is a picture there, and pasted alone into a new paragraph it makes a paragraph of pictures. Page Up, Page Down, space, Home and End scroll and keep it
   picked; other keys do nothing.
 - **Pictures in text:** a click on the icon or the alt text of a picture inside a line of text picks it: the whole
   picture is selected (its markdown never shows) and the same menu shows over it, where you clicked. A second click

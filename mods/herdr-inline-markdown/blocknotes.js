@@ -1,8 +1,9 @@
 // Comments on a code block, a diagram or a table: point comments, one per line, in a paragraph of their own right
 // after the block (its next sibling), which then reads as the block's comments and not as text. Which block owns which
-// paragraph, and the splices that add, edit and resolve those comments. No imports from herdr or gpui-*.
-import { field, fieldToDoc, insertAfter, remove, removeRange } from "./blocks.js";
-import { commentsIn, editComment, pointComment } from "./comments.js";
+// paragraph, and the splices that add, edit and resolve those comments; and those of a comment on a picture of a
+// paragraph of pictures, written around the picture. No imports from herdr or gpui-*.
+import { field, fieldToDoc, insertAfter, picturesIn, remove, removeRange } from "./blocks.js";
+import { addComment, commentsIn, editComment, pointComment } from "./comments.js";
 
 const OWNER_KINDS = new Set(["code", "mermaid", "table"]);
 const BRACE = 123;
@@ -131,4 +132,32 @@ export function resolveBlockNote(doc, b, index) {
   else if (k < lines.length - 1) s = { start: lines[k].start, end: lines[k + 1].start };
   else s = { start: lines[k - 1].eol, end: lines[k].eol };
   return { ...s, insert: "", caret: s.start };
+}
+
+// Picture i of paragraph of pictures b given comment `note`, stamped with `when`: its image, a linked one's whole,
+// wrapped in a highlight with the comment after it, or the comment after the highlight it has. Null for an empty
+// note, a picture that has a comment (one a picture) or none at i. The picture splices' caret is the picture's start.
+export function addPictureNote(doc, b, i, note, when) {
+  const p = picturesIn(doc, b)[i];
+  if (!p || p.note !== null) return null;
+  if (p.start !== p.from) {
+    const written = pointComment(note, when);
+    return written ? { start: p.end, end: p.end, insert: written, caret: p.start } : null;
+  }
+  const image = doc.text.slice(p.from, p.to), next = addComment(image, { start: 0, end: image.length }, note, when);
+  return next?.value ? { start: p.from, end: p.to, insert: next.value, caret: p.start } : null;
+}
+
+// Picture i's comment with its text swapped for `note`, its time kept; null when nothing would change.
+export function editPictureNote(doc, b, i, note) {
+  const p = picturesIn(doc, b)[i];
+  if (!p || p.note === null) return null;
+  const next = editComment(doc.text.slice(p.start, p.end), { note: p.note, noteAt: p.noteAt - p.start, end: p.end - p.start }, note);
+  return next && { start: p.start, end: p.end, insert: next.value, caret: p.start };
+}
+
+// Picture i's highlight and comment taken off, the picture left; null when it has neither.
+export function resolvePictureNote(doc, b, i) {
+  const p = picturesIn(doc, b)[i];
+  return p && p.start !== p.from ? { start: p.start, end: p.end, insert: doc.text.slice(p.from, p.to), caret: p.start } : null;
 }

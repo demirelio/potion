@@ -7,7 +7,7 @@ import { appHome, exec } from "herdr";
 import * as fs from "fs/promises";
 import { Buffer } from "buffer";
 import { createHash } from "crypto";
-import { basename, hash, pictureSource, touches } from "./lib.js";
+import { hash, pictureName, pictureSource, touches } from "./lib.js";
 import { sniffImage } from "./imagesize.js";
 
 const MAX_LOADS = 4;
@@ -201,14 +201,22 @@ export class Images {
 
 // `items[i]` is { state, path, alt, src, error, href } as get() answered with the paragraph's own alt, src and href, and
 // `boxes[i]` its place from pictureLayout; they sit in a box `height` high. A linked item has the hand in every state.
-// Item `picked` (none: -1) has a ring around it.
-export function pictureBlock({ id, items, boxes, height, selected, picked = -1, t }) {
+// An item with a colour in `frames[i]` is framed in it; item `picked` (none: -1) has a ring around it.
+export function pictureBlock({ id, items, boxes, height, selected, picked = -1, frames = [], t }) {
   const parts = items.flatMap((item, i) => pictureParts(item, boxes[i], `${id}-${i}`, selected, t));
+  items.forEach((item, i) => { if (frames[i]) parts.push(commentFrame(item, boxes[i], `${id}-${i}-comment`, frames[i])); });
   if (boxes[picked]) parts.push(pickedRing(boxes[picked], `${id}-${picked}-picked`, t));
   return div().id(id).relative().w_full().h(height).children(parts);
 }
 
 const RING = { gap: 3, width: 2, radius: 6 };
+const BOX_RADIUS = 8;
+
+// On the box's edge, inside it, over the picture: nothing moves, and the pick ring outside it still shows.
+function commentFrame(item, box, id, color) {
+  return div().id(id).absolute().left(box.x).top(box.y).w(box.w).h(box.h).border_2().border_color(color)
+    .when(item.state !== "ok", el => el.rounded(BOX_RADIUS));
+}
 
 function pickedRing(box, id, t) {
   const out = RING.gap + RING.width;
@@ -222,12 +230,12 @@ function pictureParts(item, box, key, selected, t) {
     const picture = place(image(item.path).id(key));
     return selected ? [picture, place(div().id(`${key}-tint`)).bg(t.selection).opacity(0.5)] : [picture];
   }
-  const framed = el => place(el.id(key)).rounded(8).bg(t.surface).border_1().border_color(t.border).text_size(12.5).text_color(t.muted);
+  const framed = el => place(el.id(key)).rounded(BOX_RADIUS).bg(t.surface).border_1().border_color(t.border).text_size(12.5).text_color(t.muted);
   if (item.state === "pending") {
     return [framed(h_flex()).gap(8).items_center().justify_center()
       .child(svg(SPINNER).size(14).flex_none().spin(900))
       .child("Loading picture…")];
   }
   return [framed(div()).flex().items_center().px(10)
-    .child(div().flex_1().min_w(0).truncate().child(`${item.alt || basename(item.src) || "Picture"}: ${item.error}`))];
+    .child(div().flex_1().min_w(0).truncate().child(`${pictureName(item)}: ${item.error}`))];
 }

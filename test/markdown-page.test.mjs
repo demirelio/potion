@@ -12,7 +12,7 @@ const { BOX, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, ne
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
 const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
 const { piecesOf } = await import("../mods/herdr-inline-markdown/tokens.js");
-const { highlightColor } = await import("../mods/herdr-inline-markdown/colors.js");
+const { deepHighlightColor, highlightColor } = await import("../mods/herdr-inline-markdown/colors.js");
 const { theme } = await import("./mocks/herdr.mjs");
 
 beforeEach(() => reset());
@@ -271,7 +271,7 @@ const BADGE = { alt: "badge", src: "b.svg", href: "https://e.com", state: "ok", 
 const BOXES = [{ x: 0, y: 0, w: 300, h: 100 }, { x: 308, y: 0, w: 80, h: 20 }];
 
 function pictured(items, more = {}) {
-  const shown = drawn("![shot](shot.png)\n\nafter\n", 0, { pictureW: 600, ...more });
+  const shown = drawn("![shot](shot.png)\n\nafter\n", 0, { pictureW: 600, pictureFrames: "", ...more });
   shown.owner.layouts.set(shown.d.key, { items, boxes: BOXES.slice(0, items.length), height: 100 });
   return { ...shown, el: renderBlock(shown.owner, shown.d) };
 }
@@ -286,6 +286,13 @@ test("a picture block draws what the owner has for its key and width, in a box a
   assert.deepEqual(images.map(n => [n.path, n.style.left, n.style.top, n.style.w, n.style.h]), [
     [SHOT.path, 0, 0, 300, 100], [BADGE.path, 308, 0, 80, 20]]);
   assert.deepEqual(images.map(n => n.style.cursor_pointer), [undefined, true], "only the linked picture has the hand");
+});
+
+test("a picture block frames each picture in the colour its letter names: none, the highlight's, or the active comment's deeper ochre", () => {
+  const { el, d } = pictured([SHOT, BADGE], { pictureFrames: "hd" });
+  assert.deepEqual(all(el, n => n.id?.endsWith("-comment")).map(n => [n.id, n.style.border_color]), [
+    [`md-pictures-${d.key}-0-comment`, highlightColor(theme())], [`md-pictures-${d.key}-1-comment`, deepHighlightColor(theme())]]);
+  assert.deepEqual(all(pictured([SHOT, BADGE], { pictureFrames: "--" }).el, n => n.id?.endsWith("-comment")), [], "none");
 });
 
 test("a rendered picture block has the default pointer, and the selection tint is on each picture, not on the root", () => {

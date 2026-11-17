@@ -628,6 +628,24 @@ test("pictureBlock: the picked picture has a 2 px accent ring a few px outside i
   }
 });
 
+test("pictureBlock: a picture given a frame colour has a 2 px border of it on its box's edge, over the picture and taking no press; a loading or failed box's is rounded as the box is; the pick ring stays outside it", () => {
+  const items = [READY, PENDING_ITEM, ERROR_ITEM, READY], boxes = [{ x: 0, y: 0, w: 100, h: 50 }, { x: 108, y: 0, w: 300, h: 40 }, { x: 0, y: 58, w: 300, h: 40 }, { x: 0, y: 106, w: 60, h: 30 }];
+  assert.deepEqual(all(block(items, boxes), n => n.id?.endsWith("-comment")), [], "no frames given");
+  const el = block(items, boxes, { frames: ["#aa0000", "#bb0000", "#cc0000", null], picked: 0 });
+  const frames = all(el, n => n.id?.endsWith("-comment"));
+  assert.deepEqual(frames.map(n => n.id), ["pic-1-0-comment", "pic-1-1-comment", "pic-1-2-comment"]);
+  frames.forEach((frame, i) => {
+    const b = boxes[i];
+    assert.deepEqual([frame.style.absolute, frame.style.left, frame.style.top, frame.style.w, frame.style.h, frame.style.border_2, frame.style.border_color],
+      [true, b.x, b.y, b.w, b.h, true, ["#aa0000", "#bb0000", "#cc0000"][i]], `frame ${i}`);
+    assert.deepEqual(Object.keys(frame.handlers ?? {}), [], "no handlers: a press goes to the page");
+  });
+  assert.deepEqual(frames.map(n => n.style.rounded), [undefined, 8, 8], "a picture's corners are square, a box's rounded 8");
+  const order = all(el, n => n.id !== null).map(n => n.id);
+  assert.ok(order.indexOf("pic-1-0-comment") > order.indexOf("pic-1-0") && order.indexOf("pic-1-0-picked") > order.indexOf("pic-1-0-comment"), "over the picture, the ring over both");
+  assert.ok(find(el, "pic-1-0-picked").style.left < 0, "the ring outside the box, the frame inside it");
+});
+
 test("pictureBlock: ready, waiting and failed pictures mix, each in its own box", () => {
   const boxes = [{ x: 0, y: 0, w: 100, h: 50 }, { x: 0, y: 58, w: 300, h: 40 }, { x: 0, y: 106, w: 300, h: 40 }];
   const el = block([READY, PENDING_ITEM, ERROR_ITEM], boxes, { height: 146 });

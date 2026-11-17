@@ -32,8 +32,16 @@ const FRONT_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
 const TASK = /^\[([ xX])\][ \t]/;
 // An image, or a linked image: groups 1-3 are the linked form's alt, address and link, 4-5 the plain form's alt and address.
 export const IMAGE_ITEM = /\[!\[((?:\\.|[^\]\\\n])*)\]\(([^)\n]*)\)\]\(([^)\n]*)\)|!\[((?:\\.|[^\]\\\n])*)\]\(([^)\n]*)\)/g;
+// A comment's note on one line, unrolled so that one never closed is given up on in one pass.
+const PICTURE_NOTE = String.raw`\{>>[^<\n]*(?:<(?!<\})[^<\n]*)*<<\}`;
+// A picture of a paragraph of pictures: an image alone, or wrapped in a highlight with at most one comment after it.
+const PICTURE = `(?:\\{==(?:${IMAGE_ITEM.source})==\\}(?:${PICTURE_NOTE})?|${IMAGE_ITEM.source})`;
 // A gap is either a line break or spaces, never both parts at once, so a paragraph that fails is not tried split by split.
-export const IMAGE_ONLY = new RegExp(`^[ \\t]*(?:${IMAGE_ITEM.source})(?:(?:[ \\t]*\\n[ \\t]*|[ \\t]*)(?:${IMAGE_ITEM.source}))*[ \\t]*\\n?$`);
+export const IMAGE_ONLY = new RegExp(`^[ \\t]*${PICTURE}(?:(?:[ \\t]*\\n[ \\t]*|[ \\t]*)${PICTURE})*[ \\t]*\\n?$`);
+// One picture of a paragraph IMAGE_ONLY took: group 1 opens its highlight, IMAGE_ITEM's groups follow, then group 7
+// closes the highlight with the comment after it, group 8.
+const PICTURE_ITEM = new RegExp(`(\\{==)?(?:${IMAGE_ITEM.source})(==\\}(${PICTURE_NOTE})?)?`, "g");
+const NOTE_MARK = 3;
 const BLANK = /^[ \t]*$/;
 
 const BLOCK_TAGS = "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
@@ -1644,10 +1652,23 @@ const seamBefore = (doc, i, at) => {
 // at their old indent (a paragraph under a wide marker becomes code).
 export const remove = (doc, b) => removeRange(doc, b, b);
 
-// The markdown of each picture of image paragraph b, a linked one with its link: [{ start, end }] document offsets.
+// The pictures of `text`, a paragraph of pictures' content or field value: { start, end } all of one, its highlight
+// and comment with it, { from, to } its image (a linked one's with its link), `note` its comment's text and `noteAt`
+// where that starts (null and -1 for none).
+export function pictureSpans(text) {
+  const out = [];
+  for (const m of text.matchAll(PICTURE_ITEM)) {
+    const start = m.index, end = start + m[0].length, from = start + (m[1]?.length ?? 0), to = end - (m[7]?.length ?? 0);
+    const note = m[8] === undefined ? null : m[8].slice(NOTE_MARK, -NOTE_MARK);
+    out.push({ start, end, from, to, note, noteAt: note === null ? -1 : end - NOTE_MARK - note.length });
+  }
+  return out;
+}
+
+// Each picture of image paragraph b as pictureSpans gives it, in document offsets.
 export function picturesIn(doc, b) {
-  const f = fieldOf(doc.text, b, doc.eol);
-  return [...f.value.matchAll(IMAGE_ITEM)].map(m => ({ start: fieldToDoc(f, m.index), end: fieldToDoc(f, m.index + m[0].length) }));
+  const f = fieldOf(doc.text, b, doc.eol), at = x => (x < 0 ? x : fieldToDoc(f, x));
+  return pictureSpans(f.value).map(p => ({ start: at(p.start), end: at(p.end), from: at(p.from), to: at(p.to), note: p.note, noteAt: at(p.noteAt) }));
 }
 
 // Picture i of image paragraph b goes: with the spaces after it when another follows on its line, else the spaces

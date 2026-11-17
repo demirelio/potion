@@ -3,7 +3,7 @@
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
-import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
+import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureName, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
 import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
@@ -20,9 +20,9 @@ import { MARK_BITS } from "./restyle.js";
 import { copyOf, holdsBlocks, joinRuns, pasteInto, pasteParagraphs, splitRuns } from "./seams.js";
 import { addLink, clipboardAddress, linkAddress, pictureCut, pictureForm, setAddress, setPicture, unlink } from "./links.js";
 import { addComment, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, timeLabel } from "./comments.js";
-import { addBlockNote, blockUnit, editBlockNote, notesAfter, ownerOf, ownsNotes, pairNotes, removeWithNotes, resolveBlockNote } from "./blocknotes.js";
+import { addBlockNote, addPictureNote, blockUnit, editBlockNote, editPictureNote, notesAfter, ownerOf, ownsNotes, pairNotes, removeWithNotes, resolveBlockNote, resolvePictureNote } from "./blocknotes.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
-import { Block, CALIBRATED, Column, FRAMED, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
+import { Block, CALIBRATED, Column, FRAMED, FRONT_BOX, BOX, INDENT, MARKER_W, PICTURE_FRAME, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, parsedInline, visibleMap } from "./inline.js";
 import { drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
 
@@ -116,9 +116,14 @@ const COMMENT_REFUSED = {
 const NOTE_CLIP = 80;
 // The comment field grows with its text up to this many rows.
 const NOTE_ROWS = 12;
-const BLOCK_NOTES_MEMO = "block-notes";
+const BLOCK_NOTES_MEMO = "block-notes", PICTURE_NOTES_MEMO = "picture-notes";
 const COUNT_CHIP_GAP = 4;
 const noted = text => commentsIn(text).filter(c => c.note !== null);
+// The comments of a paragraph of pictures (picturesOf's `list`) in the order they are written, each with the index of
+// its picture and what names that picture.
+const pictureNotesOf = list => list.flatMap((p, picture) => (p.comment ? [{ kind: "comment", note: p.comment.note, picture, name: pictureName(p) }] : []));
+// Herdr writes Cmd+Alt+M `alt-cmd-m`: it is told by its key and modifiers.
+const isCommentKey = ({ key, modifiers: m = {} }) => key === "m" && Boolean(m.platform && m.alt) && !m.control && !m.shift;
 // The cards of field value `value`'s comments: each comment with where its card is level with, its time and text, and
 // the look of its card when not active.
 const cardsOf = value => noted(value).map((c, index) => {
@@ -155,6 +160,7 @@ const LINK_BUTTONS = [
 // The picked picture's float. `edits`: only on a file that can be edited; `markdown`: not on an HTML <img> tag;
 // `linked`: only on a linked picture; `apart`: a rule before it.
 const PICTURE_BUTTONS = [
+  { name: "comment", icon: "message-square-plus", tip: "Comment (Cmd+Alt+M)", edits: true, markdown: true },
   { name: "change", icon: "image-up", tip: "Change picture", edits: true, markdown: true },
   { name: "alt", icon: "type", tip: "Alt text", edits: true, markdown: true },
   { name: "copy", icon: "copy", tip: "Copy address", done: { icon: "check", tip: "Copied" } },
@@ -432,9 +438,9 @@ function mappedThrough(edits, p) {
 }
 
 // What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, its text blocks drawn
-// by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a picture
-// picked with its float, the quote's comment and the js block's on their cards in the margin while a new comment's card
-// is being written, and the js block's language menu open.
+// by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a commented
+// picture picked with its float, the comments of the quote, the js block and the picture on their cards in the margin
+// while a new comment's card is being written, and the js block's language menu open.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
@@ -452,7 +458,7 @@ const FIXTURE = [
   "<!-- a comment -->", "",
   "***", "",
   "[ref]: https://example.com", "",
-  "![A picture](picture.png)", "",
+  "{==![A picture](picture.png)==}{>>2026-11-17 09:00 | a comment on the picture<<}", "",
   "A setext heading", "----------------", "",
 ].join("\n");
 const FIXTURE_DIAGRAM = { key: "check-fixture", state: "ok", width: 1800, height: 300, scale: 2, error: null };
@@ -506,7 +512,8 @@ export class Editor {
     this.images.onChange = cx => this.assetsChanged(cx);
     this.picking = false; this.dialog = null;
     this.shown = new Map(); this.good = new Map(); // block key -> what the diagram answered, and its last image
-    // block key -> the pictures of an image paragraph: { content, list (picturesOf), items (list with what Images answered), layout }
+    // block key -> the pictures of an image paragraph: { content, list (picturesOf), notes (pictureNotesOf), items (list
+    // with what Images answered), layout }
     this.pictures = new Map();
     // Diagram frames: `frames` the view ({ z, x, y }) of each frame panned or zoomed (none: its starting view), `pan` a
     // press on a frame ({ key, from, x0, y0, moved }), `hoverTop` where the hovered frame's − % + group sits, `gesture`
@@ -559,9 +566,10 @@ export class Editor {
     // measured height of the active card.
     this.card = null; this.note = null; this.highlight = highlightColor(theme()); this.deep = deepHighlightColor(theme()); this.notesFor = null;
     this.margin = null; this.cards = null; this.cardMemo = new Map(); this.raised = null;
-    // A code block's, diagram's or table's comments: `pairing` which block owns which comments paragraph in `doc`
-    // (blocknotes.js), `blockNote` the active one of them ({ key: the block's, index, editing }), `blockAdd` the one
-    // being written for one activation ({ key: the block's, act, caret: the block's own when it is the edited one }).
+    // A code block's, diagram's or table's comments, and those on the pictures of a paragraph of pictures: `pairing`
+    // which block owns which comments paragraph in `doc` (blocknotes.js), `blockNote` the active one of them ({ key: the
+    // block's, index, editing }), `blockAdd` the one being written for one activation ({ key: the block's, act, caret:
+    // the block's own when it is the edited one, picture: the index of the picture it goes on, else -1 }).
     this.pairing = null; this.blockNote = null; this.blockAdd = null;
     this.noteField = TextareaState.new({ placeholder: "Add a comment…" });
     this.noteField.set_auto_grow(1, NOTE_ROWS);
@@ -1163,9 +1171,10 @@ export class Editor {
     // Keys typed into a picture's box, the language menu or a block's comment reach this root too, and one stopped here
     // never reaches the box's field.
     if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey || this.pictureBoxOpen() || this.langOpen() || this.blockNoteEditing() || this.blockAddOpen()) return;
-    if (k === "escape" && this.blockNote) { cx.stop_propagation(); this.endBlockNote(cx); return; }
+    // A comment active while a picture is picked is that picture's: both go.
+    if (k === "escape" && this.blockNote) { cx.stop_propagation(); this.endBlockNote(cx); this.unpick(cx); return; }
     if (this.sel && this.selectionKey(e, cx)) return;
-    if (this.picked && this.pictureKey(k, cx)) return;
+    if (this.picked && this.pictureKey(e, cx)) return;
     if (k === "enter" && this.editable()) { cx.stop_propagation(); this.resume(cx); return; }
     if (UNDO_KEYS[k]) { cx.stop_propagation(); this.undo(UNDO_KEYS[k], cx); return; }
     const page = pageStep(this.viewH());
@@ -1744,7 +1753,7 @@ export class Editor {
       mode: b.key === this.activeKey ? "active" : this.blockFields.has(b.key) ? "field" : "rendered",
       tokens: look.look === "text" && (b.key === this.activeKey || this.blockFields.has(b.key)),
       rows: b.key === this.activeKey ? this.rows : "many", menu: b.key === this.activeKey && this.slashOpen(),
-      gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key), framed: this.framedAs(b.key),
+      gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key), framed: this.framedAs(b),
       row: cal.row, ratio: cal.ratio, padRendered: cal.padRendered, padActive: cal.padActive,
       ...(look.look === "diagram" ? this.frameData(b, width) : {}),
       ...(look.look === "picture" ? this.pictureData(b, width) : {}),
@@ -1753,12 +1762,14 @@ export class Editor {
 
   // A text block shows its comments' count where notesPlace puts it, unless they show as cards in the margin; the edited
   // one counts what its field holds. A code block, diagram or table shows its comments paragraph's count level with its
-  // top, left of a code block's language chip where the chip would be under it.
+  // top, left of a code block's language chip where the chip would be under it; a paragraph of pictures its pictures'
+  // comments' count level with its top.
   notesData(b, look, space, cal, width) {
-    const owned = this.shownNotes(b.key);
-    const notes = this.margin ? 0 : owned ? owned.points.length : look.look === "text" ? noted(b.key === this.activeKey ? this.seen : b.content).length : 0;
+    const owned = this.shownNotes(b.key), pictures = look.look === "picture";
+    const notes = this.margin ? 0 : owned ? owned.points.length : pictures ? this.pictureNotes(b).length
+      : look.look === "text" ? noted(b.key === this.activeKey ? this.seen : b.content).length : 0;
     if (!notes) return { notes: 0, notesX: 0, notesY: 0 };
-    const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: owned ? NOTES.h : cal.row });
+    const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: owned || pictures ? NOTES.h : cal.row });
     const chip = owned ? this.chipData(b) : NO_STRIP, beside = chip.chipW ? this.chipIn({ space, chipW: chip.chipW }) : null;
     if (beside && at.x + NOTES.w > beside.x) return { notes, notesX: beside.x - COUNT_CHIP_GAP - NOTES.w, notesY: beside.y + (CHIP.h - NOTES.h) / 2 };
     return { notes, notesX: at.x, notesY: at.y };
@@ -1800,9 +1811,11 @@ export class Editor {
     return count && overlap(box, count) ? { ...box, x: count.x - B.gap - B.size, y: count.y + (NOTES.h - B.size) / 2 } : box;
   }
 
-  framedAs(key) {
-    if (this.blockNote?.key === key) return FRAMED.active;
-    return this.blockAdd?.key === key && this.blockAddOpen() ? FRAMED.adding : "";
+  // A paragraph of pictures frames the pictures themselves instead (pictureFrames).
+  framedAs(b) {
+    if (b.image) return "";
+    if (this.blockNote?.key === b.key) return FRAMED.active;
+    return this.blockAdd?.key === b.key && this.blockAddOpen() ? FRAMED.adding : "";
   }
 
   // `answer` says how one picture of the paragraph stands, as { state, path, width, height, error }: Images.get's answer.
@@ -1810,7 +1823,23 @@ export class Editor {
   setPictures(b, answer) {
     const kept = this.pictures.get(b.key), same = kept?.content === b.content, list = same ? kept.list : picturesOf(b.content);
     const stands = (now, i) => (same && now.state === "pending" && kept.items[i].state === "ok" ? kept.items[i] : now);
-    this.pictures.set(b.key, { content: b.content, list, items: list.map((p, i) => ({ ...p, ...stands(answer(p), i) })), layout: null });
+    const notes = same ? kept.notes : pictureNotesOf(list);
+    this.pictures.set(b.key, { content: b.content, list, notes, items: list.map((p, i) => ({ ...p, ...stands(answer(p), i) })), layout: null });
+  }
+
+  pictureNotes(b) {
+    const kept = this.pictures.get(b.key);
+    return kept?.content === b.content ? kept.notes : pictureNotesOf(picturesOf(b.content));
+  }
+
+  // The picture that comment `index` of paragraph of pictures `key` is on, else -1.
+  notePicture(key, index) {
+    const b = this.blockByKey(key);
+    return b?.image ? this.pictureNotes(b)[index]?.picture ?? -1 : -1;
+  }
+
+  pictureNoteActive(key, index) {
+    return this.blockNote?.key === key && this.notePicture(key, this.blockNote.index) === index;
   }
 
   // The pictures of block `key` laid out in a column `width` px wide: { items, boxes, height }, which the page draws and
@@ -1826,13 +1855,21 @@ export class Editor {
   }
 
   // Primitive fields only, so that a block whose pictures stand as before is not drawn again. `picked`: the index of
-  // its picked picture, -1 for none.
+  // its picked picture, -1 for none; `pictureFrames` as pictureFrames gives them.
   pictureData(b, width) {
     const pictureW = Math.max(1, width - b.depth * INDENT), picked = this.picked?.key === b.key ? this.picked.index : -1;
-    if (b.key === this.activeKey || !this.pictures.has(b.key)) return { pictureSig: "", pictureW, pictureH: 0, picked };
+    if (b.key === this.activeKey || !this.pictures.has(b.key)) return { pictureSig: "", pictureW, pictureH: 0, picked, pictureFrames: "" };
     const { items, height } = this.pictureOf(b.key, pictureW);
     const pictureSig = JSON.stringify(items.map(i => [i.state, i.path, i.width, i.height, i.error, i.href]));
-    return { pictureSig, pictureW, pictureH: height, picked };
+    return { pictureSig, pictureW, pictureH: height, picked, pictureFrames: this.pictureFrames(b, items) };
+  }
+
+  // One PICTURE_FRAME letter a picture of paragraph of pictures b: in the highlight colour a highlighted picture's
+  // frame, or one whose comment is being written; in the deeper one the active comment's picture's.
+  pictureFrames(b, items) {
+    const a = this.blockAdd?.key === b.key ? this.blockAddNow() : null, n = this.blockNote?.key === b.key ? this.blockNoteNow() : null;
+    const adding = a ? a.picture : -1, active = n ? this.notePicture(b.key, n.index) : -1;
+    return items.map((p, i) => (i === active ? PICTURE_FRAME.deep : i === adding || p.marked ? PICTURE_FRAME.light : PICTURE_FRAME.none)).join("");
   }
 
   // The index of the picture whose box holds the point (x, y) in the paragraph's content box, else -1.
@@ -2251,14 +2288,16 @@ export class Editor {
   }
 
   // A click on a picture picks it, a double-click too, and the block being edited is left; Cmd+click follows a linked
-  // picture's link instead, on files that cannot be edited too. The space between pictures picks none.
+  // picture's link instead, on files that cannot be edited too. The space between pictures picks none. In the margin
+  // a commented picture's comment becomes active with it: its card is there to show it.
   pictureClick(hit, cx, cmd) {
-    const href = this.pictures.get(hit.block.key)?.items[hit.item]?.href;
-    if (cmd && href) return this.link(href, cx);
+    const item = this.pictures.get(hit.block.key)?.items[hit.item];
+    if (cmd && item?.href) return this.link(item.href, cx);
     if (hit.item < 0) return;
     if (this.activeKey) this.deactivate(cx);
     this.setSel(null, cx);
     this.pick(hit.block.key, hit.item, cx);
+    if (item.comment && this.margin && this.editable()) this.setBlockNote({ key: hit.block.key, index: item.comment.index, editing: false }, cx);
   }
 
   // A right-click on a picture picks it, its float standing for a menu; anywhere else it lets the picked one go.
@@ -2505,10 +2544,9 @@ export class Editor {
     this.selKeys = this.keysIn(range);
   }
 
-  // Herdr writes Cmd+Alt+M `alt-cmd-m`: it is told by its key and modifiers.
   selectionKey(e, cx) {
     const k = e.keystroke, m = e.modifiers ?? {};
-    if (e.key === "m" && m.platform && m.alt && !m.control && !m.shift) {
+    if (isCommentKey(e)) {
       cx.stop_propagation();
       if (this.sel.from === this.sel.to) this.openBlockAdd(this.sel.from, cx);
       return true;
@@ -4731,11 +4769,10 @@ export class Editor {
     cx?.notify();
   }
 
-  // Drawn by the root where the bar goes, or over the top of a block whose comment it writes or edits. Presses on it go
-  // no further, so the field under it keeps its selection.
+  // Drawn by the root where the bar goes, or over the top of a block or picture whose comment it writes or edits.
+  // Presses on it go no further, so the field under it keeps its selection.
   noteBox(t) {
-    const adding = this.blockAddNow(), blockKey = this.margin ? null : adding?.key ?? (this.blockNoteEditing() ? this.blockNote.key : null);
-    const block = blockKey ? this.blockBoxPlace(blockKey) : null;
+    const adding = this.blockAddNow(), block = this.margin ? null : this.blockNoteBox(adding);
     const place = block ?? (this.noteOpen() && !this.margin ? this.placeBar(this.note.range, NOTE_BOX) : null);
     if (!place) return null;
     const out = cx => (adding ? this.closeBlockAddOut(cx) : block ? this.closeBlockEdit(cx) : this.closeNote(cx));
@@ -4748,9 +4785,18 @@ export class Editor {
       .child(Textarea.new(this.noteField).flex_1().text_size(13).text_color(t.foreground));
   }
 
+  // Where the box goes that writes the new comment `adding`, else edits a block's or picture's comment; null for none.
+  blockNoteBox(adding) {
+    if (adding) return this.blockBoxPlace(adding.key, adding.picture);
+    const n = this.blockNoteEditing() ? this.blockNote : null;
+    return n && this.blockBoxPlace(n.key, this.notePicture(n.key, n.index));
+  }
+
   // The box writing or editing block `key`'s comment where no margin shows its card: over the block's top edge, under
-  // it when there is no room above, at the block's left; null while that edge is out of the pane.
-  blockBoxPlace(key) {
+  // it when there is no room above, at the block's left; over picture `picture` of a paragraph of pictures as its
+  // float would be. Null while that edge is out of the pane.
+  blockBoxPlace(key, picture = -1) {
+    if (picture >= 0) return this.placeOverPicture(key, picture, NOTE_BOX);
     const i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
     const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
@@ -4928,20 +4974,23 @@ export class Editor {
   }
 
   // Picture `index` of the paragraph of pictures `key` is picked, with its ring and its float, and the page holds the
-  // keyboard. The one picked already keeps its float as it is.
+  // keyboard. The one picked already keeps its float as it is. Any active comment but this picture's ends.
   pick(key, index, cx) {
     const was = this.picked;
     if (!this.blockByKey(key)?.image || !this.pictures.get(key)?.items[index]) return;
     if (was?.key !== key || was.index !== index) this.picked = { key, index, copied: false, box: null };
+    if (this.blockNote && !this.pictureNoteActive(key, index)) this.endBlockNote(cx);
     this.handle.focus();
     this.redraw([...new Set([was?.key, key])], cx);
     cx.notify();
   }
 
+  // The picked picture's comment, active with it, goes with it.
   unpick(cx) {
     const was = this.picked;
     if (!was) return;
     this.picked = null;
+    if (this.pictureNoteActive(was.key, was.index)) this.endBlockNote(cx);
     if (was.box) this.handle.focus();
     this.redraw([was.key], cx);
     cx?.notify();
@@ -4961,7 +5010,7 @@ export class Editor {
     return true;
   }
 
-  // The picked picture's markdown: { start, end } in the document, and `at`, its start in its paragraph's field.
+  // The picked picture's markdown as picturesIn gives it, and `at`, its start in its paragraph's field.
   pickedSource(p) {
     const s = picturesIn(this.doc, p.b)[p.index];
     return s ? { ...s, at: docToField(fieldOf(this.doc, p.b), s.start) } : null;
@@ -4975,24 +5024,25 @@ export class Editor {
     return p ? docToField(fieldOf(this.doc, b), p.start) : 0;
   }
 
-  // The picked picture's box in pane coordinates, or null while its block has no place on the page.
-  pickedBox(p) {
-    const i = this.at.get(p.key), d = this.data.get(p.key), box = d && this.pictureOf(p.key, d.pictureW).boxes[p.index];
+  // Picture `index` of paragraph of pictures `key`: its box in pane coordinates, or null while its block has no place on
+  // the page.
+  pictureBoxOf(key, index) {
+    const i = this.at.get(key), d = this.data.get(key), box = d && this.pictureOf(key, d.pictureW).boxes[index];
     if (i === undefined || !box || this.sums.length !== this.blocks.length + 1) return null;
     const x = columnLeft(this.paneW(), this.margin) + d.depth * INDENT + box.x;
     return { x, y: COLUMN.padTop + this.sums[i] + d.space + box.y - this.offset, w: box.w, h: box.h };
   }
 
-  // A float of `size` over the picked picture's top edge from its left edge, else under its bottom edge, as low as the
-  // pane keeps it; null while the picture is off the pane. Worked out at each draw, so it follows the page.
-  placePicture(p, size) {
-    const box = this.pickedBox(p);
+  // A float of `size` over that picture's top edge from its left edge, else under its bottom edge, as low as the pane
+  // keeps it; null while the picture is off the pane. Worked out at each draw, so it follows the page.
+  placeOverPicture(key, index, size) {
+    const box = this.pictureBoxOf(key, index);
     return box && popoverPlace({ firstTop: box.y, lastTop: box.y, rowH: box.h, size, x: box.x, viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H });
   }
 
   // The page scrolls the least that shows the picked picture's top, as much of it as half the pane.
   revealPicked(cx) {
-    const p = this.pickedNow(), box = p && this.pickedBox(p);
+    const p = this.pickedNow(), box = p && this.pictureBoxOf(p.key, p.index);
     if (!box || !this.viewport) return;
     const next = keepInView({ offset: this.offset, viewportH: this.viewH(), y: box.y + this.offset, rowPx: Math.min(box.h, this.viewH() / 2), contentH: this.contentH() });
     if (next !== this.offset) this.scrollTo(next, cx);
@@ -5000,10 +5050,11 @@ export class Editor {
 
   // A key while a picture is picked, which the page hears. -> whether it was the picture's; Cmd+Z, Page Up / Down,
   // space, Home and End undo and scroll as they would.
-  pictureKey(k, cx) {
-    const p = this.pickedNow();
+  pictureKey(e, cx) {
+    const k = e.keystroke, p = this.pickedNow();
     if (!p || p.box) return false;
-    if (k === "escape") this.unpick(cx);
+    if (isCommentKey(e)) this.commentPicture(p, cx);
+    else if (k === "escape") this.unpick(cx);
     else if (k === "backspace" || k === "delete") this.deletePicture(p, cx);
     else if (k === "cmd-c" || k === "cmd-x") this.copyPictureSource(p, k === "cmd-x", cx);
     else if (k === "enter") this.paragraphBelow(p.b, this.pickedSource(p).at, cx);
@@ -5052,16 +5103,19 @@ export class Editor {
     if (after === null || !this.pickAt(after, cx)) this.handle.focus();
   }
 
-  // The picked picture goes as removePicture takes it; the one before it is picked, else the one after it.
+  // The picked picture goes as removePicture takes it, ending its comment if active, whose index the next picture's
+  // comment would take; the one before it is picked, else the one after it.
   deletePicture(p, cx) {
     if (!this.editable()) return;
     const all = picturesIn(this.doc, p.b), s = removePicture(this.doc, p.b, p.index);
     if (!s) return;
+    if (this.pictureNoteActive(p.key, p.index)) this.endBlockNote(cx);
     const kept = all[p.index - 1] ?? all[p.index + 1] ?? null, shift = s.insert.length - (s.end - s.start);
     this.pictureChange(s, all[p.index].start, kept && (kept.start >= s.end ? kept.start + shift : kept.start), cx);
   }
 
-  // Cmd+C and Cmd+X: the picture's markdown as the file writes it, with its link; Cut then deletes it as Delete does.
+  // Cmd+C and Cmd+X: the picture's markdown as the file writes it, with its link, highlight and comment; Cut then
+  // deletes it as Delete does.
   copyPictureSource(p, cut, cx) {
     const s = this.pickedSource(p);
     cx.write_to_clipboard(this.doc.text.slice(s.start, s.end));
@@ -5123,15 +5177,15 @@ export class Editor {
   }
 
   // Picture `index` of paragraph `key`, still at address `src`, takes the address of `chosen` (placePictures' { alt,
-  // address }), its title and link kept; an alt text that named the old file names the new one.
+  // address }), its title, link, highlight and comment kept; an alt text that named the old file names the new one.
   replacePicture(key, index, src, chosen, cx) {
     this.commit(cx);
     const b = this.blockByKey(key), at = b?.image ? picturesIn(this.doc, b)[index] : null;
-    const source = at ? this.doc.text.slice(at.start, at.end) : "", was = picturesOf(source)[0];
+    const source = at ? this.doc.text.slice(at.from, at.to) : "", was = picturesOf(source)[0];
     if (was?.src !== src) return notify({ title: PICTURE_CHANGED, level: "info" });
     const old = pictureSource(src, this.file), named = altNames(was.alt, old.kind === "file" ? old.path : src);
     const next = pictureWithAddress(named ? pictureWithAlt(source, chosen.alt) : source, chosen.address);
-    this.pictureChange({ start: at.start, end: at.end, insert: next }, at.start, at.start, cx);
+    this.pictureChange({ start: at.from, end: at.to, insert: next }, at.start, at.start, cx);
   }
 
   pictureField(box = this.picked?.box) {
@@ -5158,15 +5212,16 @@ export class Editor {
   }
 
   // Enter in the box: the alt text exactly as typed, or the address typed, trimmed (an empty one writes nothing), as one
-  // entry of the history. What is unchanged writes nothing. The float comes back.
+  // entry of the history; a highlight and comment around the picture stay. What is unchanged writes nothing. The float
+  // comes back.
   applyPictureBox(cx) {
     const p = this.pickedNow(), s = p?.box && this.editable() ? this.pickedSource(p) : null;
     if (!s) return this.cancelPictureBox(cx);
-    const typed = this.pictureField(p.box).value(), source = this.doc.text.slice(s.start, s.end), address = typed.trim();
+    const typed = this.pictureField(p.box).value(), source = this.doc.text.slice(s.from, s.to), address = typed.trim();
     const next = p.box === "alt" ? (typed === p.item.alt ? source : pictureWithAlt(source, typed))
       : !address || address === p.item.src ? source : pictureWithAddress(source, writtenAddress(address));
     if (next === source) return this.cancelPictureBox(cx);
-    this.pictureChange({ start: s.start, end: s.end, insert: next }, s.start, s.start, cx);
+    this.pictureChange({ start: s.from, end: s.to, insert: next }, s.start, s.start, cx);
   }
 
   // Escape in the box: nothing is written, and the float comes back.
@@ -5190,21 +5245,47 @@ export class Editor {
     if (name === "open") return this.openPicture(p.item.src, cx);
     if (name === "link") return this.link(p.item.href, cx);
     if (!this.editable()) return;
-    if (name === "change") this.changePicture(p, cx);
+    if (name === "comment") this.commentPicture(p, cx);
+    else if (name === "change") this.changePicture(p, cx);
     else if (name === "alt") this.showPictureBox("alt", cx);
     else if (name === "delete") this.deletePicture(p, cx);
   }
 
+  // Comment and Cmd+Alt+M on the picked picture: its comment edited when it has one (a picture holds one), else a new
+  // one written on it.
+  commentPicture(p, cx) {
+    if (!this.editable()) return;
+    if (p.item.comment) this.openPictureNote(p.key, p.item.comment.index, cx);
+    else this.startBlockAdd({ key: p.key, act: this.act, caret: null, picture: p.index }, cx);
+  }
+
+  // Comment `index` of paragraph of pictures `key` edited where a new one would be written: on its card, or in the
+  // box over its picture. Whatever else was being written closes, writing nothing; a picked picture stays so.
+  openPictureNote(key, index, cx) {
+    this.closeCard(cx);
+    this.closeBlockAdd(cx);
+    this.setBlockNote({ key, index, editing: false }, cx);
+    this.startBlockEdit(cx);
+  }
+
+  // Whether the comment box stands in the picked picture's float's place: with no margin, a comment on it is being
+  // written or edited.
+  noteOverPicture(p) {
+    if (this.margin) return false;
+    const a = this.blockAddNow();
+    return a ? a.key === p.key && a.picture === p.index : this.blockNoteEditing() && this.pictureNoteActive(p.key, p.index);
+  }
+
   // Drawn by the root after the bar: the picked picture's address and buttons, or its box; a press outside the box
-  // closes it and the float, writing nothing.
+  // closes it and the float, writing nothing. Nothing while the comment box stands in its place.
   pictureFloat(t) {
     const p = this.pickedNow();
-    if (!p) return null;
+    if (!p || this.noteOverPicture(p)) return null;
     if (p.box) {
-      const place = this.editable() && this.placePicture(p, LINK_BOX);
+      const place = this.editable() && this.placeOverPicture(p.key, p.index, LINK_BOX);
       return place ? this.boxFrame("md-picture-box", place, this.pictureField(p.box), t).on_mouse_down_out((_e, cx) => this.unpick(cx)) : null;
     }
-    const buttons = this.pictureButtons(p), place = this.placePicture(p, pictureFloatSize(p.item.src, buttons));
+    const buttons = this.pictureButtons(p), place = this.placeOverPicture(p.key, p.index, pictureFloatSize(p.item.src, buttons));
     return place && this.pictureFloatAt(place, p.item.src, { buttons, copied: p.copied, run: (name, cx) => this.pictureAction(name, cx) }, t);
   }
 
@@ -5381,12 +5462,14 @@ export class Editor {
     return parsedInline(this.seen, this.defsNow().map).spans.find(sp => sp.kind === "link" && sp.from <= span.start && span.end <= sp.to) ?? null;
   }
 
-  // The float's buttons on the picture picked in the edited field, as on a paragraph's (pictureAction).
+  // The float's buttons on the picture picked in the edited field, as on a paragraph's (pictureAction); Comment comments
+  // its source, which is what is selected, as any selection is commented.
   imageAction(name, cx) {
     const picked = this.elementNow();
     if (picked?.kind !== "image") return;
     const { span } = picked;
-    if (name === "copy") {
+    if (name === "comment") this.openNote(cx);
+    else if (name === "copy") {
       this.writeAddress(span.url, cx);
       this.element = { ...this.element, copied: true };
       cx.notify();
@@ -5533,9 +5616,14 @@ export class Editor {
   }
 
   // The comments of the card's block as its field shows them (a soft line break a space), a code block's, diagram's or
-  // table's as its comments paragraph's field does (`block`); null when it has none.
+  // table's as its comments paragraph's field does, a paragraph of pictures' as pictureNotes gives them (both `block`);
+  // null when it has none.
   cardComments() {
     const key = this.card?.key, b = key ? this.blockByKey(key) : null, owned = b ? this.shownNotes(key) : null;
+    if (b?.image) {
+      const list = this.pictureNotes(b);
+      return list.length ? { b, f: null, list, block: true } : null;
+    }
     if (!b || (!owned && !isText(b))) return null;
     const f = fieldOf(this.doc, owned ? owned.para : b), list = noted(f.value);
     return list.length ? { b, f, list, block: Boolean(owned) } : null;
@@ -5588,17 +5676,18 @@ export class Editor {
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_move((_e, cx) => cx.stop_propagation())
       .on_mouse_down_out((_e, cx) => this.closeCard(cx))
-      .children(found.list.map((c, i) => this.cardEntry(found.f.value, c, i, writable, new Date(), t)));
+      .children(found.list.map((c, i) => this.cardEntry(c.name ?? (c.kind === "comment" ? found.f.value.slice(c.from, c.to) : ""), c, i, writable, new Date(), t)));
   }
 
-  cardEntry(value, c, i, writable, now, t) {
+  // `marked`: what the comment is on, as its first line: the marked text, a picture's name, or nothing for a point.
+  cardEntry(marked, c, i, writable, now, t) {
     const button = (id, label, run) => div().id(id).h(24).px(8).flex().items_center().rounded(6).cursor_pointer()
       .bg(t.hover).text_color(t.foreground)
       .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); run(cx); })
       .child(label);
     const { when, text } = readNote(c.note), label = timeLabel(when, now);
     return v_flex().id(`md-note-${i}`).gap(4)
-      .when(c.kind === "comment", el => el.child(div().truncate().text_color(t.muted).child(clip(value.slice(c.from, c.to), NOTE_CLIP))))
+      .when(Boolean(marked), el => el.child(div().truncate().text_color(t.muted).child(clip(marked, NOTE_CLIP))))
       .when(Boolean(label), el => el.child(div().text_size(CARD_TIME_SIZE).text_color(t.dim).child(label)))
       .child(div().whitespace_normal().text_color(t.foreground).child(text))
       .when(writable, el => el.child(h_flex().gap(6)
@@ -5623,10 +5712,10 @@ export class Editor {
 
   // The comment that is active in the edited block: picked by a press on its text or its card, or being edited; a
   // comment being written is `adding`. Else a code block's, diagram's or table's comment being written, or its active
-  // comment (`block`, its `index`). -> { key, start, editing, adding, id } or null.
+  // comment (`block`, its `index`), a picture's among them. -> { key, start, editing, adding, id } or null.
   activeComment() {
     const a = this.blockAddNow();
-    if (a) return { key: a.key, index: -1, block: true, editing: true, adding: true, id: `add:${a.key}` };
+    if (a) return { key: a.key, index: -1, block: true, editing: true, adding: true, id: `add:${a.key}:${a.picture}` };
     const n = this.blockNoteNow();
     if (n) return { key: n.key, index: n.index, block: true, editing: n.editing, adding: false, id: `block:${n.key}:${n.index}:${n.editing}` };
     if (!this.activeKey || this.pending) return null;
@@ -5642,8 +5731,9 @@ export class Editor {
 
   // The margin's cards in document order: one per comment of the window's text blocks (the edited one's as its field
   // holds them), each level with the row its text starts on, one per comment of its code blocks, diagrams and tables,
-  // level with the block's top, and one for a comment being written; each pushed down off the one before. Worked out
-  // again only when something they are placed by has changed, not on every draw.
+  // level with the block's top, one per commented picture, level with the picture's top, and one for a comment being
+  // written; each pushed down off the one before. Worked out again only when something they are placed by has changed,
+  // not on every draw.
   cardList() {
     const m = this.margin;
     if (!m || !this.doc || this.sums.length !== this.blocks.length + 1) return [];
@@ -5653,7 +5743,7 @@ export class Editor {
     this.commentCount();
     const list = [];
     for (const key of this.mountedKeys()) this.blockCards(key, focus, list);
-    const written = !focus?.adding ? null : focus.block ? this.newBlockCard(focus.key) : this.newCard();
+    const written = !focus?.adding ? null : focus.block ? this.newBlockCard(this.blockAdd) : this.newCard();
     if (written) list.push(written);
     list.sort((a, b) => a.i - b.i || a.at - b.at);
     const tops = stackCards(list);
@@ -5665,7 +5755,8 @@ export class Editor {
   blockCards(key, focus, list) {
     const i = this.at.get(key), b = this.blocks[i], active = key === this.activeKey, owned = b && this.shownNotes(key);
     if (owned) return this.ownerCards(i, b, owned.para, focus, list);
-    if (!b || !isText(b) || b.image || b === this.pending?.block || (!active && !this.notesFor.byKey.has(key))) return;
+    if (b?.image) return this.pictureCards(i, b, focus, list);
+    if (!b || !isText(b) || b === this.pending?.block || (!active && !this.notesFor.byKey.has(key))) return;
     const memo = active ? { value: this.seen, cards: cardsOf(this.seen) } : this.cardMemoOf(b);
     for (const card of memo.cards) {
       const { c, index, at, when, text } = card, mine = Boolean(focus) && !focus.block && focus.key === key && focus.start === c.start, id = `md-card-${key}-${index}`;
@@ -5676,12 +5767,8 @@ export class Editor {
 
   // Read from the comments paragraph even while b is edited, all level with b's top.
   ownerCards(i, b, para, focus, list) {
-    const memo = this.ownerMemoOf(b, para), want = this.sums[i] + this.data.get(b.key).space;
-    for (const card of memo.cards) {
-      const { c, index, when, text } = card, mine = Boolean(focus?.block) && focus.key === b.key && focus.index === index, id = `md-card-${b.key}-${index}`;
-      const look = mine ? cardLook({ text, header: true, full: true }) : card.look;
-      list.push({ id, key: b.key, index, c, when, text: look.text, i, at: index, want, h: this.raisedH(id, look.h), active: mine, editing: mine && focus.editing, block: true });
-    }
+    const want = this.sums[i] + this.data.get(b.key).space;
+    this.blockNoteCards(i, b, this.ownerMemoOf(b, para), focus, list, card => ({ at: card.index, want }));
   }
 
   ownerMemoOf(b, para) {
@@ -5692,6 +5779,33 @@ export class Editor {
     return memo;
   }
 
+  // Each level with its picture's top, in the pictures' order.
+  pictureCards(i, b, focus, list) {
+    const d = this.data.get(b.key);
+    this.blockNoteCards(i, b, this.pictureMemoOf(b), focus, list, card => ({ at: card.picture, want: this.noteTop(i, d, card.picture) }));
+  }
+
+  pictureMemoOf(b) {
+    const kept = this.cardMemo.get(b.key);
+    if (kept && kept.content === b.content && kept.kind === PICTURE_NOTES_MEMO) return kept;
+    const cards = this.pictureNotes(b).map((c, index) => {
+      const { when, text } = readNote(c.note);
+      return { c, index, picture: c.picture, when, text, look: cardLook({ text, header: true }) };
+    });
+    const memo = { content: b.content, kind: PICTURE_NOTES_MEMO, cards };
+    this.cardMemo.set(b.key, memo);
+    return memo;
+  }
+
+  // One `block` card a comment of block b (page index i), placed by `placeOf(card)` -> { at, want }.
+  blockNoteCards(i, b, memo, focus, list, placeOf) {
+    for (const card of memo.cards) {
+      const { c, index, when, text } = card, mine = Boolean(focus?.block) && focus.key === b.key && focus.index === index, id = `md-card-${b.key}-${index}`;
+      const look = mine ? cardLook({ text, header: true, full: true }) : card.look;
+      list.push({ id, key: b.key, index, c, when, text: look.text, i, ...placeOf(card), h: this.raisedH(id, look.h), active: mine, editing: mine && focus.editing, block: true });
+    }
+  }
+
   // The card of the comment being written, at the start of the text it goes on.
   newCard() {
     const i = this.at.get(this.activeKey), at = this.note.range.start, id = NEW_CARD;
@@ -5699,12 +5813,19 @@ export class Editor {
     return { id, key: this.activeKey, index: -1, c: null, when: null, text: "", i, at, want: this.rowTop(i, this.blocks[i], null, at), h: this.raisedH(id, look.h), active: true, editing: true };
   }
 
-  // The card of a comment being written on code block, diagram or table `key`: level with its top, after its cards.
-  newBlockCard(key) {
+  // The card of a comment being written on code block, diagram or table `key`, level with its top, after its cards; or
+  // on its picture `picture`, level with the picture's top, among the cards of the pictures around it.
+  newBlockCard({ key, picture }) {
     const i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d) return null;
-    const look = cardLook({ text: this.noteField.value(), header: true, full: true }), at = this.shownNotes(key)?.points.length ?? 0;
-    return { id: NEW_CARD, key, index: -1, c: null, when: null, text: "", i, at, want: this.sums[i] + d.space, h: this.raisedH(NEW_CARD, look.h), active: true, editing: true, block: true, adding: true };
+    const look = cardLook({ text: this.noteField.value(), header: true, full: true }), at = picture >= 0 ? picture : this.shownNotes(key)?.points.length ?? 0;
+    return { id: NEW_CARD, key, index: -1, c: null, when: null, text: "", i, at, want: this.noteTop(i, d, picture), h: this.raisedH(NEW_CARD, look.h), active: true, editing: true, block: true, adding: true };
+  }
+
+  // The page y that block data d's comments are level with (page index i): its top, or its picture `picture`'s.
+  noteTop(i, d, picture = -1) {
+    const box = picture >= 0 ? this.pictureOf(d.key, d.pictureW).boxes[picture] : null;
+    return this.sums[i] + d.space + (box?.y ?? 0);
   }
 
   raisedH(id, estimate) {
@@ -5788,11 +5909,12 @@ export class Editor {
     cx.notify();
   }
 
-  // A press on a card makes its comment active, as a press on its text does; one on the card's text edits it there.
+  // A press on a card makes its comment active, as a press on its text does; one on the card's text edits it there. A
+  // press on the card of a picture picked with its comment lets the picture go.
   cardDown(e, onText, cx) {
     if (!this.editable() || !e.c || this.activeComment()?.editing) return;
     if (e.block) {
-      if (!e.active) this.pickBlockNote(e.key, e.index, cx);
+      if (!e.active || this.picked) this.pickBlockNote(e.key, e.index, cx);
       if (onText) this.startBlockEdit(cx);
       return;
     }
@@ -5847,8 +5969,35 @@ export class Editor {
   }
 
   blockNoteNow() {
-    const n = this.blockNote, owned = n && this.doc ? this.notesNow().owners.get(n.key) : null;
-    return owned && n.index < owned.points.length ? n : null;
+    const n = this.blockNote;
+    return n && this.doc && n.index < this.blockNotesOf(n.key).length ? n : null;
+  }
+
+  // Block `key`'s comments as its cards show them: a code block's, diagram's or table's from its comments paragraph, a
+  // paragraph of pictures' from around its pictures; [] for none.
+  blockNotesOf(key) {
+    const owned = this.notesNow().owners.get(key);
+    if (owned) return owned.points;
+    const b = this.blockByKey(key);
+    return b?.image ? this.pictureNotes(b) : [];
+  }
+
+  // The splices that edit and resolve block b's comment `index`, and what their history entry says: one of a block
+  // opens nothing when undone or redone, one of a picture picks the picture (its start, the splice's caret).
+  noteEdit(b, index, note) {
+    if (!b.image) return editBlockNote(this.doc, b, index, note);
+    const at = this.notePicture(b.key, index);
+    return at < 0 ? null : editPictureNote(this.doc, b, at, note);
+  }
+
+  noteResolve(b, index) {
+    if (!b.image) return resolveBlockNote(this.doc, b, index);
+    const at = this.notePicture(b.key, index);
+    return at < 0 ? null : resolvePictureNote(this.doc, b, at);
+  }
+
+  noteMeta(b, s) {
+    return b.image ? { caretBefore: s.caret, caretAfter: s.caret } : { opensNothing: true };
   }
 
   blockNoteEditing() {
@@ -5866,8 +6015,9 @@ export class Editor {
     if (this.blockNote) this.setBlockNote(null, cx);
   }
 
-  // A press on a block's card: its comment active and the block framed, opening nothing. The editing of another block
-  // ends and the page has the keyboard; the block itself, when edited, stays so with the keyboard in its field.
+  // A press on a block's or a picture's card: its comment active and the block, or the picture, framed, opening nothing;
+  // a picked picture is let go. The editing of another block ends and the page has the keyboard; the block itself, when
+  // edited, stays so with the keyboard in its field.
   pickBlockNote(key, index, cx) {
     this.closeCard(cx);
     this.setSel(null, cx);
@@ -5881,7 +6031,7 @@ export class Editor {
   startBlockEdit(cx) {
     const n = this.blockNoteNow();
     if (!n || !this.editable()) return;
-    const text = noteText(this.notesNow().owners.get(n.key).points[n.index].note);
+    const text = noteText(this.blockNotesOf(n.key)[n.index].note);
     this.setBlockNote({ ...n, editing: true }, cx);
     this.guard(() => {
       this.noteField.set_value(text);
@@ -5896,9 +6046,9 @@ export class Editor {
     if (!n?.editing) return;
     if (!oneLine(text)) return this.resolveBlockNoteAt(n.key, n.index, cx);
     this.commit(cx);
-    const b = this.blockByKey(n.key), s = b && editBlockNote(this.doc, b, n.index, text);
+    const b = this.blockByKey(n.key), s = b && this.noteEdit(b, n.index, text);
     this.setBlockNote(this.editedBlockNote(n), cx);
-    if (s) this.change(s, cx, { opensNothing: true });
+    if (s) this.change(s, cx, this.noteMeta(b, s));
     this.giveBackKeyboard();
   }
 
@@ -5936,29 +6086,35 @@ export class Editor {
     else if (this.activeKey) this.deactivate(cx);
     const b = this.blockByKey(edited ? this.activeKey : key);
     if (!b || !ownsNotes(b)) return;
+    this.unpick(cx);
+    this.startBlockAdd({ key: b.key, act: this.act, caret: edited ? this.caretNow() : null, picture: -1 }, cx);
+  }
+
+  // The new comment `add` (as `blockAdd` holds it) takes the note field, empty; every other comment box, card and menu
+  // closes, writing nothing.
+  startBlockAdd(add, cx) {
     const was = this.blockAdd?.key;
     this.closeCard(cx);
     this.endBlockNote(cx);
-    this.unpick(cx);
     this.dropLanguages(cx);
-    this.blockAdd = { key: b.key, act: this.act, caret: edited ? this.caretNow() : null };
+    this.blockAdd = add;
     this.guard(() => {
       this.noteField.set_value("");
       this.noteField.set_selected_range({ start: 0, end: 0 });
     });
     this.noteField.focus();
     this.revealBlockAdd(cx);
-    this.redraw([...new Set([was, b.key])].filter(Boolean), cx);
+    this.redraw([...new Set([was, add.key])].filter(Boolean), cx);
     cx.notify();
   }
 
-  // The page scrolls the least that shows where the new comment is written: its card, else the block's top edge,
-  // as the box is not drawn while that edge is off the pane.
+  // The page scrolls the least that shows where the new comment is written: its card, else the top edge of its block
+  // or picture, as the box is not drawn while that edge is off the pane.
   revealBlockAdd(cx) {
     const a = this.blockAddNow(), i = a ? this.at.get(a.key) : undefined, d = a && this.data.get(a.key);
     if (i === undefined || !d || !this.viewport || this.sums.length !== this.blocks.length + 1) return;
     const card = this.margin ? this.cardList().find(e => e.id === NEW_CARD) : null;
-    const y = COLUMN.padTop + (card ? card.top : this.sums[i] + d.space), rowPx = card ? Math.min(card.h, this.viewH() / 2) : 0;
+    const y = COLUMN.padTop + (card ? card.top : this.noteTop(i, d, a.picture)), rowPx = card ? Math.min(card.h, this.viewH() / 2) : 0;
     const next = keepInView({ offset: this.offset, viewportH: this.viewH(), y, rowPx, contentH: this.contentH() });
     if (next !== this.offset) this.scrollTo(next, cx);
   }
@@ -5972,17 +6128,27 @@ export class Editor {
     return Boolean(this.blockAddNow());
   }
 
-  // Enter in the new comment's card or box: the comment stamped with the time, under its block, as one entry of the
-  // history whose undo opens nothing; an empty one writes nothing.
+  // Enter in the new comment's card or box: the comment stamped with the time as one entry of the history, a block's
+  // under it with an undo that opens nothing, a picture's as savePictureAdd writes it; an empty one writes nothing.
   saveBlockAdd(cx) {
     const a = this.blockAddNow(), text = this.noteField.value();
     if (!a) return this.cancelBlockAdd(cx);
+    if (a.picture >= 0) return this.savePictureAdd(a, text, cx);
     this.commit(cx);
     const b = this.blockByKey(a.key), s = b && addBlockNote(this.doc, b, text, new Date());
     this.closeBlockAdd(cx);
     if (s) this.change(s, cx, { opensNothing: true });
     this.checkMargin(cx);
     this.backFromBlockAdd(a, cx);
+  }
+
+  // A picture's new comment, written around it; the picture stays picked, and undo and redo pick it too.
+  savePictureAdd(a, text, cx) {
+    const b = this.blockByKey(a.key), s = b?.image ? addPictureNote(this.doc, b, a.picture, text, new Date()) : null;
+    this.closeBlockAdd(cx);
+    if (s) this.pictureChange(s, s.caret, s.caret, cx);
+    else this.handle.focus();
+    this.checkMargin(cx);
   }
 
   cancelBlockAdd(cx) {
@@ -6017,9 +6183,9 @@ export class Editor {
   resolveBlockNoteAt(key, index, cx) {
     if (!this.editable()) return;
     this.commit(cx);
-    const b = this.blockByKey(key), s = b && resolveBlockNote(this.doc, b, index);
+    const b = this.blockByKey(key), s = b && this.noteResolve(b, index);
     this.endBlockNote(cx);
-    if (s) this.change(s, cx, { opensNothing: true });
+    if (s) this.change(s, cx, this.noteMeta(b, s));
     this.checkMargin(cx);
     this.giveBackKeyboard();
   }
