@@ -2098,3 +2098,27 @@ export function closeFence(doc, b) {
   const insert = hasEol ? b.containerPrefix + b.fence + doc.eol : doc.eol + b.containerPrefix + b.fence;
   return { start: b.end, end: b.end, insert, caret: b.end };
 }
+
+// Code block or diagram b tagged with language `id`: it takes the place of the info string's first word, the rest
+// kept, and "" (Plain text) removes the whole info string. An indented block gets fences (fencedCode). Null when
+// nothing would change.
+export function setLanguage(doc, b, id) {
+  if (!b.fence) return id ? fencedCode(doc, b, id) : null;
+  const line = absLine(b, 0), open = fenceRun(doc.text, line.body).end, info = doc.text.slice(open, line.eol);
+  if (!id) return b.info ? { start: open, end: line.eol, insert: "", caret: open } : null;
+  const lead = /^[ \t]*/.exec(info)[0].length, word = /^\S*/.exec(info.slice(lead))[0];
+  if (word === id) return null;
+  const start = word ? open + lead : open;
+  return { start, end: start + word.length, insert: id, caret: start };
+}
+
+// Indented code block b fenced and tagged `id`: the lines its field shows, each under its container prefix, between
+// fences of backticks longer than any line of backticks in the code.
+function fencedCode(doc, b, id) {
+  const f = codeFieldOf(doc.text, b, doc.eol), lines = f.value.split("\n"), prefix = b.containerPrefix;
+  const longest = Math.max(0, ...lines.map(l => (closes(l, "```") ? CLOSE.exec(l)[1].length : 0)));
+  const fence = "`".repeat(Math.max(3, longest + 1)), blankLine = prefix.replace(/[ \t]+$/, "");
+  const start = b.start + b.lines[0].body, end = fieldToDoc(f, f.value.length);
+  const insert = [fence + id, ...lines.map(l => (l ? prefix + l : blankLine)), prefix + fence].join(doc.eol);
+  return { start, end, insert, caret: start };
+}

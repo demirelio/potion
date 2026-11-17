@@ -463,6 +463,25 @@ export function barMenuPlace({ bar, button, h, viewW, viewH }) {
   return { left: clamp(bar.left + button.x, BAR.margin, viewW - BAR.margin - w), top, w, h };
 }
 
+// A code block's box starts with a strip CODE_HEAD tall, its language chip at the right: the name about `charW` px a
+// character in `padX` each side, then `gap` and the chevron of a chip that opens the menu.
+export const CODE_HEAD = 28;
+export const CHIP = { h: 22, padX: 7, charW: 6.4, gap: 3, chevron: 12 };
+export const chipW = (name, chevron) => Math.ceil(2 * CHIP.padX + [...name].length * CHIP.charW + (chevron ? CHIP.gap + CHIP.chevron : 0));
+
+// The language menu: a search box `searchH` tall over rows in the bar menus' look, `gap` from its chip.
+export const LANG_MENU = { searchH: 32, gap: 4 };
+export const languageMenuH = rows => barMenuH(rows) + LANG_MENU.searchH;
+
+// Under the chip (a box in pane coordinates) with their right edges aligned, else over it when only that side has
+// room for the menu at its tallest (`full`), so filtering never flips it; kept inside the pane. -> { side, left, top, w, h }
+export function languageMenuPlace({ chip, h, full = h, viewW, viewH }) {
+  const w = Math.min(BAR_MENU.w, viewW - 2 * BAR.margin), below = chip.y + chip.h + LANG_MENU.gap, above = chip.y - LANG_MENU.gap;
+  const side = below + full > viewH - BAR.margin && above - full >= BAR.margin ? "above" : "below";
+  const top = clamp(side === "below" ? below : above - h, BAR.margin, viewH - BAR.margin - h);
+  return { side, left: clamp(chip.x + chip.w - w, BAR.margin, viewW - BAR.margin - w), top, w, h };
+}
+
 export const NOTES = { w: 40, h: 22, gap: 10, margin: 12 };
 
 // A block's comment count: at its first row, `gap` right of the text column when that leaves `margin` before the pane's

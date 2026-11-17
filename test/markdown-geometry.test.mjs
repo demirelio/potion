@@ -7,6 +7,7 @@ import {
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
   barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
+  CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
@@ -526,6 +527,28 @@ test("a bar menu with no room under its button opens over the bar; with room on 
   assert.equal(barMenuPlace({ bar, button, h, viewW: 900, viewH: 600 }).top, 500 - BAR_MENU.gap - h, "over the bar");
   assert.equal(barMenuPlace({ bar: { ...bar, top: 150 }, button, h, viewW: 900, viewH: 400 }).top, 400 - BAR.margin - h, "its bottom 8 px over the pane's");
   assert.equal(barMenuPlace({ bar: { ...bar, top: 150 }, button, h, viewW: 900, viewH: h }).top, BAR.margin, "a pane shorter than the menu: at its top");
+});
+
+test("a code block's strip is 28 px; its chip is as wide as its name in padding, and the chevron when it opens a menu", () => {
+  assert.equal(CODE_HEAD, 28);
+  assert.ok(CHIP.h < CODE_HEAD, "the chip fits the strip");
+  assert.equal(chipW("JavaScript", false), Math.ceil(2 * CHIP.padX + 10 * CHIP.charW));
+  assert.equal(chipW("JavaScript", true), Math.ceil(2 * CHIP.padX + 10 * CHIP.charW + CHIP.gap + CHIP.chevron));
+  assert.equal(chipW("C#", true) < chipW("Plain text", true), true);
+});
+
+test("the language menu opens under its chip, right edges aligned; over it when only that has room; always inside the pane", () => {
+  const chip = { x: 700, y: 100, w: 90, h: CHIP.h }, h = languageMenuH(5), full = languageMenuH(12);
+  assert.equal(languageMenuH(3), barMenuH(3) + LANG_MENU.searchH, "the search box over rows in the bar menus' look");
+  const below = languageMenuPlace({ chip, h, full, viewW: 900, viewH: 800 });
+  assert.deepEqual(below, { side: "below", left: 790 - BAR_MENU.w, top: 100 + CHIP.h + LANG_MENU.gap, w: BAR_MENU.w, h });
+  const above = languageMenuPlace({ chip: { ...chip, y: 600 }, h, full, viewW: 900, viewH: 800 });
+  assert.deepEqual([above.side, above.top + above.h], ["above", 600 - LANG_MENU.gap], "over the chip, its bottom by it");
+  assert.equal(languageMenuPlace({ chip: { ...chip, y: 300 }, h, full, viewW: 900, viewH: 500 }).side, "below", "room on neither side for all twelve rows: under it");
+  assert.equal(languageMenuPlace({ chip: { ...chip, y: 300 }, h, full, viewW: 900, viewH: 500 }).top, 500 - BAR.margin - h, "kept inside the pane");
+  assert.equal(languageMenuPlace({ chip: { ...chip, x: 20 }, h, full, viewW: 900, viewH: 800 }).left, BAR.margin, "never off the pane's left");
+  assert.equal(languageMenuPlace({ chip, h, full, viewW: 200, viewH: 800 }).w, 200 - 2 * BAR.margin, "a narrow pane: as wide as it leaves");
+  assert.equal(languageMenuPlace({ chip: { ...chip, y: 900 }, h, full, viewW: 900, viewH: 800 }).top, 800 - BAR.margin - h, "a chip scrolled below the pane");
 });
 
 test("prose through comments: a press lands by the text Reading shows, the marks and the comment hidden and a point comment its marker", () => {

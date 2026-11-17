@@ -161,11 +161,11 @@ comment's text stays highlighted, and escapes and entities show as their charact
 ever shows in Reading, its `#`, `-`, `1.`, `[ ]` or `>` included; the marks stay in the file, and the Markdown view
 shows them. A word with formatting moves as one piece until the caret is in it: click into it or arrow up to it, and
 the caret stops between its letters. A code block, or a diagram's source, shows only its code, in the terminal font,
-where Reading draws it: its fences stay in the file, out of sight, its language stays at the top right, and a diagram
-is drawn again when you leave it. An indented code block (four spaces, no fence) shows without its indent and stays
-indented. A table, HTML block or front matter shows its source. A paragraph of pictures never shows its source: a click
-[picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as spaces, so it wraps as it did on the
-page, and keeps them in the file.
+where Reading draws it: its fences stay in the file, out of sight, its [language](#code-languages) stays on its chip at
+the top right, and a diagram is drawn again when you leave it. An indented code block (four spaces, no fence) shows
+without its indent and stays indented. A table, HTML block or front matter shows its source. A paragraph of pictures
+never shows its source: a click [picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as
+spaces, so it wraps as it did on the page, and keeps them in the file.
 
 In code, typing stays as typed: no formatting, shortcut or slash menu. Enter starts the new line with the indent of
 the line the caret is on, and Tab and Shift+Tab indent (see the table). To leave a code block, press Enter three times
@@ -182,6 +182,7 @@ fences.
 | Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
 | Double-click a diagram | Shows its source to edit, without its fences (a single click does nothing, so a drag or a stray click never opens it) |
+| Click a code block's language chip | Opens its [language menu](#code-languages), without opening the block; a second click closes it |
 | Click a picture | [Picks it](#pictures): a ring around it and its menu over it. A double-click or a right-click does the same, a linked picture included. A picture inside a line of text is selected whole with the same menu, and a second click puts the caret in its alt text |
 | Cmd+click a linked picture | Opens its link, as Cmd+click on a link in text does, also in a file you can't edit |
 | Click a checkbox | Ticks or unticks it |
@@ -234,7 +235,32 @@ formatted words, while direct typing in any script is fine. **Left out on purpos
 inside text, HTML `<img>` and reference-style images as the picture (they show as an icon and their alt text; only a
 paragraph made of pictures is drawn), footnotes (a reference stays text, a definition shows as a dim source line),
 jumping to `#anchor` links, and any button besides the one toggle, a diagram's zoom, the format bar, a link's popover,
-a picture's menu and the comments' cards.
+a picture's menu, a code block's language chip and the comments' cards.
+
+### Code languages
+
+Every code block's box starts with a strip, its language on a small chip at the right (JavaScript, Python, Plain text
+when it has none, or the word the file gives when the list doesn't know it); the code starts under it, so the chip
+never covers code. A diagram's source has one while you edit it. Click the chip for the language menu: type to narrow
+it by name or a usual alias (`py`, `sh`, `ts`), Up and Down move the highlight, Enter or a click picks a language, and
+Escape, a click elsewhere or a second click on the chip closes it writing nothing. With nothing typed it lists Plain
+text and the common languages, with a check on the block's own; a word that is no language of the list gets a last
+row, "Use “zig”", that writes it as typed (letters, digits and `+ # - . _`). The chip of the block you are editing
+keeps it edited, its caret back where it was after the menu; any other block's chip opens the menu without opening the
+block.
+
+The language is written where markdown keeps it, as the first word of the info string after the opening fence
+(```` ```js ````). Picking a language puts its id in place of that word and keeps what follows it
+(```` ```js title="a.js" ```` becomes ```` ```ts title="a.js" ````); Plain text removes the whole info string. The
+ids are the short forms READMEs use most: `bash`, `c`, `cpp`, `csharp`, `css`, `diff`, `go`, `html`, `java`, `js`,
+`json`, `kotlin`, `markdown`, `mermaid`, `php`, `python`, `ruby`, `rust`, `sql`, `swift`, `toml`, `ts`, `xml` and
+`yaml`; the chip reads their aliases too (`javascript`, `py`, `sh`, `yml` …). An indented code block has no fence to
+hold a language, so picking one rewrites it as a fenced block: its lines without their four-space indent between
+fences of three backticks (more when the code holds a line of backticks), and the code shows as before. Mermaid is in
+the list: picked on a code block it makes it a diagram, drawn once you leave it, and another language or Plain text
+picked on a diagram's source makes it a code block again. Each pick is one step of the history: Cmd+Z puts the old
+info string back, and on a block you were not editing it opens that block at the start of its code. In a file you
+can't edit the chip only names the language, and a block with none has no chip.
 
 ### The format bar
 

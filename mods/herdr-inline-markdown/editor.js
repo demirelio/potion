@@ -4,15 +4,16 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, Editor as CodeView, EditorState } from "gpui-base";
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
-import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, CARD, CARDS, COLUMN, FRAME, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
+import { BAR, BAR_MENU, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
 import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, altNames, imageStart, placePictures } from "./pick.js";
-import { ACTIONS, KEYS_SETTLE_MS, NOTE, SOURCE, claimRebind, installKeys } from "./keys.js";
+import { ACTIONS, KEYS_SETTLE_MS, LANG, NOTE, SOURCE, claimRebind, installKeys } from "./keys.js";
+import { MENU_ROWS, infoWord, languageMatches, languageName, languageOf } from "./languages.js";
 import { actedOn, colorOf, hasMark, highlightOf, setColor, setMark, toggleMark, wordAround } from "./format.js";
 import { editOf, formatAt, mend } from "./mend.js";
 import { MARK_BITS } from "./restyle.js";
@@ -166,6 +167,18 @@ const pictureFloatSize = (src, buttons) => {
   const shown = clipMiddle(src, LINK_POP.addressChars) || NO_ADDRESS;
   return popoverSize([...shown].length, buttons.length, 1 + buttons.filter(b => b.apart).length);
 };
+const LANG_ACTIONS = new Set(["mdb-lang-pick", "mdb-lang-close", "mdb-lang-up", "mdb-lang-down"]);
+const CHIP_CHARS = 24;
+// The language menu's rows for what was typed: languages, then a row ({ typed }) writing a word the list doesn't know.
+const languageRows = query => {
+  const { items, typed } = languageMatches(query);
+  return typed ? [...items, { typed }] : items;
+};
+// A code block's box starts with the language strip, a diagram's only while its source is being edited.
+const stripped = (b, active) => b.kind === "code" || (b.kind === "mermaid" && active);
+const NO_STRIP = { strip: false, chip: "", chipW: 0, chipLive: false, chipOpen: false };
+const codeStartIn = (doc, b) => fieldToDoc(fieldOf(doc, b), 0);
+const inBox = (box, x, y) => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h;
 const LINK_REFUSED = "A link can't hold another link";
 // Whether a link can go somewhere does not depend on its address: this one stands in before one is typed.
 const ANY_ADDRESS = "#";
@@ -415,7 +428,8 @@ function mappedThrough(edits, p) {
 
 // What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, its text blocks drawn
 // by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a picture
-// picked with its float, and the quote's comment on its card in the margin while a new comment's card is being written.
+// picked with its float, the quote's comment on its card in the margin while a new comment's card is being written, and
+// the js block's language menu open.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
@@ -555,6 +569,12 @@ export class Editor {
     this.altField.on("submit", (_e, cx) => this.savePictureBox(cx));
     this.addressField = InputState.new({ placeholder: "Paste a picture address or path" });
     this.addressField.on("submit", (_e, cx) => this.savePictureBox(cx));
+    // The language menu a code block's chip opened ({ key, act, caret, query, items, index, first }), for one activation:
+    // `caret` is the edited block's selection when the menu opened over it, which gets the keyboard back after it.
+    this.lang = null;
+    this.langField = InputState.new({ placeholder: "Search or type a language" });
+    this.langField.on("change", (_e, cx) => this.languagesTyped(cx));
+    this.langField.on("submit", (_e, cx) => this.languageKey("mdb-lang-pick", cx));
 
     // Calibration: `cal` is in use while `calNext` collects a run's measurements; `look` is the theme, fonts and zoom
     // last drawn in (a change reruns calibration; `calGen` names each run, `calTimed` the last one whose give-up clock
@@ -602,6 +622,8 @@ export class Editor {
     this.setPictures(pictures, () => FIXTURE_PICTURE);
     this.picked = { key: pictures.key, index: 0, copied: false, box: null };
     this.hoverFrame = diagram.key;
+    const code = this.doc.blocks.find(b => b.kind === "code");
+    this.lang = { key: code.key, act: this.act, caret: null, query: "", items: languageRows(""), index: 0, first: 0 };
     this.rebuild(null, null);
   }
 
@@ -1070,6 +1092,7 @@ export class Editor {
   toMarkdown(cx) {
     this.setSel(null, cx);
     this.unpick(cx);
+    this.dropLanguages(cx);
     this.pointer = null;
     let at = null;
     this.writeHeld(cx);
@@ -1123,8 +1146,9 @@ export class Editor {
     if (k === "cmd-s") { cx.stop_propagation(); this.saveNow(cx); return; }
     if (k === "cmd-e") { cx.stop_propagation(); this.toggle(cx); return; }
     if (k === "escape" && this.card) { cx.stop_propagation(); this.closeCard(cx); return; }
-    // Keys typed into a picture's box reach this root too, and one stopped here never reaches the box's field.
-    if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey || this.pictureBoxOpen()) return;
+    // Keys typed into a picture's box or the language menu reach this root too, and one stopped here never reaches the
+    // box's field.
+    if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey || this.pictureBoxOpen() || this.langOpen()) return;
     if (this.sel && this.selectionKey(e, cx)) return;
     if (this.picked && this.pictureKey(k, cx)) return;
     if (k === "enter" && this.editable()) { cx.stop_propagation(); this.resume(cx); return; }
@@ -1153,6 +1177,7 @@ export class Editor {
       if (this.pictureBoxOpen() || this.imageBoxOpen()) return this.savePictureBox(cx);
       return this.linkBoxOpen() ? this.applyLinkBox(cx) : this.saveNote(cx);
     }
+    if (LANG_ACTIONS.has(name)) return this.languageKey(name, cx);
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
     this.syncField(cx);
     if (name === "mdb-escape") this.typingStyle = null;
@@ -1215,6 +1240,7 @@ export class Editor {
           else if (this.linkBoxOpen()) this.linkField.focus();
           else if (this.pictureBoxOpen()) this.pictureField().focus();
           else if (this.imageBoxOpen()) this.pictureField(this.imageBox.kind).focus();
+          else if (this.langOpen()) this.langField.focus();
           else if (this.activeKey) this.field.focus();
           else this.handle.focus();
         }
@@ -1376,6 +1402,7 @@ export class Editor {
     this.releaseField(this.disown(key));
     if (this.hoverFrame === key) this.hoverFrame = null;
     if (this.pan?.key === key) this.pan = null;
+    if (this.lang?.key === key) this.letLanguagesGo();
   }
 
   // Only blocks with different data are redrawn, the Column only when the blocks, their order or its window moved.
@@ -1664,8 +1691,7 @@ export class Editor {
     const space = spaceBefore(blocks, i, this.doc.blocks);
     return {
       key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color,
-      space, depth: b.depth, text, ...this.notesData(b, look, space, cal, width),
-      info: b.kind === "mermaid" ? "mermaid" : b.kind === "code" ? b.info.trim().split(/\s+/)[0] : "",
+      space, depth: b.depth, text, ...this.notesData(b, look, space, cal, width), ...this.chipData(b),
       marker, label: marker === "number" ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked),
       diagram: look.look === "diagram" ? diagramSig(this.shown.get(b.key), this.good.get(b.key)) : "",
       mode: b.key === this.activeKey ? "active" : this.blockFields.has(b.key) ? "field" : "rendered",
@@ -1685,6 +1711,20 @@ export class Editor {
     if (!notes) return { notes: 0, notesX: 0, notesY: 0 };
     const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: cal.row });
     return { notes, notesX: at.x, notesY: at.y };
+  }
+
+  // The strip a code block's box starts with, and its language chip: the language's name (an unknown word as written,
+  // Plain text for none; on a file that can't be edited, no chip for none), and whether it opens the menu.
+  chipData(b) {
+    if (!stripped(b, b.key === this.activeKey)) return NO_STRIP;
+    const live = !this.file || this.editable(), word = infoWord(b.info), chip = word || live ? clip(languageName(word), CHIP_CHARS) : "";
+    const open = Boolean(chip) && this.lang?.key === b.key && this.lang.act === this.act;
+    return { strip: true, chip, chipW: chip ? chipW(chip, live) : 0, chipLive: live, chipOpen: open };
+  }
+
+  // Block data d's language chip from the block's top-left: at the right of the strip under the box's border and padding.
+  chipIn(d) {
+    return { x: this.textWidth() - 1 - BOX.px - d.chipW, y: d.space + 1 + BOX.py + (CODE_HEAD - CHIP.h) / 2, w: d.chipW, h: CHIP.h };
   }
 
   // `answer` says how one picture of the paragraph stands, as { state, path, width, height, error }: Images.get's answer.
@@ -1803,11 +1843,12 @@ export class Editor {
     const box = d.look === "code" || d.look === "boxed" ? 2 * BOX.py + 2 : d.look === "front" ? 2 * FRONT_BOX.py + 2 : 0;
     const lines = d.text.split("\n"), perRow = Math.max(1, Math.floor(w / advance));
     const rows = d.look === "boxed" ? lines.length : lines.reduce((n, l) => n + Math.max(1, Math.ceil(l.length / perRow)), 0);
-    return estimateHeight(rows, d.row, d.space) + box;
+    return estimateHeight(rows, d.row, d.space) + box + (d.strip ? CODE_HEAD : 0);
   }
 
   // Where a block's field (when `active`) or rendered content sits inside its root: x and y from its top-left, the
-  // width, and what its box adds below. The space above, marker column, quote bar and box padding come before it.
+  // width, and what its box adds below. The space above, marker column, quote bar, box padding and a code block's strip
+  // come before it.
   chromeOf(d, active) {
     let x = d.depth * INDENT, w = this.textWidth() - x, y = d.space, below = 0;
     if (d.kind === "item") { x += MARKER_W; w -= MARKER_W; }
@@ -1815,6 +1856,7 @@ export class Editor {
     const box = active ? (d.kind === "frontmatter" ? FRONT_BOX : isRaw(d.kind) ? BOX : null)
       : d.look === "front" ? FRONT_BOX : d.look === "code" || d.look === "boxed" ? BOX : null;
     if (box) { x += box.px + 1; w -= 2 * (box.px + 1); y += box.py + 1; below = box.py + 1; }
+    if (stripped(d, active)) y += CODE_HEAD;
     return { x, y, w: Math.max(1, w), below };
   }
 
@@ -2050,7 +2092,8 @@ export class Editor {
 
   // A press beside the edited block's field would take the keyboard from it: it is given back at once, and again on the
   // mouse-up if the root took it anyway. `beside` is that block's key, `key` the block pressed, from which a drag
-  // selects blocks. A press anywhere but on the picked picture lets it go.
+  // selects blocks. A press anywhere but on the picked picture lets it go, and one anywhere but on the chip whose
+  // language menu is open closes the menu.
   viewportDown(e, cx) {
     this.closeSlash(cx);
     this.closeBar(cx);
@@ -2061,6 +2104,7 @@ export class Editor {
     if (!e?.modifiers?.shift) this.setSel(null, cx);
     const p = this.point(e), hit = p ? this.hit(p) : null;
     if (!this.onPicked(hit)) this.unpick(cx);
+    if (this.lang && !(hit?.on === "chip" && hit.block.key === this.lang.key)) this.letLanguagesGo(cx);
     if (this.tookPress(e, "down")) { this.press = null; return; }
     this.fieldHeld = null;
     this.dragFrom = windowPoint(e);
@@ -2112,6 +2156,7 @@ export class Editor {
     if (hit.on === "notes") return this.openCard(hit.block.key, cx);
     if (hit.on === "picture") return this.pictureClick(hit, cx, cmd);
     if (!this.editable()) return;
+    if (hit.on === "chip") return this.chipPress(hit.block, cx);
     if (hit.on === "frame") {
       if (count >= 2) this.clickBlock(hit.block.key, p, cx);
       return;
@@ -2135,6 +2180,7 @@ export class Editor {
   // A right-click on a picture picks it, its float standing for a menu; anywhere else it lets the picked one go.
   viewportRightDown(e, cx) {
     const p = this.point(e), hit = p ? this.hit(p) : null;
+    this.letLanguagesGo(cx);
     if (hit?.on === "picture" && hit.item >= 0) return this.pictureClick(hit, cx, false);
     this.unpick(cx);
   }
@@ -2398,9 +2444,9 @@ export class Editor {
   }
 
   // The block under a viewport point and what on it: a diagram's frame (also where it reaches into the margins), a cell
-  // of its − % + group, a picture block (`item` the picture under the point, or -1), a checkbox, a body, the space below
-  // the last block ("end"), or a margin outside every block ("outside"). x and y are relative to the block's root, fx and
-  // fy to the frame. A page with no blocks is all "end".
+  // of its − % + group, a picture block (`item` the picture under the point, or -1), a code block's language chip, a
+  // checkbox, a body, the space below the last block ("end"), or a margin outside every block ("outside"). x and y are
+  // relative to the block's root, fx and fy to the frame. A page with no blocks is all "end".
   hit(p) {
     const blocks = this.blocks, n = blocks.length;
     if (this.sums.length !== n + 1) return null;
@@ -2419,6 +2465,7 @@ export class Editor {
     const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
     const inX = x - b.depth * INDENT, inY = y - this.sums[i] - d.space;
     if (d.look === "picture" && d.mode === "rendered") return { block: b, on: "picture", item: this.pictureAt(d, inX, inY), x, y: y - this.sums[i] };
+    if (d.chip && this.editable() && inBox(this.chipIn(d), x, y - this.sums[i])) return { block: b, on: "chip" };
     const on = d.marker === "task" && inX >= 0 && inX < MARKER_W && inY >= 0 && inY < d.row ? "task" : "block";
     return { block: b, on, x, y: y - this.sums[i] };
   }
@@ -4576,9 +4623,10 @@ export class Editor {
       .child(Textarea.new(this.noteField).flex_1().text_size(13).text_color(t.foreground));
   }
 
-  // A box over the page that holds the keyboard: the comment box, the link's address box or a picture's box.
+  // A box over the page that holds the keyboard: the comment box, the link's address box, a picture's box or the
+  // language menu's search box.
   boxOpen() {
-    return this.noteOpen() || this.linkBoxOpen() || this.pictureBoxOpen() || this.imageBoxOpen();
+    return this.noteOpen() || this.linkBoxOpen() || this.pictureBoxOpen() || this.imageBoxOpen() || this.langOpen();
   }
 
   // A float at `place` in the link popover's look. Presses on it go no further, so what is under it keeps the keyboard
@@ -5033,6 +5081,150 @@ export class Editor {
       .child(this.popoverAddress("md-picture-address", src, t))
       .child(this.popoverRule(t))
       .children(buttons.flatMap(b => (b.apart ? [this.popoverRule(t), button(b)] : [button(b)])));
+  }
+
+  // The language menu while it stands, with its block `b`: a code block, or the diagram whose source is being edited, in
+  // the activation the menu opened in, on a file that can be edited (or the check fixture).
+  langNow() {
+    const l = this.lang;
+    if (!l || l.act !== this.act || this.mode !== "reading" || !this.doc || (this.file && !this.editable())) return null;
+    const b = this.blockByKey(l.key);
+    return b && stripped(b, b.key === this.activeKey) ? { ...l, b } : null;
+  }
+
+  langOpen() {
+    return Boolean(this.langNow());
+  }
+
+  // A press on code block b's chip opens its language menu, whose search box takes the keyboard, or closes the one it
+  // opened. Editing another block stops and b is not opened; b being edited stays so.
+  chipPress(b, cx) {
+    if (this.langNow()?.key === b.key) return this.closeLanguages(cx);
+    if (this.activeKey && this.activeKey !== b.key) this.deactivate(cx);
+    const caret = b.key === this.activeKey ? this.caretNow() : null;
+    this.lang = { key: b.key, act: this.act, caret, query: "", items: languageRows(""), index: 0, first: 0 };
+    this.guard(() => this.langField.set_value(""));
+    this.langField.focus();
+    this.redraw([b.key], cx);
+    cx.notify();
+  }
+
+  // The menu goes, and the keyboard goes back where it took it from: the edited block's field with its caret, else the
+  // page.
+  closeLanguages(cx) {
+    const l = this.langNow();
+    this.dropLanguages(cx);
+    if (!l) return;
+    if (l.key !== this.activeKey) return this.handle.focus();
+    if (l.caret) this.selectField(l.caret);
+    this.focusField(cx);
+  }
+
+  // A press elsewhere closes the menu and gives the keyboard to whatever it lands on, the page when no block is edited.
+  letLanguagesGo(cx) {
+    this.dropLanguages(cx);
+    if (!this.activeKey) this.handle.focus();
+  }
+
+  dropLanguages(cx) {
+    const l = this.lang;
+    if (!l) return;
+    this.lang = null;
+    this.redraw([l.key], cx);
+    cx?.notify();
+  }
+
+  languagesTyped(cx) {
+    const query = this.langField.value();
+    if (!this.langOpen() || query === this.lang.query) return;
+    this.lang = { ...this.lang, query, items: languageRows(query), index: 0, first: 0 };
+    cx.notify();
+  }
+
+  languageKey(name, cx) {
+    if (!this.langOpen()) return;
+    if (name === "mdb-lang-close") return this.closeLanguages(cx);
+    if (name === "mdb-lang-pick") return this.pickLanguage(this.lang.items[this.lang.index], cx);
+    this.lang = step(this.lang, name === "mdb-lang-up" ? -1 : 1);
+    cx.notify();
+  }
+
+  languageHover(i, cx) {
+    if (!this.langOpen() || this.lang.index === i) return;
+    this.lang = { ...this.lang, index: i };
+    cx.notify();
+  }
+
+  // A row picked: setLanguage writes a language's id or a typed word as one entry of the history, and the block's own
+  // language writes nothing. A block not being edited leaves the page the keyboard; undo opens it where its code starts.
+  pickLanguage(row, cx) {
+    const l = this.langNow();
+    if (!l || !row || !this.editable()) return;
+    if (!row.typed && languageOf(infoWord(l.b.info)) === row) return this.closeLanguages(cx);
+    const id = row.typed ?? row.id;
+    if (l.key === this.activeKey) return this.languageOfEdited(l, id, cx);
+    this.dropLanguages(cx);
+    const s = setLanguage(this.doc, l.b, id);
+    if (s) {
+      const next = reparse(this.doc, s);
+      this.change(s, cx, { caretBefore: codeStartIn(this.doc, l.b), caretAfter: codeStartIn(next, holdingIn(next, s.start)) });
+    }
+    this.handle.focus();
+  }
+
+  // The edited block is let go, written and opened again (op) with the caret it had: its field shows the same code, and
+  // undo and redo put the caret back there.
+  languageOfEdited(l, id, cx) {
+    this.dropLanguages(cx);
+    this.commit(cx);
+    const b = this.blockByKey(l.key), s = b && setLanguage(this.doc, b, id), n = this.seen.length;
+    const c = l.caret ? { start: Math.min(l.caret.start, n), end: Math.min(l.caret.end, n) } : { start: 0, end: 0 };
+    this.selectField(c);
+    if (!s) return this.focusField(cx);
+    const next = reparse(this.doc, s), f = fieldOf(next, holdingIn(next, s.start));
+    this.op(s, cx, { at: fieldToDoc(f, Math.min(c.end, f.value.length)), caret: c });
+  }
+
+  // Block `key`'s chip in pane coordinates, or null while it has none or no place on the page.
+  chipBox(key) {
+    const i = this.at.get(key), d = this.data.get(key);
+    if (i === undefined || !d?.chip || this.sums.length !== this.blocks.length + 1) return null;
+    const c = this.chipIn(d);
+    return { ...c, x: columnLeft(this.paneW(), this.margin) + c.x, y: COLUMN.padTop + this.sums[i] + c.y - this.offset };
+  }
+
+  // Drawn by the root over the page at its chip, in the bar menus' look: the search box, then the rows. Presses and
+  // pointer moves on it go no further.
+  languageMenu(t) {
+    const l = this.langNow(), chip = l && this.chipBox(l.key);
+    if (!chip) return null;
+    const viewH = this.viewport?.height ?? UNSIZED_VIEW_H, h = languageMenuH(Math.max(1, l.items.length));
+    const place = languageMenuPlace({ chip, h, full: languageMenuH(MENU_ROWS), viewW: this.paneW(), viewH });
+    const current = languageOf(infoWord(l.b.info));
+    const rows = l.items.length
+      ? l.items.map((row, i) => this.languageRow(row, i, row === current, t))
+      : [div().id("md-lang-none").h(BAR_MENU.rowH).px(8).flex().items_center().text_color(t.muted).child("No results")];
+    return v_flex().id("md-lang").absolute().left(place.left).top(place.top).w(place.w).h(place.h).p(BAR_MENU.pad)
+      .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().text_size(12.8)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_down("right", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_move((_e, cx) => cx.stop_propagation())
+      .child(h_flex().id("md-lang-search").h(LANG_MENU.searchH).flex_none().items_center().key_context(LANG)
+        .child(Input.new(this.langField).flex_1().text_size(12.8).text_color(t.foreground)))
+      .children(rows);
+  }
+
+  // A row is picked on the press, as the bar menus' are; the row for a typed word names what it writes.
+  languageRow(row, i, checked, t) {
+    const typed = row.typed !== undefined;
+    return h_flex().id(`md-lang-row-${typed ? "use" : row.id || "plain"}`).h(BAR_MENU.rowH).flex_none().px(8).gap(9).rounded(6).items_center().cursor_pointer()
+      .text_color(t.foreground)
+      .when(i === this.lang.index, el => el.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.pickLanguage(row, cx); })
+      .on_mouse_move((_e, cx) => { cx.stop_propagation(); this.languageHover(i, cx); })
+      .child(div().flex_1().min_w(0).truncate().child(typed ? `Use “${row.typed}”` : row.name))
+      .when(checked, el => el.child(svg(ICON("check")).size(14).flex_none().text_color(t.foreground)));
   }
 
   // Drawn by the root over the picture picked in the edited text, under it when there is no room: a paragraph's
@@ -5664,6 +5856,8 @@ export class Editor {
     if (float) vp.child(float);
     const picture = this.pictureFloat(t);
     if (picture) vp.child(picture);
+    const languages = this.languageMenu(t);
+    if (languages) vp.child(languages);
     if (this.calibrating) {
       vp.child(this.calStrip(t));
       this.giveUpLater(cx);

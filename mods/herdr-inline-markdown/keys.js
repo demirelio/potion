@@ -3,10 +3,11 @@
 // handler for as long as any build shipped it.
 // A binding at `X > Input` takes the key from the field entirely; one at `X` fires only for the keys the field gives
 // away there (Backspace and Left at offset 0, Right at the end, Tab, Escape).
-const VERSION = 9;
+const VERSION = 10;
 // NOTE is the field of a box over the page (the comment box, a link's address box, a picture's alt text and address
-// boxes): Enter there saves it, and Escape cancels it.
+// boxes): Enter there saves it, and Escape cancels it. LANG is the search box of a code block's language menu.
 export const TEXT = `MdText${VERSION}`, RAW = `MdRaw${VERSION}`, SOURCE = `MdSource${VERSION}`, NOTE = `MdNote${VERSION}`;
+export const LANG = `MdLang${VERSION}`;
 
 const deep = ctx => `${ctx} > Input`;
 const oneRow = ctx => `${ctx} && rows == one > Input`;
@@ -41,6 +42,10 @@ export const BINDINGS = [
   ...bind("cmd-alt-m", "mdb-comment", [deep(TEXT)]),
   ...bind("enter", "mdb-note-save", [deep(NOTE)]),
   ...bind("escape", "mdb-note-cancel", [deep(NOTE)]),
+  ...bind("enter", "mdb-lang-pick", [deep(LANG)]),
+  ...bind("escape", "mdb-lang-close", [deep(LANG)]),
+  ...bind("up", "mdb-lang-up", [deep(LANG)]),
+  ...bind("down", "mdb-lang-down", [deep(LANG)]),
   ...bind("cmd-z", "mdb-undo", [...BLOCKS, deep(SOURCE)]),
   ...bind("cmd-shift-z", "mdb-redo", [...BLOCKS, deep(SOURCE)]),
   ...bind("backspace", "mdb-backspace-start", [TEXT, RAW]),

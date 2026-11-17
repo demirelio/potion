@@ -11,14 +11,14 @@ const { Editor } = await import("../mods/herdr-inline-markdown/editor.js");
 const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
 const { stats, fileKey, diagramKey, mermaidConfig, sharpName, picturesOf } = await import("../mods/herdr-inline-markdown/lib.js");
 const { parseInline } = await import("../mods/herdr-inline-markdown/inline.js");
-const { owners, STYLES, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
+const { owners, STYLES, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, BOX, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { theme } = await import("./mocks/herdr.mjs");
 const { echoTokenSets, liveFields, TextareaState } = await import("./mocks/gpui-base.mjs");
 const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
-const { TEXT, RAW, SOURCE, NOTE, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
+const { TEXT, RAW, SOURCE, NOTE, LANG, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 
@@ -217,8 +217,8 @@ test("chrome: markers by depth, numbers, checkboxes, the quote bar, the code lan
   const quote = blockAt(m, 8, t).kids[0];
   assert.deepEqual([quote.kids[0].style.w, quote.kids[0].style.bg, quote.kids[1].style.pl], [QUOTE_BAR, "input", QUOTE_PAD]);
   const code = blockAt(m, 9, t).kids[0];
-  const lang = all(code, n => n.style.absolute)[0];
-  assert.deepEqual([textOf(lang).trim(), lang.style.text_color], ["py", "dim"]);
+  const lang = must(code, `md-chip-${keyAt(m, 9)}`);
+  assert.deepEqual([textOf(lang).trim(), lang.style.text_color], ["Python", "dim"], "the language's name on its chip");
   assert.equal(all(code, n => n.kind === "textview").length, 0, "code is plain mono text, as the field draws it");
   assert.equal(blockAt(m, 10, t).kids[0].kids[0].style.bg, "border", "the rule is a line in the border colour");
   audit(t);
@@ -2944,7 +2944,13 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.equal(view.field.value(), "A paragraph with **bold**, _emphasis_, `code` and a [link](https://example.com). /");
   assert.equal(must(t, `md-field-${active.key}`).style.key_context, `${TEXT} rows=many menu=open`, "its slash menu open");
   const menu = must(t, "md-slash"), drawn = must(t, "md-viewport").kids.map(k => k.id);
-  assert.deepEqual(drawn.slice(drawn.indexOf("md-slash"), drawn.findIndex(id => id?.startsWith("md-cal"))), ["md-slash", "md-picture"], "drawn last on the page but for the picked picture's float, before the calibration strip");
+  assert.deepEqual(drawn.slice(drawn.indexOf("md-slash"), drawn.findIndex(id => id?.startsWith("md-cal"))), ["md-slash", "md-picture", "md-lang"], "drawn last on the page but for the picked picture's float and the language menu, before the calibration strip");
+  const code = view.doc.blocks.filter(b => b.kind === "code");
+  assert.deepEqual(code.map(b => textOf(must(t, `md-chip-${b.key}`)).trim()), ["JavaScript", "Plain text"], "each code block's chip");
+  assert.ok(code.every(b => all(must(t, `md-chip-${b.key}`), n => n.kind === "svg").length === 1), "with its chevron: the fixture draws what a file that can be edited draws");
+  const lang = must(t, "md-lang");
+  assert.ok(find(lang, "md-lang-row-js") && all(find(lang, "md-lang-row-js"), n => n.kind === "svg").length === 1, "the language menu open on the js block, JavaScript checked");
+  assert.equal(must(t, `md-chip-${code[0].key}`).style.bg, "hover");
   assert.deepEqual(all(menu, n => n.kind === "svg").map(n => n.path.split("/").at(-1)), COMMANDS.map(c => `${c.icon}.svg`), "each command's icon, in the table's order");
   assert.ok(menu.style.shadow_lg && typeof menu.handlers.on_mouse_down_out === "function");
   assert.deepEqual([field.style.font_family, field.style.text_size, field.style.line_height], [SANS, 15, 1.6]);
@@ -3175,16 +3181,16 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
   const table = a.cx.bound[0];
   for (const { action, context } of table) {
     assert.match(action, /^mdb-[a-z-]+$/);
-    assert.match(context, new RegExp(`^(${TEXT}|${RAW}|${SOURCE}|${NOTE})( && (rows == one|menu == open))?( > Input)?$`), "never a bare Input: only inside the editor's fields");
+    assert.match(context, new RegExp(`^(${TEXT}|${RAW}|${SOURCE}|${NOTE}|${LANG})( && (rows == one|menu == open))?( > Input)?$`), "never a bare Input: only inside the editor's fields");
   }
   const contexts = key => table.filter(x => x.keystroke === key).map(x => x.context).sort();
   const actions = key => [...new Set(table.filter(x => x.keystroke === key).map(x => x.action))];
-  assert.deepEqual(contexts("enter"), [`${NOTE} > Input`, `${RAW} > Input`, `${TEXT} > Input`], "the comment and address boxes save on Enter, which never gets into their field; code keeps its indent");
-  assert.deepEqual(actions("enter"), ["mdb-enter", "mdb-note-save"]);
+  assert.deepEqual(contexts("enter"), [`${LANG} > Input`, `${NOTE} > Input`, `${RAW} > Input`, `${TEXT} > Input`], "the comment and address boxes save on Enter, which never gets into their field; code keeps its indent; the language menu picks");
+  assert.deepEqual(actions("enter"), ["mdb-enter", "mdb-note-save", "mdb-lang-pick"]);
   assert.deepEqual(contexts("shift-enter"), [`${TEXT} > Input`]);
   for (const key of ["up", "down"]) {
-    assert.deepEqual(contexts(key), [`${RAW} && rows == one > Input`, `${TEXT} && menu == open > Input`, `${TEXT} && rows == one > Input`], `${key}: where the field has one row, and in a text field with the slash menu open`);
-    assert.deepEqual(actions(key), [`mdb-${key}`], `${key}: one action for both, so it does not matter which binding wins`);
+    assert.deepEqual(contexts(key), [`${LANG} > Input`, `${RAW} && rows == one > Input`, `${TEXT} && menu == open > Input`, `${TEXT} && rows == one > Input`], `${key}: where the field has one row, in a text field with the slash menu open, and in the language menu's search box`);
+    assert.deepEqual(actions(key), [`mdb-${key}`, `mdb-lang-${key}`], `${key}: one action for the block fields, so it does not matter which binding wins; the language menu's own`);
   }
   assert.deepEqual(contexts("cmd-z"), [`${RAW} > Input`, `${SOURCE} > Input`, `${TEXT} > Input`]);
   assert.deepEqual(contexts("cmd-v"), [`${RAW} > Input`, `${TEXT} > Input`]);
@@ -3206,11 +3212,11 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
     assert.deepEqual(contexts(key), [`${TEXT} > Input`], `${key}: markdown that keeps its formatting, in a text block only; raw blocks keep the field's own`);
     assert.deepEqual(actions(key), [action], key);
   }
-  assert.deepEqual([TEXT, RAW, SOURCE, NOTE], ["MdText9", "MdRaw9", "MdSource9", "MdNote9"], "the table changed, so its contexts are new ones and the old ones stay inert");
-  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note)[0-8]\b/.test(x.context)), [], "no context of an older table");
+  assert.deepEqual([TEXT, RAW, SOURCE, NOTE, LANG], ["MdText10", "MdRaw10", "MdSource10", "MdNote10", "MdLang10"], "the table changed, so its contexts are new ones and the old ones stay inert");
+  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note|Lang)[0-9]\b/.test(x.context)), [], "no context of an older table");
   for (const key of ["backspace", "left", "right"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
-  assert.deepEqual(contexts("escape"), [`${NOTE} > Input`, RAW, TEXT], "the comment box takes Escape whatever its field holds; the block fields only give it away");
-  assert.deepEqual(actions("escape"), ["mdb-note-cancel", "mdb-escape"]);
+  assert.deepEqual(contexts("escape"), [`${LANG} > Input`, `${NOTE} > Input`, RAW, TEXT], "the comment box and the language menu take Escape whatever their field holds; the block fields only give it away");
+  assert.deepEqual(actions("escape"), ["mdb-note-cancel", "mdb-lang-close", "mdb-escape"]);
   for (const key of ["delete", "cmd-a", "home", "end", "shift-up", "alt-left", "cmd-s", "cmd-e", "a"]) assert.deepEqual(contexts(key), [], key);
   const root = must(a.tree(), "md-root");
   for (const name of new Set(table.map(x => x.action))) assert.equal(typeof root.handlers[`on_action:${name}`], "function", name);
@@ -3218,9 +3224,9 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
 
 test("a press on a code block puts the caret on the pressed line and column and moves nothing, its field showing only the code; on a table, at the pressed cell's start", async () => {
   const code = "const a = 1;\nlet b = 2;\nreturn a + b;", table = "| name | value |\n|------|-------|\n| a    | 12345 |";
-  const m = await page(`Intro\n\n\`\`\`js\n${code}\n\`\`\`\n\n${table}\n`, { 0: 24, 1: 14 + 26 + 3 * 19.5, 2: 14 + 26 + 60 }, 150);
+  const m = await page(`Intro\n\n\`\`\`js\n${code}\n\`\`\`\n\n${table}\n`, { 0: 24, 1: 14 + 26 + CODE_HEAD + 3 * 19.5, 2: 14 + 26 + 60 }, 150);
   const [codeKey, tableKey] = [keyAt(m, 1), keyAt(m, 2)];
-  await clickAt(m, { x: X + 15 + 4 * 7.8 + 1, y: topOf(m, 1) + 14 + 13 + 2 * 19.5 + 5 }); // line 3 of the drawn code, column 4
+  await clickAt(m, { x: X + 15 + 4 * 7.8 + 1, y: topOf(m, 1) + 14 + 13 + CODE_HEAD + 2 * 19.5 + 5 }); // line 3 of the drawn code, column 4
   assert.equal(m.view.activeKey, codeKey);
   assert.equal(m.view.field.value(), code, "the code alone: no fence lines");
   const third = code.indexOf("return") + 4;
@@ -3229,7 +3235,7 @@ test("a press on a code block puts the caret on the pressed line and column and 
   assert.equal(must(m.tree(), `md-field-${codeKey}`).style.key_context, `${RAW} rows=many`);
   assert.equal(m.view.offset, 0, "the field draws the code's rows where Reading did: the page does not move");
   escape(m);
-  await clickAt(m, { x: X + 15 + 4 * 7.8 + 1, y: topOf(m, 1) + 14 + 13 + 19.5 + 5 }); // line 2, column 4
+  await clickAt(m, { x: X + 15 + 4 * 7.8 + 1, y: topOf(m, 1) + 14 + 13 + CODE_HEAD + 19.5 + 5 }); // line 2, column 4
   const second = code.indexOf("let") + 4;
   assert.deepEqual([m.view.activeKey, m.view.field.selection, m.view.offset], [codeKey, { start: second, end: second }, 0]);
   await clickAt(m, { x: X + 15 + 400, y: topOf(m, 2) + 14 + 13 + 30 + 5 }); // the body row, the second column
@@ -3769,8 +3775,8 @@ test("a caret reveal while typing, then a block above the edited one growing: th
 
 test("typing on line 25 of a 40-line code block in a 500 px viewport keeps the caret row inside the reveal window", async () => {
   const code = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
-  const m = await page(`Intro\n\n\`\`\`\n${code}\n\`\`\`\n\nAfter\n`, { 0: 24, 1: 14 + 26 + 40 * 19.5, 2: 38 }, 500);
-  const line25 = 28 + 24 + 14 + 13 + 25 * 19.5;
+  const m = await page(`Intro\n\n\`\`\`\n${code}\n\`\`\`\n\nAfter\n`, { 0: 24, 1: 14 + 26 + CODE_HEAD + 40 * 19.5, 2: 38 }, 500);
+  const line25 = 28 + 24 + 14 + 13 + CODE_HEAD + 25 * 19.5;
   m.view.scrollTo(line25 + 19.5 - 490, m.cx); // line 25 drawn 10 px above the bottom: inside the 72 px the caret keeps clear of
   const offset = m.view.offset;
   await clickAt(m, { x: X + 300, y: line25 - offset + 5 });
@@ -3778,7 +3784,7 @@ test("typing on line 25 of a 40-line code block in a 500 px viewport keeps the c
   assert.deepEqual(field.selection, { start: end, end }, "past the line's end: its end");
   assert.equal(m.view.offset, offset, "the click moves nothing: the line stays under the pointer");
   const inWindow = () => {
-    const row = field.value().slice(0, field.selection.start).split("\n").length - 1, y = 28 + 24 + 14 + 13 + row * 19.5;
+    const row = field.value().slice(0, field.selection.start).split("\n").length - 1, y = 28 + 24 + 14 + 13 + CODE_HEAD + row * 19.5;
     return y >= m.view.offset + 24 && y + 19.5 <= m.view.offset + 500 - 72;
   };
   for (const ch of ["x", "\n", "y", "\n", "\n", "z", "\n", "\n"]) {
@@ -10777,13 +10783,265 @@ test("a code block inside a list item: its field holds only the code, and lines 
   assert.deepEqual(m.view.doc.blocks.map(b => [b.kind, b.depth]), [["item", 0], ["code", 1], ["item", 0]]);
 });
 
-test("the edited code block draws its language label top right, as Reading does; a diagram's source being edited draws mermaid", async () => {
-  const m = await page("```py\nprint()\n```\n\n```Mermaid\ngraph TD\n```\n", { 0: 26 + 19.5, 1: 14 + 120 });
-  const label = i => all(blockAt(m, i), n => n.style.absolute && n.style.top === 6).map(n => textOf(n).trim());
-  await openBlock(m, 0);
-  assert.deepEqual([m.view.activeKey, label(0)], [keyAt(m, 0), ["py"]]);
+// A point on block i's language chip, which sits at the right of the strip that starts its box.
+const chipAt = (m, i) => {
+  const d = m.view.data.get(keyAt(m, i));
+  return { x: leftOf(m) + m.view.textWidth() - 1 - BOX.px - d.chipW + 5, y: topOf(m, i) + d.space + 1 + BOX.py + (CODE_HEAD - CHIP.h) / 2 + 5 };
+};
+const chipName = (m, i, t = m.tree()) => textOf(must(t, `md-chip-${keyAt(m, i)}`)).trim();
+const langMenu = (m, t = m.tree()) => find(t, "md-lang");
+const langRowEls = (m, t = m.tree()) => all(find(t, "md-lang"), n => /^md-lang-row-/.test(n.id ?? ""));
+const langRows = (m, t = m.tree()) => langRowEls(m, t).map(n => textOf(n).trim());
+const langHighlighted = m => langRowEls(m).filter(n => n.style.bg === "hover").map(n => textOf(n).trim());
+const langChecked = m => langRowEls(m).filter(n => all(n, k => k.kind === "svg").length).map(n => textOf(n).trim());
+const searchLanguages = (m, text) => m.view.langField.edit(text, m.cx);
+const langRow = (m, id) => fire(must(m.tree(), `md-lang-row-${id}`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
+
+test("every code block's box starts with a strip 28 px tall holding its language chip at the right; a diagram's source being edited has one, its frame none", async () => {
+  renderer({ width: 800, height: 400 });
+  const doc = "```js title=x\nconst a = 1;\n```\n\n    indented\n\n```py\nprint()\n```\n\n```mermaid\ngraph TD\n```\n\n```zig\nx\n```\n";
+  const m = await mount({ disk: doc });
+  viewportOf(m);
+  await drawn(m);
+  const t = m.tree(), chip = must(t, `md-chip-${keyAt(m, 0)}`), head = must(t, `md-code-head-${keyAt(m, 0)}`);
+  assert.deepEqual([0, 1, 2, 4].map(i => chipName(m, i, t)), ["JavaScript", "Plain text", "Python", "zig"], "a language's name, Plain text for none, a word the list doesn't know as written");
+  assert.deepEqual([head.style.h, head.style.justify_end, head.kids.map(k => k.id)], [CODE_HEAD, true, [chip.id]], "the chip at the strip's right");
+  const box = blockAt(m, 0, t).kids[0];
+  assert.deepEqual([box.style.bg, box.kids[0].kids[0].id, textOf(box.kids[0].kids[1]).trim()], ["surface", head.id, "const a = 1;"], "the strip, then the code under it, in the box");
+  assert.deepEqual([chip.style.text_size, chip.style.text_color, chip.style.rounded, chip.style.cursor_pointer, chip.hover, chip.style.w], [11.5, "dim", 6, true, true, chipW("JavaScript", true)]);
+  assert.deepEqual(all(chip, n => n.kind === "svg").map(n => [n.path.split("/").at(-1), n.style.size]), [["chevron-down.svg", 12]], "a chevron after the name");
+  assert.ok(find(t, `md-frame-${keyAt(m, 3)}`), "the diagram is drawn in its frame");
+  assert.deepEqual([find(t, `md-chip-${keyAt(m, 3)}`), find(t, `md-code-head-${keyAt(m, 3)}`)], [null, null], "which has no strip");
+  await openBlock(m, 2);
+  assert.equal(chipName(m, 2), "Python", "the edited block keeps its strip");
+  const edited = blockAt(m, 2).kids[0].kids[0];
+  assert.deepEqual(edited.kids.map(k => k.id), [`md-code-head-${keyAt(m, 2)}`, `md-field-${keyAt(m, 2)}`], "over its field");
+  const f = frameOn(m, 3);
+  await doubleClickAt(m, { x: f.left + 50, y: f.top + 50 });
+  assert.deepEqual([m.view.activeKey, m.view.field.value(), chipName(m, 3)], [keyAt(m, 3), "graph TD", "Mermaid"], "a diagram's source being edited names Mermaid");
+  audit(m.tree());
+});
+
+test("in a file that can't be edited the chip is the language's name alone, none without a language, and a press on it is a press on the block", async () => {
+  const m = await mount({ machine: "devbox", disk: "```js\nx\n```\n\n    plain\n" });
+  viewportOf(m);
+  const t = m.tree(), chip = must(t, `md-chip-${keyAt(m, 0)}`);
+  assert.deepEqual([textOf(chip).trim(), all(chip, n => n.kind === "svg").length, chip.hover, Boolean(chip.style.cursor_pointer), chip.style.w], ["JavaScript", 0, false, false, chipW("JavaScript", false)]);
+  assert.ok(find(t, `md-code-head-${keyAt(m, 1)}`), "the strip all the same, so the file looks as it does when it can be edited");
+  assert.equal(find(t, `md-chip-${keyAt(m, 1)}`), null, "no chip without a language");
+  assert.equal(m.view.hit(chipAt(m, 0)).on, "block");
+  await clickAt(m, chipAt(m, 0));
+  assert.deepEqual([langMenu(m), m.view.activeKey], [null, null]);
+});
+
+test("a code block's estimated and placed height include its strip, and the edited block's rows sit under it", async () => {
+  const m = await mount({ disk: "Intro\n\n```js\na\nb\nc\n```\n\n    x\n" });
+  viewportOf(m);
+  const row = m.view.data.get(keyAt(m, 1)).row, box = 2 * BOX.py + 2;
+  assert.equal(m.view.sums[2] - m.view.sums[1], 14 + 3 * row + box + CODE_HEAD, "a fenced block");
+  assert.equal(m.view.sums[3] - m.view.sums[2], 14 + row + box + CODE_HEAD, "an indented one");
+  await openBlock(m, 1, 4);
+  assert.equal(m.view.caretTop(1), m.view.sums[1] + 14 + 1 + BOX.py + CODE_HEAD + 2 * row, "the caret's row: the third, under the strip");
+});
+
+test("a press on the chip of a code block not being edited stops the editing and opens the language menu under the chip without opening the block", async () => {
+  const m = await page("Intro\n\n```js\nconst a = 1;\n```\n", { 0: 24, 1: 14 + 26 + CODE_HEAD + 19.5 });
+  await openBlock(m, 0, 5);
+  m.view.field.type(" more", m.cx);
+  await clickAt(m, chipAt(m, 1));
+  assert.equal(m.view.activeKey, null, "editing stopped, and the code block was not opened");
+  assert.equal(m.view.text, "Intro more\n\n```js\nconst a = 1;\n```\n", "what was typed is kept");
+  const t = m.tree(), menu = must(t, "md-lang"), d = m.view.data.get(keyAt(m, 1));
+  const chipRight = leftOf(m) + m.view.textWidth() - 1 - BOX.px, chipTop = topOf(m, 1) + d.space + 1 + BOX.py + (CODE_HEAD - CHIP.h) / 2;
+  assert.deepEqual([menu.style.left + menu.style.w, menu.style.top, menu.style.w], [chipRight, chipTop + CHIP.h + LANG_MENU.gap, BAR_MENU.w], "under the chip, right edges aligned");
+  assert.deepEqual([menu.style.bg, menu.style.rounded, Boolean(menu.style.shadow_lg)], ["popover", 8, true], "the bar menus' look");
+  const search = must(t, "md-lang-search");
+  assert.deepEqual([search.style.key_context, all(search, n => n.kind === "input")[0].state], [LANG, m.view.langField]);
+  assert.deepEqual([m.view.langField.focused, m.view.langField.options.placeholder, m.view.langField.value()], [true, "Search or type a language", ""], "its search box takes the keyboard");
+  assert.equal(must(t, `md-chip-${keyAt(m, 1)}`).style.bg, "hover", "the chip shows its menu open");
+  assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id).slice(-2), ["md-lang", "md-cal"], "drawn by the root over the page");
+  audit(t);
+});
+
+test("the language menu goes on a right-press outside it, and when a write from outside takes its code block away; the page gets the keyboard back", async () => {
+  const doc = "```js\nx\n```\n\nAfter\n";
+  const m = await page(doc, { 0: 26 + CODE_HEAD + 19.5, 1: 24 });
+  await clickAt(m, chipAt(m, 0));
+  assert.ok(langMenu(m) && m.view.langField.focused);
+  rightClickAt(m, { x: leftOf(m) + 10, y: topOf(m, 1) + 10 });
+  assert.deepEqual([langMenu(m), m.view.lang, m.view.handle.focused], [null, null, true], "a right-press outside");
+  await clickAt(m, chipAt(m, 0));
+  assert.ok(langMenu(m) && m.view.langField.focused);
+  state.disk.set(FILE, "After\n");
+  await m.touch([FILE]);
+  assert.deepEqual([langMenu(m), m.view.lang, m.view.handle.focused], [null, null, true], "its block went");
+});
+
+test("the language menu: Plain text and the common languages with a check on the block's own, then what typing finds, ranked; a word it doesn't know gets a row of its own", async () => {
+  const m = await page("```javascript\nx\n```\n", { 0: 26 + CODE_HEAD + 19.5 });
+  await clickAt(m, chipAt(m, 0));
+  assert.deepEqual(langRows(m), ["Plain text", "Bash", "CSS", "HTML", "JavaScript", "JSON", "Markdown", "Mermaid", "Python", "Rust", "TypeScript", "YAML"]);
+  assert.deepEqual([langChecked(m), langHighlighted(m)], [["JavaScript"], ["Plain text"]], "a check on the block's language, whatever alias wrote it; the first row highlighted");
+  assert.deepEqual(langRowEls(m).map(n => [n.style.h, n.style.rounded]).slice(0, 1), [[BAR_MENU.rowH, 6]]);
+  assert.equal(must(m.tree(), "md-lang").style.h, languageMenuH(12));
+  searchLanguages(m, "ty");
+  assert.deepEqual([langRows(m), langHighlighted(m)], [["TypeScript", "Use “ty”"], ["TypeScript"]], "TypeScript first");
+  searchLanguages(m, "zig");
+  assert.deepEqual([langRows(m), must(m.tree(), "md-lang").style.h], [["Use “zig”"], languageMenuH(1)]);
+  searchLanguages(m, "!!!");
+  assert.deepEqual([langRows(m), textOf(must(m.tree(), "md-lang-none")).trim()], [[], "No results"]);
+  assert.equal(m.view.text, "```javascript\nx\n```\n", "typing in the search box writes nothing");
+});
+
+test("Up and Down move the menu's highlight with wrap, the pointer highlights the row under it, and Enter picks the highlighted row: one entry, which Cmd+Z takes back", async () => {
+  const m = await page("Intro\n\n```js title=\"a.js\"\nx\n```\n", { 0: 24, 1: 14 + 26 + CODE_HEAD + 19.5 });
+  await clickAt(m, chipAt(m, 1));
+  act(m, "mdb-lang-up");
+  assert.deepEqual(langHighlighted(m), ["YAML"], "up from the first row wraps to the last");
+  act(m, "mdb-lang-down");
+  assert.deepEqual(langHighlighted(m), ["Plain text"], "and down from the last to the first");
+  const stopped = m.cx.stopped;
+  fire(must(m.tree(), "md-lang-row-ts"), "on_mouse_move", { position: { x: 0, y: 0 }, local_position: { x: 0, y: 0 }, modifiers: NO_MODS }, m.cx);
+  assert.deepEqual([langHighlighted(m), m.cx.stopped - stopped], [["TypeScript"], 1]);
+  act(m, "mdb-lang-down");
+  m.view.handle.focused = false;
+  act(m, "mdb-lang-pick");
+  assert.equal(m.view.text, "Intro\n\n```yaml title=\"a.js\"\nx\n```\n", "the first word replaced, the rest kept");
+  assert.deepEqual([langMenu(m), chipName(m, 1), m.view.activeKey, m.view.handle.focused], [null, "YAML", null, true], "the chip names it at once; the page has the keyboard");
+  await m.key("cmd-z");
+  assert.equal(m.view.text, "Intro\n\n```js title=\"a.js\"\nx\n```\n");
+  assert.equal(m.view.history.canUndo, false, "one entry");
+  assert.equal(chipName(m, 1), "JavaScript");
+});
+
+test("a press on the chip of the block being edited keeps it edited: after Escape and after a pick its field has the keyboard back with its caret", async () => {
+  const m = await page("```py\nprint(1)\nprint(2)\n```\n", { 0: 26 + CODE_HEAD + 2 * 19.5 });
+  await openBlock(m, 0, 12);
+  await clickAt(m, chipAt(m, 0));
+  assert.deepEqual([m.view.activeKey, Boolean(langMenu(m)), m.view.langField.focused, langChecked(m)], [keyAt(m, 0), true, true, ["Python"]]);
+  m.view.field.focused = false;
+  act(m, "mdb-lang-close");
+  assert.deepEqual([langMenu(m), ...editing(m), m.view.field.focused], [null, keyAt(m, 0), "print(1)\nprint(2)", { start: 12, end: 12 }, true]);
+  assert.equal(m.view.text, "```py\nprint(1)\nprint(2)\n```\n", "Escape writes nothing");
+  await clickAt(m, chipAt(m, 0));
+  m.view.field.focused = false;
+  searchLanguages(m, "rus");
+  act(m, "mdb-lang-pick");
+  assert.equal(m.view.text, "```rust\nprint(1)\nprint(2)\n```\n");
+  assert.deepEqual([...editing(m), m.view.field.focused, chipName(m, 0)], [keyAt(m, 0), "print(1)\nprint(2)", { start: 12, end: 12 }, true, "Rust"]);
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "```py\nprint(1)\nprint(2)\n```\n");
+  assert.deepEqual(editing(m), [keyAt(m, 0), "print(1)\nprint(2)", { start: 12, end: 12 }], "Cmd+Z puts the caret where it was");
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, ...editing(m)], ["```rust\nprint(1)\nprint(2)\n```\n", keyAt(m, 0), "print(1)\nprint(2)", { start: 12, end: 12 }]);
+});
+
+test("a click on a row picks it; a press on the menu goes no further; Escape, a press outside it and a second press on the chip close it without writing", async () => {
+  const doc = "Intro\n\n```js\nx\n```\n", m = await page(doc, { 0: 24, 1: 14 + 26 + CODE_HEAD + 19.5 });
+  await clickAt(m, chipAt(m, 1));
+  await clickAt(m, chipAt(m, 1));
+  assert.equal(langMenu(m), null, "a second press on the chip");
+  await clickAt(m, chipAt(m, 1));
+  await clickAt(m, { x: 10, y: 10 });
+  assert.equal(langMenu(m), null, "a press outside");
+  await clickAt(m, chipAt(m, 1));
+  m.view.handle.focused = false;
+  act(m, "mdb-lang-close");
+  assert.deepEqual([langMenu(m), m.view.handle.focused, m.view.activeKey], [null, true, null], "Escape: the page has the keyboard");
+  assert.deepEqual([m.view.text, m.view.history.canUndo], [doc, false], "none of them wrote");
+  await clickAt(m, chipAt(m, 1));
+  const stopped = m.cx.stopped;
+  for (const name of ["on_mouse_down:left", "on_mouse_up:left", "on_mouse_down:right"]) fire(must(m.tree(), "md-lang"), name, press({ x: 0, y: 0 }), m.cx);
+  assert.deepEqual([Boolean(langMenu(m)), m.cx.stopped - stopped], [true, 3], "a press on the menu's padding picks nothing and reaches nothing under it");
+  langRow(m, "python");
+  assert.deepEqual([m.view.text, langMenu(m)], ["Intro\n\n```python\nx\n```\n", null]);
+});
+
+test("while the language menu is open its search box keeps the keyboard: the page's keys do nothing, a focus command goes to it, and the mouse-up of a press on the edited block's chip leaves it there", async () => {
+  const doc = "Intro\n\n```js\nx\n```\n", m = await page(doc, { 0: 24, 1: 14 + 26 + CODE_HEAD + 19.5 }, 300);
+  await clickAt(m, chipAt(m, 1));
+  const offset = m.view.offset;
+  for (const k of ["space", "enter", "cmd-z", "end"]) await m.key(k);
+  assert.deepEqual([m.view.offset, m.view.activeKey, m.view.text, Boolean(langMenu(m))], [offset, null, doc, true], "no scroll, no block resumed, nothing undone");
+  m.view.langField.focused = false;
+  await m.send("focus");
+  assert.equal(m.view.langField.focused, true);
+  act(m, "mdb-lang-close");
+  await openBlock(m, 1, 1);
+  let last = null;
+  for (const state of [m.view.field, m.view.langField]) {
+    const focus = state.focus.bind(state);
+    state.focus = () => { last = state; focus(); };
+  }
+  await clickAt(m, chipAt(m, 1));
+  assert.equal(last, m.view.langField, "the field does not take it back");
+});
+
+test("the language menu goes with the Markdown view and does not come back with Reading", async () => {
+  const m = await page("Intro\n\n```js\nx\n```\n", { 0: 24, 1: 14 + 26 + CODE_HEAD + 19.5 });
+  await clickAt(m, chipAt(m, 1));
+  await m.key("cmd-e");
+  assert.equal(m.view.mode, "markdown");
+  m.view.source.select(6);
+  await m.key("cmd-e");
+  assert.deepEqual([m.view.mode, m.view.activeKey], ["reading", null], "the caret on the blank line: no block opened");
+  assert.deepEqual([langMenu(m), must(m.tree(), `md-chip-${keyAt(m, 1)}`).style.bg], [null, undefined]);
+});
+
+test("picking the block's own language writes nothing; a typed one is written as typed, less what an info string can't hold; Plain text removes the info string", async () => {
+  const m = await page("```javascript x=1\ncode\n```\n", { 0: 26 + CODE_HEAD + 19.5 });
+  await clickAt(m, chipAt(m, 0));
+  langRow(m, "js");
+  assert.deepEqual([m.view.text, langMenu(m), m.view.history.canUndo], ["```javascript x=1\ncode\n```\n", null, false], "JavaScript is what it has");
+  await clickAt(m, chipAt(m, 0));
+  searchLanguages(m, "c#!");
+  assert.deepEqual(langRows(m), ["Use “c#”"]);
+  act(m, "mdb-lang-pick");
+  assert.deepEqual([m.view.text, chipName(m, 0)], ["```c# x=1\ncode\n```\n", "C#"]);
+  await clickAt(m, chipAt(m, 0));
+  langRow(m, "plain");
+  assert.deepEqual([m.view.text, chipName(m, 0)], ["```\ncode\n```\n", "Plain text"]);
+  await m.key("cmd-z");
+  assert.equal(m.view.text, "```c# x=1\ncode\n```\n");
+  escape(m);
+  await m.key("cmd-z");
+  assert.equal(m.view.text, "```javascript x=1\ncode\n```\n", "each pick its own entry");
+});
+
+test("a language picked for an indented block fences it in the same entry, its field showing the same code with the caret where it was; Plain text on it writes nothing", async () => {
+  const doc = "- item\n\n      a\n      b\n", m = await page(doc, { 0: 24, 1: 6 + 26 + CODE_HEAD + 2 * 19.5 });
+  await openBlock(m, 1, 3);
+  await clickAt(m, chipAt(m, 1));
+  assert.deepEqual(langChecked(m), ["Plain text"]);
+  langRow(m, "plain");
+  assert.deepEqual([m.view.text, ...editing(m)], [doc, keyAt(m, 1), "a\nb", { start: 3, end: 3 }], "Plain text: nothing written, still edited");
+  await clickAt(m, chipAt(m, 1));
+  searchLanguages(m, "go");
+  langRow(m, "go");
+  assert.equal(m.view.text, "- item\n\n  ```go\n  a\n  b\n  ```\n");
+  assert.deepEqual(editing(m), [keyAt(m, 1), "a\nb", { start: 3, end: 3 }]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, ...editing(m)], [doc, keyAt(m, 1), "a\nb", { start: 3, end: 3 }]);
+});
+
+test("Mermaid picked on a code block makes it a diagram, drawn while not edited; another language picked on a diagram's source makes it code", async () => {
+  const m = await page("Intro\n\n```\ngraph TD\nA-->B\n```\n", { 0: 24, 1: 14 + 26 + CODE_HEAD + 2 * 19.5 });
+  await clickAt(m, chipAt(m, 1));
+  langRow(m, "mermaid");
+  assert.deepEqual([m.view.text, m.view.doc.blocks[1].kind, m.view.activeKey], ["Intro\n\n```mermaid\ngraph TD\nA-->B\n```\n", "mermaid", null]);
+  assert.ok(find(m.tree(), `md-diagram-${keyAt(m, 1)}`), "drawn as a diagram");
   await clickAt(m, { x: X + 100, y: topOf(m, 1) + 14 + 50 });
-  assert.deepEqual([m.view.activeKey, m.view.field.value(), label(1)], [keyAt(m, 1), "graph TD", ["mermaid"]]);
+  assert.deepEqual([m.view.activeKey, chipName(m, 1)], [keyAt(m, 1), "Mermaid"], "its source");
+  m.view.field.select(5);
+  keyUp(m, "right");
+  await clickAt(m, chipAt(m, 1));
+  assert.deepEqual(langChecked(m), ["Mermaid"]);
+  searchLanguages(m, "js");
+  act(m, "mdb-lang-pick");
+  assert.deepEqual([m.view.text, m.view.doc.blocks[1].kind], ["Intro\n\n```js\ngraph TD\nA-->B\n```\n", "code"]);
+  assert.deepEqual([...editing(m), chipName(m, 1)], [keyAt(m, 1), "graph TD\nA-->B", { start: 5, end: 5 }, "JavaScript"], "still edited, as code");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.doc.blocks[1].kind, m.view.activeKey], ["mermaid", keyAt(m, 1)]);
 });
 
 test("Backspace at the start of a block holding code does nothing; in an empty one it takes the block, the caret at the end of the block above", async () => {

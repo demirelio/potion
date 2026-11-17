@@ -8,7 +8,7 @@ import { RAW, TEXT } from "./keys.js";
 import { showComments } from "./comments.js";
 import { textColor } from "./colors.js";
 import { parseInline } from "./inline.js";
-import { NOTES } from "./geometry.js";
+import { CHIP, CODE_HEAD, NOTES } from "./geometry.js";
 
 export const owners = new Map();
 let owned = 0;
@@ -24,6 +24,7 @@ const RULE_H = 24;
 const CHECK = "mods/herdr-inline-markdown/check.svg";
 const COMMENTS_ICON = "mods/herdr-inline-markdown/message-square.svg";
 const PICTURE_ICON = "mods/herdr-inline-markdown/image.svg";
+const CHEVRON = "mods/herdr-inline-markdown/chevron-down.svg";
 const BOLD = 700;
 const CODE_SCALE = 0.87;
 const ICON_SCALE = 0.9;
@@ -138,9 +139,23 @@ const type = (el, st, color, font) => el.font_family(font).text_size(st.size).fo
 const monoLines = (text, st, color, font) => type(v_flex().w_full(), st, color, font).children(text.split("\n").map(l => div().child(l || " ")));
 
 const codeBox = (t, inner) => div().w_full().relative().bg(t.surface).border_1().border_color(t.border).rounded(8).px(BOX.px).py(BOX.py).child(inner);
-// A code block's box with its language, if any, top right: drawn the same in Reading and while edited.
-const labelledCodeBox = (t, inner, info) => codeBox(t, inner)
-  .when(Boolean(info), el => el.child(div().absolute().top(6).right(10).text_size(11).text_color(t.dim).child(info)));
+// A code block's box starts with a strip holding its language chip at the right, the code under it: drawn the same in
+// Reading and while edited.
+const strippedCodeBox = (d, t, inner) => codeBox(t, v_flex().w_full()
+  .child(h_flex().id(`md-code-head-${d.key}`).w_full().h(CODE_HEAD).flex_none().items_center().justify_end()
+    .when(Boolean(d.chip), el => el.child(languageChip(d, t))))
+  .child(inner));
+
+// The editor takes a press on it from the page, as it does a task box's. On a file that can't be edited it only names
+// the language.
+function languageChip(d, t) {
+  return h_flex().id(`md-chip-${d.key}`).w(d.chipW).h(CHIP.h).flex_none().px(CHIP.padX).gap(CHIP.gap).items_center().justify_center().rounded(6)
+    .text_size(11.5).text_color(t.dim)
+    .when(d.chipLive, el => el.cursor_pointer().hover(s => s.bg(t.hover)))
+    .when(d.chipOpen, el => el.bg(t.hover))
+    .child(div().min_w(0).truncate().child(d.chip))
+    .when(d.chipLive, el => el.child(svg(CHEVRON).size(CHIP.chevron).flex_none().text_color(t.dim)));
+}
 
 function rendered(owner, d, t) {
   const st = STYLES[d.style], color = t[d.color], { sans, mono } = owner.fonts;
@@ -150,7 +165,7 @@ function rendered(owner, d, t) {
       .child(TextView.markdown(`md-tv-${d.key}-${d.gen}`, d.text).selectable(true).on_link_click((url, cx) => owner.link(url, cx)));
   }
   if (d.look === "lines") return monoLines(d.text, st, color, mono);
-  if (d.look === "code") return labelledCodeBox(t, monoLines(d.text, st, color, mono), d.info);
+  if (d.look === "code") return strippedCodeBox(d, t, monoLines(d.text, st, color, mono));
   if (d.look === "boxed") {
     return codeBox(t, type(div().w_full().min_h(d.row), STYLES.cell, color, sans)
       .child(TextView.markdown(`md-tv-${d.key}-${d.gen}`, d.text).selectable(true).on_link_click((url, cx) => owner.link(url, cx))));
@@ -207,7 +222,8 @@ function field(owner, d, t, state) {
     .on_mouse_up("right", () => owner.fieldRightUp(d.key))
     .child(input);
   if (d.kind === "frontmatter") return frontBox(t, wrap);
-  return raw ? labelledCodeBox(t, wrap, d.info) : wrap;
+  if (d.strip) return strippedCodeBox(d, t, wrap);
+  return raw ? codeBox(t, wrap) : wrap;
 }
 
 function marker(owner, d, t) {

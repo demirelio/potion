@@ -7,7 +7,7 @@ import { makeCx, must } from "./helpers.mjs";
 
 const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
-const { NOTES } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { CODE_HEAD, NOTES } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { BOX, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
 const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
@@ -22,7 +22,8 @@ function drawn(text, i, more = {}, also = {}) {
   const blocks = blocksOf(text), b = blocks[i], look = lookOf(b), st = STYLES[look.style];
   const d = {
     key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color, space: spaceBefore(blocks, i), depth: b.depth,
-    text: look.look === "text" ? displayText(b) : look.look === "boxed" ? b.render : b.content, info: b.info, marker: markerOf(b),
+    text: look.look === "text" ? displayText(b) : look.look === "boxed" ? b.render : b.content, marker: markerOf(b),
+    strip: b.kind === "code" || (b.kind === "mermaid" && more.mode === "active"), chip: "", chipW: 0, chipLive: false, chipOpen: false,
     label: b.number ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked), width: 600, diagram: "", mode: "rendered", rows: "many",
     gen: 0, selected: false, row: st.size * st.lh, ratio: st.lh, padRendered: 0, padActive: 0, ...more,
   };
@@ -195,15 +196,16 @@ test("a text block not being edited is drawn by its own field exactly as the edi
   assert.deepEqual([all(gone.el, n => n.kind === "textarea").length, all(gone.el, n => n.kind === "textview").length], [0, 1]);
 });
 
-test("raw blocks edit in a monospace field on the code background, code keeping its language label; front matter keeps its own box", () => {
-  const code = drawn("```js\nx\n```\n", 0, { mode: "active" });
+test("raw blocks edit in a monospace field on the code background, code under its language strip; front matter keeps its own box", () => {
+  const code = drawn("```js\nx\n```\n", 0, { mode: "active", chip: "JavaScript", chipW: 90, chipLive: true });
   const box = code.el.__node.kids[0];
   assert.deepEqual([box.style.bg, box.style.border_1, box.style.px, box.style.py], ["surface", true, BOX.px, BOX.py]);
   const wrap = find(code.el, `md-field-${code.d.key}`), input = all(wrap, n => n.kind === "textarea")[0];
   assert.deepEqual([wrap.style.key_context, input.style.font_family, input.style.text_size], [`${RAW} rows=many`, "Mono", 13]);
-  const label = all(code.el, n => n.style.absolute);
-  assert.deepEqual([label.map(n => textOf(n).trim()), label[0].style.top, label[0].style.right, label[0].style.text_color], [["js"], 6, 10, "dim"], "the language label as Reading draws it");
-  assert.equal(all(drawn("<div>\nx\n</div>\n", 0, { mode: "active" }).el, n => n.style.absolute).length, 0, "none on HTML");
+  const head = must(code.el, `md-code-head-${code.d.key}`), chip = must(head, `md-chip-${code.d.key}`);
+  assert.deepEqual([box.kids[0].kids.map(k => k.id), head.style.h, textOf(chip).trim(), chip.style.w], [[head.id, wrap.id], CODE_HEAD, "JavaScript", 90], "the strip as Reading draws it, the field under it");
+  const html = drawn("<div>\nx\n</div>\n", 0, { mode: "active" });
+  assert.deepEqual([find(html.el, `md-code-head-${html.d.key}`), all(html.el, n => n.style.absolute).length], [null, 0], "none on HTML");
   const front = drawn("---\na: 1\n---\n", 0, { mode: "active" });
   const fbox = front.el.__node.kids[0];
   assert.deepEqual([fbox.style.px, fbox.style.py, fbox.style.bg], [FRONT_BOX.px, FRONT_BOX.py, "surface"]);

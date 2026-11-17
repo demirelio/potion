@@ -4,7 +4,7 @@ import {
   parse, reparse, field, fieldToDoc, docToField, type, separators, applySplice, diff, counters, isText, split, insertAfter,
   insertBefore, insertAt, mergeIntoPrevious, mergeNext, remove, removeRange, toParagraph, indent, outdent, nest, unnest,
   move, toggleTask, paste, closeFence, fenceGuard, shortcut, codeIndent, FENCE, CLOSE, closes, parseInSteps,
-  retype, insertLines, picturesIn, removePicture, lengthenFence,
+  retype, insertLines, picturesIn, removePicture, lengthenFence, setLanguage,
 } from "../mods/herdr-inline-markdown/blocks.js";
 import { visibleMap } from "../mods/herdr-inline-markdown/inline.js";
 import { originals, corpus, docs, htmlKinds, docKinds, random, bigDocument, VARIANTS } from "./markdown-corpus.mjs";
@@ -853,6 +853,57 @@ test("closeFence appends the fence; the fence guard closes a fence typed into a 
   assert.ok(g);
   assert.deepEqual(kinds(parse(run(after.text, g))), ["paragraph", "code", "paragraph"]);
   assert.equal(fenceGuard(parse("a\n"), { start: 0, end: 0, insert: "" }), null);
+});
+
+// The text after setLanguage on the first code block or diagram of `text`; null when it writes nothing.
+const withLanguage = (text, id) => {
+  const d = parse(text), b = d.blocks.find(x => x.kind === "code" || x.kind === "mermaid"), s = setLanguage(d, b, id);
+  if (s && !(s.start <= s.caret && s.caret <= s.start + s.insert.length)) throw new Error("the caret is not in the splice");
+  return s && run(d.text, s);
+};
+
+test("setLanguage replaces the info string's first word and keeps what follows; Plain text removes the whole info string", () => {
+  assert.equal(withLanguage("```js title=\"a.js\"\nx\n```\n", "ts"), "```ts title=\"a.js\"\nx\n```\n");
+  assert.equal(withLanguage("```   py   \nx\n```\n", "rust"), "```   rust   \nx\n```\n", "the spaces around it stay");
+  assert.equal(withLanguage("```\nx\n```\n", "js"), "```js\nx\n```\n", "no info string: the id after the fence");
+  assert.equal(withLanguage("```js title=\"a.js\"\nx\n```\n", ""), "```\nx\n```\n", "Plain text");
+  assert.equal(withLanguage("```\nx\n```\n", ""), null, "Plain text on a block with none writes nothing");
+  assert.equal(withLanguage("```js\nx\n```\n", "js"), null, "the same word writes nothing");
+  assert.equal(withLanguage("~~~py\nx\n~~~\n", "go"), "~~~go\nx\n~~~\n", "a tilde fence");
+  assert.equal(withLanguage("```js\nx\ny", "ts"), "```ts\nx\ny", "an unclosed fence");
+  assert.equal(withLanguage("```js\r\nx\r\n```\r\n", ""), "```\r\nx\r\n```\r\n", "CRLF: the line break stays");
+  assert.equal(withLanguage("- item\n\n  ```js\n  x\n  ```\n", "ts"), "- item\n\n  ```ts\n  x\n  ```\n", "a fence inside a list item");
+  assert.equal(withLanguage("- ```js\n  x\n  ```\n", "py"), "- ```py\n  x\n  ```\n", "a fence on the item's marker line");
+  assert.equal(withLanguage("  ```js\n  x\n  ```\n", "c"), "  ```c\n  x\n  ```\n", "an indented fence");
+});
+
+test("setLanguage turns a code block into a diagram with mermaid, and a diagram's source into code with another language or Plain text", () => {
+  const diagram = withLanguage("```js\ngraph TD\n```\n", "mermaid");
+  assert.equal(diagram, "```mermaid\ngraph TD\n```\n");
+  assert.deepEqual(kinds(parse(diagram)), ["mermaid"]);
+  for (const id of ["js", ""]) {
+    const code = withLanguage("```mermaid\ngraph TD\n```\n", id);
+    assert.deepEqual(kinds(parse(code)), ["code"], id);
+    assert.equal(field(parse(code), parse(code).blocks[0]).value, "graph TD", `${id}: the same code`);
+  }
+});
+
+test("setLanguage fences an indented block: its lines without their indent under its container prefix, the fence longer than a line of backticks in it", () => {
+  const cases = [
+    ["Intro\n\n    a\n      b\n\n    c\n", "py", "Intro\n\n```py\na\n  b\n\nc\n```\n"],
+    ["- item\n\n      code\n      more\n", "js", "- item\n\n  ```js\n  code\n  more\n  ```\n"],
+    ["    ```\n    x\n    ````\n", "md", "`````md\n```\nx\n````\n`````\n"],
+    ["    \tx\n    y", "c", "```c\n\tx\ny\n```"],
+    ["    a\r\n    b\r\n", "go", "```go\r\na\r\nb\r\n```\r\n"],
+  ];
+  for (const [text, id, want] of cases) {
+    const next = withLanguage(text, id), before = parse(text), after = parse(next);
+    assert.equal(next, want, JSON.stringify(text));
+    const code = d => d.blocks.find(b => b.kind === "code");
+    assert.equal(code(after).fence.length >= 3 && code(after).info, id, "one fenced block");
+    assert.equal(field(after, code(after)).value, field(before, code(before)).value, "the code field shows the same text");
+  }
+  assert.equal(withLanguage("    a\n", ""), null, "Plain text leaves an indented block as it is");
 });
 
 test("the fence guard closes a fence typed into an item's continuation or an indented line, not a fence already open", () => {
