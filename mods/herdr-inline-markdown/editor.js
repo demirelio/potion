@@ -20,6 +20,7 @@ import { MARK_BITS } from "./restyle.js";
 import { copyOf, holdsBlocks, joinRuns, pasteInto, pasteParagraphs, splitRuns } from "./seams.js";
 import { addLink, clipboardAddress, linkAddress, pictureCut, pictureForm, setAddress, setPicture, unlink } from "./links.js";
 import { addComment, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, timeLabel } from "./comments.js";
+import { blockUnit, editBlockNote, notesAfter, ownerOf, pairNotes, removeWithNotes, resolveBlockNote } from "./blocknotes.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
 import { Block, CALIBRATED, Column, FRONT_BOX, BOX, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, STYLES, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, parsedInline, visibleMap } from "./inline.js";
@@ -115,6 +116,8 @@ const COMMENT_REFUSED = {
 const NOTE_CLIP = 80;
 // The comment field grows with its text up to this many rows.
 const NOTE_ROWS = 12;
+const BLOCK_NOTES_MEMO = "block-notes";
+const COUNT_CHIP_GAP = 4;
 const noted = text => commentsIn(text).filter(c => c.note !== null);
 // The cards of field value `value`'s comments: each comment with where its card is level with, its time and text, and
 // the look of its card when not active.
@@ -318,7 +321,8 @@ const styleIcon = b => (STYLE_ROWS.includes(styleId(b)) ? commandOf(styleId(b)).
 const listIcon = b => commandOf(b?.kind === "item" ? styleId(b) : "ul").icon;
 
 // A block not written yet (pending) is written with its first text by its `base`, (doc, text) -> splice: after the
-// last block, after or before the block with a key. Its `steps` then run on the block that wrote.
+// last block, after or before the block with a key. Its `steps` then run on the block that wrote. Nothing goes between
+// a block and the paragraph of its comments: after the block is after them, before them is after them too.
 const PLACEHOLDER = "x";
 const atEnd = (doc, text) => {
   const last = doc.blocks.at(-1);
@@ -326,11 +330,11 @@ const atEnd = (doc, text) => {
 };
 const afterKey = (key, kind) => (doc, text) => {
   const b = byKey(doc, key);
-  return b && insertAfter(doc, b, kind, text);
+  return b && insertAfter(doc, notesAfter(doc, b) ?? b, kind, text);
 };
 const beforeKey = (key, kind) => (doc, text) => {
   const b = byKey(doc, key);
-  return b && insertBefore(doc, b, kind, text);
+  return b && (ownerOf(doc, b) ? insertAfter(doc, b, kind, text) : insertBefore(doc, b, kind, text));
 };
 // Where picked pictures go, written as a pending block is: a `base` and its `steps`.
 const AT_END = { base: atEnd, steps: [] };
@@ -428,8 +432,8 @@ function mappedThrough(edits, p) {
 
 // What `herdr-app check` opens (no props; every real opener passes a file): every kind of block, its text blocks drawn
 // by fields of their own, block 2 edited with its slash menu open, a diagram frame wider than the column, a picture
-// picked with its float, the quote's comment on its card in the margin while a new comment's card is being written, and
-// the js block's language menu open.
+// picked with its float, the quote's comment and the js block's on their cards in the margin while a new comment's card
+// is being written, and the js block's language menu open.
 const FIXTURE = [
   "---", "title: herdr-inline-markdown check fixture", "---",
   "# Every kind of block", "",
@@ -439,6 +443,7 @@ const FIXTURE = [
   "1. First", "2. Second", "",
   "> A quote with a [reference link][ref] and {==a remark==}{>>2026-11-16 20:51 | a comment on it<<}.", "",
   "```js", "const answer = 42;", "```", "",
+  "{>>2026-11-17 09:00 | why 42?<<}", "",
   "```mermaid", "graph TD", "A-->B", "```", "",
   "    indented code", "",
   "| Column | Other |", "|--------|-------|", "| a      | b     |", "",
@@ -552,9 +557,12 @@ export class Editor {
     // measured height of the active card.
     this.card = null; this.note = null; this.highlight = highlightColor(theme()); this.deep = deepHighlightColor(theme()); this.notesFor = null;
     this.margin = null; this.cards = null; this.cardMemo = new Map(); this.raised = null;
+    // A code block's, diagram's or table's comments: `pairing` which block owns which comments paragraph in `doc`
+    // (blocknotes.js), `blockNote` the active one of them ({ key: the block's, index, editing }).
+    this.pairing = null; this.blockNote = null;
     this.noteField = TextareaState.new({ placeholder: "Add a comment…" });
     this.noteField.set_auto_grow(1, NOTE_ROWS);
-    this.noteField.on("submit", (_e, cx) => this.saveNote(cx));
+    this.noteField.on("submit", (_e, cx) => (this.blockNoteEditing() ? this.saveBlockNote(cx) : this.saveNote(cx)));
     // Links: `element` the element a press picked (its popover shows while the selection stays in it), `pressedOn` the
     // one that was picked when the press began, `linkBox` what the address box (`linkField`) is open for.
     this.element = null; this.pressedOn = null; this.linkBox = null;
@@ -1093,6 +1101,7 @@ export class Editor {
     this.setSel(null, cx);
     this.unpick(cx);
     this.dropLanguages(cx);
+    this.endBlockNote(cx);
     this.pointer = null;
     let at = null;
     this.writeHeld(cx);
@@ -1122,7 +1131,7 @@ export class Editor {
     const b = at === null ? null : this.holding(at);
     // A caret at a block's end is on the line after it, unless the file ends there without a newline.
     const inside = b && (at < b.end || (at === b.end && this.text.charCodeAt(at - 1) !== 10));
-    if (inside && this.editable()) this.activate(b.key, docToField(fieldOf(this.doc, b), at), cx);
+    if (inside && this.editable() && !this.hiddenNotes(b.key)) this.activate(b.key, docToField(fieldOf(this.doc, b), at), cx);
     else this.handle.focus();
     if (at !== null) this.revealOffset(at);
     this.syncWindow(cx);
@@ -1146,9 +1155,10 @@ export class Editor {
     if (k === "cmd-s") { cx.stop_propagation(); this.saveNow(cx); return; }
     if (k === "cmd-e") { cx.stop_propagation(); this.toggle(cx); return; }
     if (k === "escape" && this.card) { cx.stop_propagation(); this.closeCard(cx); return; }
-    // Keys typed into a picture's box or the language menu reach this root too, and one stopped here never reaches the
-    // box's field.
-    if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey || this.pictureBoxOpen() || this.langOpen()) return;
+    // Keys typed into a picture's box, the language menu or a block's comment reach this root too, and one stopped here
+    // never reaches the box's field.
+    if (this.mode !== "reading" || !this.loaded || this.error || this.activeKey || this.pictureBoxOpen() || this.langOpen() || this.blockNoteEditing()) return;
+    if (k === "escape" && this.blockNote) { cx.stop_propagation(); this.endBlockNote(cx); return; }
     if (this.sel && this.selectionKey(e, cx)) return;
     if (this.picked && this.pictureKey(k, cx)) return;
     if (k === "enter" && this.editable()) { cx.stop_propagation(); this.resume(cx); return; }
@@ -1169,15 +1179,18 @@ export class Editor {
     }
     if (name === "mdb-note-cancel") {
       this.typingStyle = null;
+      if (this.blockNoteEditing()) return this.cancelBlockNote(cx);
       if (this.pictureBoxOpen()) return this.cancelPictureBox(cx);
       if (this.imageBoxOpen()) return this.cancelImageBox(cx);
       return this.linkBoxOpen() ? this.cancelLinkBox(cx) : this.cancelNote(cx);
     }
     if (name === "mdb-note-save") {
+      if (this.blockNoteEditing()) return this.saveBlockNote(cx);
       if (this.pictureBoxOpen() || this.imageBoxOpen()) return this.savePictureBox(cx);
       return this.linkBoxOpen() ? this.applyLinkBox(cx) : this.saveNote(cx);
     }
     if (LANG_ACTIONS.has(name)) return this.languageKey(name, cx);
+    if (name === "mdb-escape" && this.blockNote) return this.endBlockNote(cx);
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
     this.syncField(cx);
     if (name === "mdb-escape") this.typingStyle = null;
@@ -1236,7 +1249,7 @@ export class Editor {
         else if (modeOf(name)) this.setMode(modeOf(name), cx);
         else if (name === "focus") {
           if (this.mode === "markdown" && !this.remote && !this.readWhenParsed) this.source.focus();
-          else if (this.noteOpen()) this.noteField.focus();
+          else if (this.noteOpen() || this.blockNoteEditing()) this.noteField.focus();
           else if (this.linkBoxOpen()) this.linkField.focus();
           else if (this.pictureBoxOpen()) this.pictureField().focus();
           else if (this.imageBoxOpen()) this.pictureField(this.imageBox.kind).focus();
@@ -1320,13 +1333,13 @@ export class Editor {
   }
 
   // Parses in what was typed since the last parse; the block stays the edited one as whatever it became, never one
-  // that begins before it. A block emptied so that nothing of it is left goes with its blank lines. A fence typed into
-  // it that runs past what was typed is closed at once.
+  // that begins before it. A block emptied so that nothing of it is left goes with its blank lines and its comments. A
+  // fence typed into it that runs past what was typed is closed at once.
   commit(cx, caretDoc = null) {
     this.syncField(cx);
     if (!this.stale) return;
     const h = this.activeKey && !this.pending && this.f ? this.held() : null, b = h && this.blockByKey(this.activeKey);
-    const base = this.doc.text, gone = b && this.seen === "" && b.subtreeEnd === b.end ? remove(this.doc, b) : null;
+    const base = this.doc.text, gone = b && this.seen === "" && b.subtreeEnd === b.end ? removeWithNotes(this.doc, b) : null;
     const at = caretDoc ?? h?.caret ?? h?.field;
     const d = this.refresh(cx, at === undefined ? null : { at, kind: null, caretDoc: caretDoc ?? h?.caret ?? null, from: h?.start });
     // Everything typed in the emptied block lies inside its span, so removing it from the text before the typing
@@ -1355,11 +1368,11 @@ export class Editor {
   }
 
   // After a re-parse the block at document offset `at` is the edited one if it is of `kind` (any when null), starts at
-  // `from` or later and is no paragraph of pictures. Its field is set only when its value differs: the caret goes to
-  // `caretDoc`, else follows its text.
+  // `from` or later and is no paragraph of pictures, nor another block's comments. Its field is set only when its value
+  // differs: the caret goes to `caretDoc`, else follows its text.
   refind({ at, kind, caretDoc, from = -Infinity }, cx) {
     const b = this.holding(at);
-    if (!b || b.start > at || (kind && b.kind !== kind) || b.start < from || b.image || !this.editable()) return this.drop();
+    if (!b || b.start > at || (kind && b.kind !== kind) || b.start < from || b.image || this.hiddenNotes(b.key) || !this.editable()) return this.drop();
     const f = fieldOf(this.doc, b), value = withInnerLine(b, f.value);
     this.activeKey = b.key; this.f = f;
     this.adoptField(b);
@@ -1403,13 +1416,15 @@ export class Editor {
     if (this.hoverFrame === key) this.hoverFrame = null;
     if (this.pan?.key === key) this.pan = null;
     if (this.lang?.key === key) this.letLanguagesGo();
+    if (this.blockNote?.key === key) this.blockNote = null;
   }
 
   // Only blocks with different data are redrawn, the Column only when the blocks, their order or its window moved.
   // With no cx (the check fixture) nothing is told.
   rebuild(cx, anchor) {
     this.margin = this.marginNow();
-    const blocks = this.placePending(this.doc.blocks), width = this.textWidth();
+    if (this.blockNote && !this.blockNoteNow()) this.blockNote = null;
+    const blocks = this.pageBlocks(this.placePending(this.doc.blocks)), width = this.textWidth();
     this.blocks = blocks;
     this.at = new Map(blocks.map((b, i) => [b.key, i]));
     this.updateSel();
@@ -1537,6 +1552,29 @@ export class Editor {
     }
     const j = p.before ? blocks.findIndex(b => b.key === p.before) : -1;
     return j < 0 ? [...blocks, p.block] : [...blocks.slice(0, j), p.block, ...blocks.slice(j)];
+  }
+
+  // The page leaves out a block's comments paragraph, which shows as the block's cards, unless it is being edited.
+  pageBlocks(blocks) {
+    const hidden = this.notesNow().hidden;
+    return hidden.size ? blocks.filter(b => !hidden.has(b.key) || b.key === this.activeKey) : blocks;
+  }
+
+  // Which block owns which comments paragraph, paired once for each document.
+  notesNow() {
+    if (this.pairing?.doc !== this.doc) this.pairing = pairNotes(this.doc, this.pairing);
+    return this.pairing;
+  }
+
+  hiddenNotes(key) {
+    return key !== this.activeKey && this.notesNow().hidden.has(key);
+  }
+
+  // Block `key`'s comments as its cards and count show them: none while their paragraph is the edited block, which
+  // shows them as its own.
+  shownNotes(key) {
+    const owned = this.notesNow().owners.get(key);
+    return owned && owned.para.key !== this.activeKey ? owned : null;
   }
 
   // The pending block written with a stand-in text on a copy: what it draws as, and the block it comes before.
@@ -1697,7 +1735,7 @@ export class Editor {
       mode: b.key === this.activeKey ? "active" : this.blockFields.has(b.key) ? "field" : "rendered",
       tokens: look.look === "text" && (b.key === this.activeKey || this.blockFields.has(b.key)),
       rows: b.key === this.activeKey ? this.rows : "many", menu: b.key === this.activeKey && this.slashOpen(),
-      gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key),
+      gen: this.gens.get(b.key) ?? 0, selected: this.selKeys.has(b.key), framed: this.blockNote?.key === b.key,
       row: cal.row, ratio: cal.ratio, padRendered: cal.padRendered, padActive: cal.padActive,
       ...(look.look === "diagram" ? this.frameData(b, width) : {}),
       ...(look.look === "picture" ? this.pictureData(b, width) : {}),
@@ -1705,11 +1743,15 @@ export class Editor {
   }
 
   // A text block shows its comments' count where notesPlace puts it, unless they show as cards in the margin; the edited
-  // one counts what its field holds.
+  // one counts what its field holds. A code block, diagram or table shows its comments paragraph's count level with its
+  // top, left of a code block's language chip where the chip would be under it.
   notesData(b, look, space, cal, width) {
-    const notes = look.look === "text" && !this.margin ? noted(b.key === this.activeKey ? this.seen : b.content).length : 0;
+    const owned = this.shownNotes(b.key);
+    const notes = this.margin ? 0 : owned ? owned.points.length : look.look === "text" ? noted(b.key === this.activeKey ? this.seen : b.content).length : 0;
     if (!notes) return { notes: 0, notesX: 0, notesY: 0 };
-    const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: cal.row });
+    const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: owned ? NOTES.h : cal.row });
+    const chip = owned ? this.chipData(b) : NO_STRIP, beside = chip.chipW ? this.chipIn({ space, chipW: chip.chipW }) : null;
+    if (beside && at.x + NOTES.w > beside.x) return { notes, notesX: beside.x - COUNT_CHIP_GAP - NOTES.w, notesY: beside.y + (CHIP.h - NOTES.h) / 2 };
     return { notes, notesX: at.x, notesY: at.y };
   }
 
@@ -1953,6 +1995,8 @@ export class Editor {
       const b = blocks[i], hidden = b.fence || b.kind === "frontmatter" ? 1 : 0;
       line = Math.max(0, this.text.slice(b.start, Math.max(b.start, at)).split("\n").length - 1 - hidden);
     }
+    // A block's comments paragraph is not on the page: its block is shown instead.
+    if (!this.at.has(blocks[i].key) && i > 0) [i, line] = [i - 1, 0];
     const d = this.data.get(blocks[i].key);
     this.reveal = { key: blocks[i].key, fraction: REVEAL_AT, rowY: d.space + line * d.row };
     this.layout(null);
@@ -2092,12 +2136,13 @@ export class Editor {
 
   // A press beside the edited block's field would take the keyboard from it: it is given back at once, and again on the
   // mouse-up if the root took it anyway. `beside` is that block's key, `key` the block pressed, from which a drag
-  // selects blocks. A press anywhere but on the picked picture lets it go, and one anywhere but on the chip whose
-  // language menu is open closes the menu.
+  // selects blocks. A press anywhere but on the picked picture lets it go, one anywhere but on the chip whose language
+  // menu is open closes the menu, and any press on the page ends a block's active comment.
   viewportDown(e, cx) {
     this.closeSlash(cx);
     this.closeBar(cx);
     this.closeCard(cx);
+    this.endBlockNote(cx);
     this.endThumb(cx);
     this.endPan(cx);
     this.linked = false;
@@ -2373,7 +2418,8 @@ export class Editor {
   }
 
   // The blocks a selection covers, as indices into doc.blocks: [first, last], the sub-blocks of the last ones
-  // included, as removeRange takes them; null when either end is gone.
+  // included, as removeRange takes them, and the comments paragraph of a last block that has one; null when either end
+  // is gone.
   selRange(sel = this.sel) {
     const bl = this.doc?.blocks ?? [], a = sel ? bl.findIndex(b => b.key === sel.from) : -1, z = sel ? bl.findIndex(b => b.key === sel.to) : -1;
     if (a < 0 || z < 0) return null;
@@ -2382,7 +2428,7 @@ export class Editor {
       end = Math.max(end, bl[j].subtreeEnd);
       if (j === k && bl[k + 1]?.start < end) k++;
     }
-    return [Math.min(a, z), k];
+    return [Math.min(a, z), notesAfter(this.doc, bl[k])?.index ?? k];
   }
 
   keysIn(range) {
@@ -2450,14 +2496,14 @@ export class Editor {
   hit(p) {
     const blocks = this.blocks, n = blocks.length;
     if (this.sums.length !== n + 1) return null;
+    const y = p.y + this.offset - COLUMN.padTop, x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin);
+    const counted = this.countAt(x, y);
+    if (counted) return { block: counted, on: "notes" };
     const f = this.frameAt(p);
     if (f) {
       const tool = this.toolsShown(f.block.key) ? frameTool(f.fx, f.fy, f.d.frameW, this.toolsTopOf(f.block.key)) : null;
       return { block: f.block, on: tool ? "tool" : "frame", tool, fx: f.fx, fy: f.fy };
     }
-    const y = p.y + this.offset - COLUMN.padTop, x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin);
-    const counted = this.countAt(x, y);
-    if (counted) return { block: counted, on: "notes" };
     if (x < 0 || x >= this.textWidth()) return { on: "outside" };
     if (!n) return { on: "end" };
     if (y < 0) return { on: "outside" };
@@ -2494,9 +2540,11 @@ export class Editor {
 
   // Block `key` becomes the edited one, the caret at field offset `caret` (a number or a range). `shift` moves the page
   // down by that much; `reveal` keeps the caret row in view, which a press does not want: the page does not move on a click.
-  // A paragraph of pictures is never edited: the picture at the caret is picked instead. -> whether a block is edited.
+  // A paragraph of pictures is never edited: the picture at the caret is picked instead. Nor is a block's comments
+  // paragraph: nothing opens. Another block's active comment ends. -> whether a block is edited.
   activate(key, caret, cx, { shift = 0, reveal = true } = {}) {
-    if (!this.editable()) return false;
+    if (!this.editable() || this.hiddenNotes(key)) return false;
+    if (this.blockNote && this.blockNote.key !== key) this.endBlockNote(cx);
     this.setSel(null, cx);
     if (this.activeKey && this.activeKey !== key) this.leave(cx, key);
     else if (this.activeKey) this.commit(cx);
@@ -2708,6 +2756,7 @@ export class Editor {
   }
 
   pickElement(span, cx) {
+    this.endBlockNote(cx);
     this.element = { act: this.act, kind: span.kind, start: span.start };
     this.known = { start: span.start, end: span.end, valid: true };
     this.retoken();
@@ -2790,10 +2839,10 @@ export class Editor {
     cx.timer.after(REFOCUS_MS, () => { if (!this.closed && this.act === act && this.activeKey && !this.boxOpen()) state.focus(); });
   }
 
-  // What was typed is parsed in, an emptied block goes (a fenced one keeps its fences), and a pending one is never
-  // written unless it holds a marker held back (writeHeld). While its caret row is on the page the block keeps its top
-  // where it is; a pending block, which goes, leaves block `keep` (the one opened next) where it is, else the block
-  // above it.
+  // What was typed is parsed in, an emptied block goes with its comments (a fenced one keeps its fences), and a pending
+  // one is never written unless it holds a marker held back (writeHeld). While its caret row is on the page the block
+  // keeps its top where it is; a pending block, which goes, leaves block `keep` (the one opened next) where it is, else
+  // the block above it.
   leave(cx, keep = null) {
     if (!this.activeKey) return;
     this.syncField(cx);
@@ -2804,7 +2853,7 @@ export class Editor {
       const i = this.at.get(keep) ?? (this.at.get(pending.key) ?? 0) - 1;
       anchor = i >= 0 && this.blocks[i] ? { key: this.blocks[i].key, y: COLUMN.padTop + this.sums[i] - this.offset } : null;
     }
-    const gone = b && this.seen === "" && this.opened !== "" && b.subtreeEnd === b.end && !b.fence ? remove(this.doc, b) : null;
+    const gone = b && this.seen === "" && this.opened !== "" && b.subtreeEnd === b.end && !b.fence ? removeWithNotes(this.doc, b) : null;
     const base = this.doc.text;
     if (gone) this.f = null;
     this.commit(cx);
@@ -3603,7 +3652,7 @@ export class Editor {
   paragraphInPlace(b, cx) {
     const pos = b.start, depth = b.depth;
     this.leave(cx);
-    const left = this.blockByKey(b.key), s = left && remove(this.doc, left);
+    const left = this.blockByKey(b.key), s = left && removeWithNotes(this.doc, left);
     if (s) this.change(s, cx);
     this.openPendingWith({ base: this.baseAt(pos, depth) }, cx);
   }
@@ -3719,8 +3768,9 @@ export class Editor {
     return chain(this.doc, s, [runs])?.splice ?? s;
   }
 
-  // Backspace at the start of an empty raw block removes it. A block whose source typing emptied goes as the caret
-  // leaves it: a commit would take it away with the block being edited. An emptied fenced block still has its fences.
+  // Backspace at the start of an empty raw block removes it, with its comments. A block whose source typing emptied goes
+  // as the caret leaves it: a commit would take it away with the block being edited. An emptied fenced block still has
+  // its fences.
   removeEmptyRaw(b, i, cx) {
     const lines = this.seen.split("\n"), inner = b.kind === "frontmatter" ? lines.slice(1, -1) : lines;
     if (inner.some(l => l.trim())) return;
@@ -3729,7 +3779,7 @@ export class Editor {
     if (!this.seen && !b.fence) return this.cross(-1, cx);
     this.commit(cx);
     const now = this.blockByKey(this.activeKey), back = this.blocks[j].key;
-    this.op(now && remove(this.doc, now), cx, {
+    this.op(now && removeWithNotes(this.doc, now), cx, {
       then: () => {
         const p = this.blockByKey(back);
         if (p) this.activate(p.key, this.entry(p, this.openedValue(p), -1, null), cx);
@@ -3827,8 +3877,8 @@ export class Editor {
     if (this.pending) return;
     const r = this.caretNow();
     this.commit(cx);
-    const b = this.blockByKey(this.activeKey);
-    if (b) this.op(move(this.doc, b, dir), cx, { caret: r ? { start: r.start, end: r.end } : 0 });
+    const b = this.blockByKey(this.activeKey), doc = this.doc;
+    if (b) this.op(move(doc, b, dir, x => blockUnit(doc, x)), cx, { caret: r ? { start: r.start, end: r.end } : 0 });
   }
 
   // Cmd+C and Cmd+X in a text block: the selection as markdown that stands alone (seams.js), each character with its
@@ -4020,7 +4070,8 @@ export class Editor {
 
   // No commit first: its rules of leaving would record entries that this undo then took back, and Cmd+Z on a block
   // emptied by typing would seem to do nothing. An empty block that a key opened, with nothing typed in yet, is undone
-  // by going back to where the key was pressed.
+  // by going back to where the key was pressed. An entry that opens nothing (a block's comment written) leaves the page
+  // the keyboard.
   undo(dir, cx) {
     if (!this.file || !this.loaded || this.error || this.remote || this.locked) return;
     this.syncSource(cx);
@@ -4042,9 +4093,10 @@ export class Editor {
       return;
     }
     this.release();
-    this.picked = null;
+    this.picked = null; this.blockNote = null;
     this.setText(text, cx, false);
-    this.openAt(u.caret, cx, null, u.select);
+    if (u.opensNothing) this.handle.focus();
+    else this.openAt(u.caret, cx, null, u.select);
   }
 
   // The block holding document offset `at` opens with field caret `caret`, else the document range `select` selected,
@@ -4610,23 +4662,35 @@ export class Editor {
     cx?.notify();
   }
 
-  // Drawn by the root where the bar goes. Presses on it go no further, so the field under it keeps its selection.
+  // Drawn by the root where the bar goes, or over the top of a block whose comment it edits. Presses on it go no
+  // further, so the field under it keeps its selection.
   noteBox(t) {
-    const place = this.noteOpen() && !this.margin ? this.placeBar(this.note.range, NOTE_BOX) : null;
+    const block = this.blockNoteEditing() && !this.margin ? this.blockBoxPlace() : null;
+    const place = block ?? (this.noteOpen() && !this.margin ? this.placeBar(this.note.range, NOTE_BOX) : null);
     if (!place) return null;
     return div().id("md-note").absolute().left(place.left).top(place.top).w(place.w).min_h(place.h).p(NOTE_BOX.pad).flex()
       .bg(t.popover).rounded(8).border_1().border_color(t.border).shadow_lg().key_context(NOTE)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_move((_e, cx) => cx.stop_propagation())
-      .on_mouse_down_out((_e, cx) => this.closeNote(cx))
+      .on_mouse_down_out((_e, cx) => (block ? this.closeBlockEdit(cx) : this.closeNote(cx)))
       .child(Textarea.new(this.noteField).flex_1().text_size(13).text_color(t.foreground));
   }
 
-  // A box over the page that holds the keyboard: the comment box, the link's address box, a picture's box or the
-  // language menu's search box.
+  // The box editing a block's comment where no margin shows its card: over the block's top edge, under it when there is
+  // no room above, at the block's left; null while that edge is out of the pane.
+  blockBoxPlace() {
+    const key = this.blockNote.key, i = this.at.get(key), d = this.data.get(key);
+    if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
+    const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
+    const top = COLUMN.padTop + this.sums[i] + d.space - this.offset;
+    return popoverPlace({ firstTop: top, lastTop: top, rowH: 0, size: NOTE_BOX, viewW, viewH, x: columnLeft(viewW, this.margin) + d.depth * INDENT });
+  }
+
+  // A box over the page that holds the keyboard: the comment box (a block's comment being edited included), the link's
+  // address box, a picture's box or the language menu's search box.
   boxOpen() {
-    return this.noteOpen() || this.linkBoxOpen() || this.pictureBoxOpen() || this.imageBoxOpen() || this.langOpen();
+    return this.noteOpen() || this.blockNoteEditing() || this.linkBoxOpen() || this.pictureBoxOpen() || this.imageBoxOpen() || this.langOpen();
   }
 
   // A float at `place` in the link popover's look. Presses on it go no further, so what is under it keeps the keyboard
@@ -5397,19 +5461,24 @@ export class Editor {
     cx?.notify();
   }
 
-  // The comments of the card's block as its field shows them (a soft line break a space); null when it has none.
+  // The comments of the card's block as its field shows them (a soft line break a space), a code block's, diagram's or
+  // table's as its comments paragraph's field does (`block`); null when it has none.
   cardComments() {
-    const key = this.card?.key, b = key ? this.blockByKey(key) : null;
-    if (!b || !isText(b)) return null;
-    const f = fieldOf(this.doc, b), list = noted(f.value);
-    return list.length ? { b, f, list } : null;
+    const key = this.card?.key, b = key ? this.blockByKey(key) : null, owned = b ? this.shownNotes(key) : null;
+    if (!b || (!owned && !isText(b))) return null;
+    const f = fieldOf(this.doc, owned ? owned.para : b), list = noted(f.value);
+    return list.length ? { b, f, list, block: Boolean(owned) } : null;
   }
 
   // Edit on the card: the block opens with the comment's marked text selected (a point comment's place), and the box
-  // holds the comment.
+  // holds the comment. A block's comment is edited in the box over the block, which opens nothing.
   editNote(i, cx) {
     const found = this.cardComments(), c = found?.list[i];
     if (!c || !this.editable()) return;
+    if (found.block) {
+      this.pickBlockNote(found.b.key, i, cx);
+      return this.startBlockEdit(cx);
+    }
     const range = { start: c.from, end: c.to };
     this.closeCard(cx);
     if (this.activate(found.b.key, range, cx)) this.showNote({ kind: "edit", range, text: noteText(c.note), comment: c }, cx);
@@ -5421,6 +5490,7 @@ export class Editor {
     this.commit(cx);
     const found = this.cardComments(), c = found?.list[i];
     if (!c) return;
+    if (found.block) return this.resolveBlockNoteAt(found.b.key, i, cx);
     const next = resolveComment(found.f.value, c);
     this.change(docSplice(found.f, marksEdits(found.f.value, next.value)), cx);
   }
@@ -5481,8 +5551,11 @@ export class Editor {
   }
 
   // The comment that is active in the edited block: picked by a press on its text or its card, or being edited; a
-  // comment being written is `adding`. -> { key, start, editing, adding, id } or null.
+  // comment being written is `adding`. Else a code block's, diagram's or table's active comment (`block`, its `index`).
+  // -> { key, start, editing, adding, id } or null.
   activeComment() {
+    const n = this.blockNoteNow();
+    if (n) return { key: n.key, index: n.index, block: true, editing: n.editing, adding: false, id: `block:${n.key}:${n.index}:${n.editing}` };
     if (!this.activeKey || this.pending) return null;
     if (this.noteOpen()) {
       const n = this.note;
@@ -5495,8 +5568,9 @@ export class Editor {
   }
 
   // The margin's cards in document order: one per comment of the window's text blocks (the edited one's as its field
-  // holds them) and one for a comment being written, each level with the row its text starts on and pushed down off
-  // the one before. Worked out again only when something they are placed by has changed, not on every draw.
+  // holds them), each level with the row its text starts on, one per comment of its code blocks, diagrams and tables,
+  // level with the block's top, and one for a comment being written; each pushed down off the one before. Worked out
+  // again only when something they are placed by has changed, not on every draw.
   cardList() {
     const m = this.margin;
     if (!m || !this.doc || this.sums.length !== this.blocks.length + 1) return [];
@@ -5515,14 +5589,33 @@ export class Editor {
   }
 
   blockCards(key, focus, list) {
-    const i = this.at.get(key), b = this.blocks[i], active = key === this.activeKey;
+    const i = this.at.get(key), b = this.blocks[i], active = key === this.activeKey, owned = b && this.shownNotes(key);
+    if (owned) return this.ownerCards(i, b, owned.para, focus, list);
     if (!b || !isText(b) || b.image || b === this.pending?.block || (!active && !this.notesFor.byKey.has(key))) return;
     const memo = active ? { value: this.seen, cards: cardsOf(this.seen) } : this.cardMemoOf(b);
     for (const card of memo.cards) {
-      const { c, index, at, when, text } = card, mine = Boolean(focus) && focus.key === key && focus.start === c.start, id = `md-card-${key}-${index}`;
+      const { c, index, at, when, text } = card, mine = Boolean(focus) && !focus.block && focus.key === key && focus.start === c.start, id = `md-card-${key}-${index}`;
       const look = mine ? cardLook({ text, header: true, full: true }) : card.look;
       list.push({ id, key, index, c, when, text: look.text, i, at, want: this.rowTop(i, b, memo, at), h: this.raisedH(id, look.h), active: mine, editing: mine && focus.editing });
     }
+  }
+
+  // Read from the comments paragraph even while b is edited, all level with b's top.
+  ownerCards(i, b, para, focus, list) {
+    const memo = this.ownerMemoOf(b, para), want = this.sums[i] + this.data.get(b.key).space;
+    for (const card of memo.cards) {
+      const { c, index, when, text } = card, mine = Boolean(focus?.block) && focus.key === b.key && focus.index === index, id = `md-card-${b.key}-${index}`;
+      const look = mine ? cardLook({ text, header: true, full: true }) : card.look;
+      list.push({ id, key: b.key, index, c, when, text: look.text, i, at: index, want, h: this.raisedH(id, look.h), active: mine, editing: mine && focus.editing, block: true });
+    }
+  }
+
+  ownerMemoOf(b, para) {
+    const kept = this.cardMemo.get(b.key);
+    if (kept && kept.content === para.content && kept.kind === BLOCK_NOTES_MEMO) return kept;
+    const memo = { content: para.content, kind: BLOCK_NOTES_MEMO, value: para.content, cards: cardsOf(para.content) };
+    this.cardMemo.set(b.key, memo);
+    return memo;
   }
 
   // The card of the comment being written, at the start of the text it goes on.
@@ -5573,7 +5666,7 @@ export class Editor {
       .rounded(8).border_1().bg(t.raised).border_color(e.active ? deepHighlightColor(t) : t.border).cursor_pointer()
       .when(e.active, el => el.shadow_lg().on_size_change((size, cx) => this.cardSized(e.id, size, cx)))
       .when(!e.active, el => el.h(e.h).overflow_hidden())
-      .when(e.editing, el => el.on_mouse_down_out((_e, cx) => this.closeNote(cx)))
+      .when(e.editing, el => el.on_mouse_down_out((_e, cx) => (e.block ? this.closeBlockEdit(cx) : this.closeNote(cx))))
       .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.cardDown(e, false, cx); })
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .children(this.cardBody(e, writable, now, t));
@@ -5591,7 +5684,7 @@ export class Editor {
       .child(svg(ICON("message-square")).size(13).flex_none().text_color(t.dim))
       .child(div().id(`${e.id}-time`).flex_1().min_w(0).truncate().text_size(CARD_TIME_SIZE).text_color(t.dim).child(timeLabel(e.when, now) || "Comment"))
       .when(buttons && !e.editing, el => el.child(button("edit", "pencil", "Edit", cx => this.cardDown(e, true, cx))))
-      .when(buttons, el => el.child(button("resolve", "check", "Resolve", cx => this.resolveCard(e, cx)))));
+      .when(buttons, el => el.child(button("resolve", "check", "Resolve", cx => (e.block ? this.resolveBlockNoteAt(e.key, e.index, cx) : this.resolveCard(e, cx))))));
     if (e.editing) {
       out.push(div().id(`${e.id}-input`).w_full().key_context(NOTE)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -5613,9 +5706,11 @@ export class Editor {
     cx.notify();
   }
 
-  // A press on a card makes its comment active, as a press on its text does; one on the card's text edits it there.
+  // A press on a card makes its comment active, as a press on its text does; one on the card's text edits it there. A
+  // block's card edits on a press on its text once it is active.
   cardDown(e, onText, cx) {
     if (!this.editable() || !e.c || this.activeComment()?.editing) return;
+    if (e.block) return onText && e.active ? this.startBlockEdit(cx) : this.pickBlockNote(e.key, e.index, cx);
     if (this.pickComment(e.key, e.index, cx) && onText) this.editPicked(cx);
   }
 
@@ -5658,6 +5753,82 @@ export class Editor {
     this.focusField(cx);
     this.checkMargin(cx);
     cx.notify();
+  }
+
+  blockNoteNow() {
+    const n = this.blockNote, owned = n && this.doc ? this.notesNow().owners.get(n.key) : null;
+    return owned && n.index < owned.points.length ? n : null;
+  }
+
+  blockNoteEditing() {
+    return Boolean(this.blockNoteNow()?.editing) && this.editable();
+  }
+
+  setBlockNote(next, cx) {
+    const was = this.blockNote?.key;
+    this.blockNote = next;
+    this.redraw([...new Set([was, next?.key])].filter(Boolean), cx);
+    cx?.notify();
+  }
+
+  endBlockNote(cx) {
+    if (this.blockNote) this.setBlockNote(null, cx);
+  }
+
+  // A press on a block's card: its comment active and the block framed, opening nothing. The editing of another block
+  // ends and the page has the keyboard; the block itself, when edited, stays so with the keyboard in its field.
+  pickBlockNote(key, index, cx) {
+    this.closeCard(cx);
+    this.setSel(null, cx);
+    this.unpick(cx);
+    this.letLanguagesGo(cx);
+    if (this.activeKey && this.activeKey !== key) this.deactivate(cx);
+    this.setBlockNote({ key, index, editing: false }, cx);
+    this.giveBackKeyboard();
+  }
+
+  startBlockEdit(cx) {
+    const n = this.blockNoteNow();
+    if (!n || !this.editable()) return;
+    const text = noteText(this.notesNow().owners.get(n.key).points[n.index].note);
+    this.setBlockNote({ ...n, editing: true }, cx);
+    this.guard(() => {
+      this.noteField.set_value(text);
+      this.noteField.set_selected_range({ start: text.length, end: text.length });
+    });
+    this.noteField.focus();
+  }
+
+  // The edited block is committed first, so it stays edited with its caret.
+  saveBlockNote(cx) {
+    const n = this.blockNoteNow(), text = this.noteField.value();
+    if (!n?.editing) return;
+    if (!oneLine(text)) return this.resolveBlockNoteAt(n.key, n.index, cx);
+    this.commit(cx);
+    const b = this.blockByKey(n.key), s = b && editBlockNote(this.doc, b, n.index, text);
+    this.setBlockNote({ ...n, editing: false }, cx);
+    if (s) this.change(s, cx, { opensNothing: true });
+    this.giveBackKeyboard();
+  }
+
+  cancelBlockNote(cx) {
+    this.closeBlockEdit(cx);
+    this.giveBackKeyboard();
+  }
+
+  closeBlockEdit(cx) {
+    const n = this.blockNote;
+    if (n?.editing) this.setBlockNote({ ...n, editing: false }, cx);
+  }
+
+  resolveBlockNoteAt(key, index, cx) {
+    if (!this.editable()) return;
+    this.commit(cx);
+    const b = this.blockByKey(key), s = b && resolveBlockNote(this.doc, b, index);
+    this.endBlockNote(cx);
+    if (s) this.change(s, cx, { opensNothing: true });
+    this.checkMargin(cx);
+    this.giveBackKeyboard();
   }
 
   // The picked comment's card under its text, while the comments have no margin to show in. Presses on it go no

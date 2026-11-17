@@ -286,6 +286,14 @@ test("the newest entry given selections puts back the one before it on undo and 
   assert.deepEqual(plain.undo(), { start: 2, end: 3, insert: "", caret: 2 }, "an entry without them gives its caret only");
 });
 
+test("an entry recorded as opening nothing says so on undo and redo, through a rebase too", () => {
+  const h = createHistory();
+  h.record("ab\n", { start: 2, end: 2, insert: "c" }, { caretBefore: 2, caretAfter: 3, opensNothing: true });
+  h.rebase({ start: 0, end: 0, insert: "x" });
+  assert.deepEqual(h.undo("xabc\n"), { start: 3, end: 4, insert: "", caret: 3, opensNothing: true });
+  assert.deepEqual(h.redo("xab\n"), { start: 3, end: 3, insert: "c", caret: 4, opensNothing: true });
+});
+
 test("select on a text the newest entry did not leave changes nothing", () => {
   const { h } = bolded();
   h.select("Hello world.\n", { start: 6, end: 11 }, { start: 8, end: 13 });

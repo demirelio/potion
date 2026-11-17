@@ -2056,16 +2056,18 @@ export function unnest(doc, b) {
   return rewritten(doc, { start: b.start, end: b.end, insert: out, caret: b.start + removeColumns(first, w).length });
 }
 
-// b's subtree swaps with the previous (dir < 0) or next sibling's subtree, each with its gap.
-export function move(doc, b, dir) {
-  if (midLine(doc, b)) return null;
-  const other = dir < 0 ? prevSibling(doc, b) : nextSibling(doc, b);
-  if (!other || midLine(doc, other)) return null;
+// b's subtree swaps with the previous (dir < 0) or next sibling's subtree, each with its gap. `unitOf(x)` gives the run
+// of siblings [first, last] that moves as one with x.
+export function move(doc, b, dir, unitOf = x => [x, x]) {
+  const [b0, b1] = unitOf(b);
+  if (midLine(doc, b0)) return null;
+  const near = dir < 0 ? prevSibling(doc, b0) : nextSibling(doc, b1), [o0, o1] = near ? unitOf(near) : [null, null];
+  if (!near || midLine(doc, o0) || (o0.index <= b1.index && o1.index >= b0.index)) return null;
   const bl = doc.blocks, text = doc.text, eol = doc.eol;
-  const A = dir < 0 ? other : b, B = dir < 0 ? b : other;
+  const [A, A1, B, B1] = dir < 0 ? [o0, o1, b0, b1] : [b0, b1, o0, o1];
   const gapEndOf = x => bl[lastOfSubtree(bl, x.index)].gapEnd;
-  const a = text.slice(A.start, A.subtreeEnd), ag = text.slice(A.subtreeEnd, gapEndOf(A));
-  const bb = text.slice(B.start, B.subtreeEnd), bg = text.slice(B.subtreeEnd, gapEndOf(B)), end = gapEndOf(B);
+  const a = text.slice(A.start, A1.subtreeEnd), ag = text.slice(A1.subtreeEnd, gapEndOf(A1));
+  const bb = text.slice(B.start, B1.subtreeEnd), bg = text.slice(B1.subtreeEnd, gapEndOf(B1)), end = gapEndOf(B1);
   let lead, rest;
   if (!bb.endsWith("\n")) {
     // B ends the file without an EOL of its own: B takes the EOL it lacked, A gives its own up, A's gap stays between.
@@ -2080,10 +2082,10 @@ export function move(doc, b, dir) {
     rest = a + ag;
   }
   const insert = lead + rest;
-  const moved = b === A ? A.start + lead.length : A.start;
-  const s = { start: A.start, end, insert, caret: moved + b.lines[0].body };
+  const moved = b0 === A ? A.start + lead.length : A.start;
+  const s = { start: A.start, end, insert, caret: moved + b.start - b0.start + b.lines[0].body };
   const seams = [{ at: A.start, depth: B.depth }, { at: A.start + lead.length, depth: A.depth }];
-  return guard(doc, s, [...seams, seamBefore(doc, B.index, A.start + insert.length)]);
+  return guard(doc, s, [...seams, seamBefore(doc, B1.index, A.start + insert.length)]);
 }
 
 export function toggleTask(doc, b) {

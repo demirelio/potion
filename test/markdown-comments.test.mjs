@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  POINT, addComment, commentable, commentsIn, editComment, highlight, noteText, oneLine, readNote, resolveComment, showComments,
-  stampOf, timeLabel,
+  POINT, addComment, commentable, commentsIn, editComment, highlight, noteText, oneLine, pointComment, readNote, resolveComment,
+  showComments, stampOf, timeLabel,
 } from "../mods/herdr-inline-markdown/comments.js";
 
 const COLOR = "#4a3b20";
@@ -164,4 +164,11 @@ test("a comment's time: today the hour, this year the day, another year the day 
   assert.equal(timeLabel(new Date(2025, 10, 15, 20, 51), now), "Nov 15, 2025");
   assert.equal(timeLabel(new Date(2027, 1, 1, 9, 0), now), "Feb 1, 2027", "a clock set back: another year");
   assert.equal(timeLabel(null, now), "");
+});
+
+test("a point comment on its own: one line, stamped with its time, never closed early; nothing for an empty note", () => {
+  const when = new Date(2026, 10, 17, 9, 5);
+  assert.equal(pointComment("why\nthis <<} loop?", when), "{>>2026-11-17 09:05 | why this << } loop?<<}");
+  assert.equal(pointComment(" \n ", when), "");
+  assert.deepEqual(readNote(commentsIn(pointComment("why?", when))[0].note), { when, text: "why?" });
 });

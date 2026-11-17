@@ -354,13 +354,40 @@ before the editor stored times are like that). Only the comment's text is ever s
   **Edit** (the block opens with the marked text selected and the box holds the comment) and **Resolve**. A click on
   commented text shows that comment's card over it, with Edit and Resolve; Edit, or a click on the card's text, opens
   the box to edit it. A file that can't be edited shows its cards without Resolve or Edit. The footer counts the file's comments.
+- **On code blocks, diagrams and tables.** A code block, a diagram or a whole table carries its comments in a
+  paragraph of their own right after it: point comments and nothing else, one per line, a blank line between the block
+  and them (a table needs it: a line right under a table is another row). A person or an agent adds one by writing it
+  in that form:
+
+  ````
+  ```js
+  for (const x of xs) work(x);
+  ```
+
+  {>>2026-11-17 09:00 | why this loop?<<}
+  {>>2026-11-17 09:05 | could be a map<<}
+  ````
+
+  Reading never draws that paragraph (the Markdown view shows it as written): its comments are cards level with the
+  block's top, in the order they are written, stacked with the cards around them, and the arrows, a click or Backspace
+  go from the block straight to the block after them. A click on such a card makes its comment active: the card stands
+  out as above and the block gets a 2 px frame in the deeper ochre. Nothing opens; a block being edited elsewhere stops
+  being edited, the block itself stays edited. Escape or a click elsewhere ends it. Edit, or a click on the active
+  card's text, edits the comment in place (Enter saves it with its time, Escape leaves it); Resolve takes its line out,
+  and the last one takes the paragraph with it. Each is one undo step, and undo opens no block. The block and its
+  comments go together: a block written after it goes after them, Option+Up and Down move them with it, and a block
+  selection, a cut or Backspace in an empty code block that removes the block removes them too. A paragraph holding
+  anything besides point comments (a word, a highlight) is ordinary text, with its 💬. A block turned into another kind leaves
+  the paragraph where it is, as ordinary text; a code block given the Mermaid language keeps its comments. In a narrow
+  pane the block shows their count at its top (left of a code block's language chip), and its card's Edit opens the
+  comment box over the block.
 - **Reading** highlights the marked text in a muted ochre as light as the page (dark brown on a dark theme, whatever
   its tint, soft beige on a light one), the colour `<mark>` highlights get too, its formatting still drawn, and leaves out the marks
   and the comment; a comment at a point shows as a highlighted 💬. A highlight with no comment (`{==text==}`) is
   highlighted too. The block being edited looks the same: the marks and the comment stay hidden.
 - **Rules:** a comment is one line (line breaks typed into it become spaces, and `<<}` in it is written `<< }` so it
-  can't end the comment early). It stays within one paragraph and never goes inside inline code, a code block, a
-  diagram or a table, where CriticMarkup is plain text. A selection that would cut through or hold another comment, or
+  can't end the comment early). It stays within one paragraph and never goes inside inline code, where CriticMarkup is
+  plain text. A selection that would cut through or hold another comment, or
   reach into code, is refused with a notice; comments don't nest. CriticMarkup's suggestions (`{++ ++}`, `{-- --}`,
   `{~~ ~> ~~}`) are shown as written.
 

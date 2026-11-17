@@ -6,7 +6,7 @@ import { diagramBlock } from "./diagrams.js";
 import { pictureBlock } from "./images.js";
 import { RAW, TEXT } from "./keys.js";
 import { showComments } from "./comments.js";
-import { textColor } from "./colors.js";
+import { deepHighlightColor, textColor } from "./colors.js";
 import { parseInline } from "./inline.js";
 import { CHIP, CODE_HEAD, NOTES } from "./geometry.js";
 
@@ -262,7 +262,15 @@ export function renderBlock(owner, d) {
     .when(d.selected && !d.frameW && !picture, el => el.bg(t.selection).rounded(4))
     .on_size_change((size, cx) => owner.blockSized(d.key, size, cx))
     .child(body)
+    .when(d.framed, el => el.relative().child(commentFrame(d, t)))
     .when(d.notes > 0, el => el.relative().child(commentCount(d, t)));
+}
+
+// The frame of a code block, diagram or table whose comment is active: an overlay on its box, or on its diagram's
+// frame, so that nothing under it moves.
+function commentFrame(d, t) {
+  const frame = div().id(`md-comment-frame-${d.key}`).absolute().rounded(8).border_2().border_color(deepHighlightColor(t));
+  return d.frameW ? frame.left(d.depth * INDENT + d.frameMl).bottom(0).w(d.frameW).h(d.frameH) : frame.left(d.depth * INDENT).right(0).top(d.space).bottom(0);
 }
 
 // The editor takes a press on it from the page, as it does a task box's.

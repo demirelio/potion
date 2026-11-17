@@ -833,6 +833,20 @@ test("move swaps a block's subtree with its sibling's; a file without a final ne
   assert.equal(run(o.text, move(o, o.blocks[1], -1)), "2. two\n1. one\n", "numbers in the source stay");
 });
 
+test("move takes the runs of siblings unitOf gives, a block with the paragraph that goes with it, as one", () => {
+  const text = "Intro\n\n```\nx\n```\n\n{>>a<<}\n\nEnd\n\nTail\n", d = parse(text), [intro, code, para, end, tail] = d.blocks;
+  const unitOf = b => (b === code || b === para ? [code, para] : [b, b]);
+  const down = move(d, code, 1, unitOf), up = move(d, code, -1, unitOf);
+  assert.equal(run(text, down), "Intro\n\nEnd\n\n```\nx\n```\n\n{>>a<<}\n\nTail\n");
+  assert.equal(down.caret, run(text, down).indexOf("```"), "the caret goes with the block");
+  assert.equal(run(text, up), "```\nx\n```\n\n{>>a<<}\n\nIntro\n\nEnd\n\nTail\n");
+  assert.equal(run(text, move(d, end, -1, unitOf)), "Intro\n\nEnd\n\n```\nx\n```\n\n{>>a<<}\n\nTail\n", "a block passes the two together, up");
+  assert.equal(run(text, move(d, intro, 1, unitOf)), "```\nx\n```\n\n{>>a<<}\n\nIntro\n\nEnd\n\nTail\n", "and down");
+  assert.equal(move(d, tail, 1, unitOf), null);
+  const last = parse("End\n\n```\nx\n```\n\n{>>a<<}"), [e, c, p] = last.blocks, units = b => (b === c || b === p ? [c, p] : [b, b]);
+  assert.equal(run(last.text, move(last, c, -1, units)), "```\nx\n```\n\n{>>a<<}\n\nEnd", "no final line break stays so");
+});
+
 test("toggleTask flips one character; on a wrong offset it changes nothing", () => {
   const d = parse("- [ ] a\n- [x] b\n- [X] c\n");
   assert.deepEqual(d.blocks.map(b => run(d.text, toggleTask(d, b))), ["- [x] a\n- [x] b\n- [X] c\n", "- [ ] a\n- [ ] b\n- [X] c\n", "- [ ] a\n- [x] b\n- [ ] c\n"]);

@@ -183,6 +183,12 @@ export function timeLabel(when, now) {
 
 const stamped = (text, when) => (when ? `${stampOf(when)}${STAMP_SEP}${text}` : text);
 
+// A point comment's whole markup for `note` (one line) stamped with `when`; "" for an empty note.
+export function pointComment(note, when = null) {
+  const text = oneLine(note);
+  return text ? `${NOTE_OPEN}${stamped(text, when)}${NOTE_CLOSE}` : "";
+}
+
 // Spaces at the ends of a selection stay outside the marks; a selection of spaces only is a caret at its start.
 function trimmed(value, range) {
   const clampTo = x => Math.max(0, Math.min(value.length, Number(x) || 0));
