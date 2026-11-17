@@ -450,6 +450,59 @@ test("a new block written with its first letter takes the letters typed after it
   assert.equal(h.entries.length, 3, "a typed newline is never joined");
 });
 
+test("a letter written with the marks that close its run continues the typing before it, and the next letter goes in at its join", () => {
+  const h = createHistory();
+  let t = "Hello ";
+  const steps = [[{ start: 6, end: 6, insert: "**w**" }, 9], [{ start: 9, end: 9, insert: "o" }, 10]];
+  h.record("Hell", { start: 4, end: 4, insert: "o " }, { typing: true, key: 1, time: 0 });
+  for (const [i, [s, join]] of steps.entries()) {
+    h.record(t, s, { typing: true, key: 1, time: 10 * (i + 1), join });
+    t = run(t, s);
+  }
+  assert.equal(t, "Hello **wo**");
+  assert.deepEqual(h.entries.map(e => e.inserted), ["o **wo**"]);
+  h.record(t, { start: 10, end: 10, insert: "r" }, { typing: true, key: 1, time: 40, join: 11 });
+  assert.deepEqual(h.entries.map(e => e.inserted), ["o **wor**"]);
+  assert.equal(run(run(t, { start: 10, end: 10, insert: "r" }), h.undo(run(t, { start: 10, end: 10, insert: "r" }))), "Hell");
+});
+
+// Records each [splice, meta] on `t` as typing of activation 1, 10 ms apart. -> the text after them.
+function strokes(h, t, steps) {
+  for (const [i, [s, meta]] of steps.entries()) {
+    h.record(t, s, { typing: true, key: 1, time: 10 * (i + 1), ...meta });
+    t = run(t, s);
+  }
+  return t;
+}
+
+test("a key made where the group left the caret continues it as the same keys do, though a repair made its edit a replacement or put it past the join", () => {
+  const h = createHistory();
+  const typedOn = strokes(h, "Hello ", [
+    [{ start: 6, end: 6, insert: "**big**" }, { stroke: "type", caretBefore: 6, caretAfter: 13, join: 11 }],
+    [{ start: 13, end: 13, insert: " " }, { stroke: "type", caretBefore: 13, caretAfter: 14 }],
+    [{ start: 11, end: 14, insert: " w**" }, { stroke: "type", caretBefore: 14, caretAfter: 15, join: 13 }],
+  ]);
+  assert.equal(typedOn, "Hello **big w**");
+  assert.deepEqual(h.entries, [{ start: 6, removed: "", inserted: "**big w**", caretBefore: 6, caretAfter: 15 }], "Cmd+B, `big w`: one entry");
+  strokes(h, typedOn, [[{ start: 11, end: 15, insert: "** " }, { stroke: "backspace", caretBefore: 15, caretAfter: 14 }]]);
+  assert.equal(h.entries.length, 2, "a Backspace after typing starts an entry, as it does unrepaired");
+
+  const g = createHistory();
+  const erased = strokes(g, "Hello **big w** there", [
+    [{ start: 11, end: 15, insert: "** " }, { stroke: "backspace", caretBefore: 15, caretAfter: 14 }],
+    [{ start: 13, end: 14, insert: "" }, { stroke: "backspace", caretBefore: 14, caretAfter: 13 }],
+  ]);
+  assert.equal(erased, "Hello **big** there");
+  assert.deepEqual(g.entries, [{ start: 11, removed: " w**", inserted: "**", caretBefore: 15, caretAfter: 13 }], "two Backspaces, the first repaired: one entry");
+  const typed = strokes(g, erased, [[{ start: 11, end: 11, insert: "x" }, { stroke: "type", caretBefore: 11, caretAfter: 12 }]]);
+  assert.equal(g.entries.length, 2, "typed elsewhere than the caret the group left: an entry of its own");
+  strokes(g, typed, [[{ start: 12, end: 13, insert: "" }, { stroke: "delete", caretBefore: 12, caretAfter: 12 }]]);
+  assert.equal(g.entries.length, 3, "Delete never continues a group");
+  g.undo(run(typed, { start: 12, end: 13, insert: "" }));
+  g.undo(typed);
+  assert.deepEqual(g.undo(erased), { start: 11, end: 13, insert: " w**", caret: 15 });
+});
+
 test("mergeChange: their change before or after mine, apart from it, comes back as a splice of mine that keeps both", () => {
   const base = "# Plan\n\n- [ ] one\n- [ ] two\n\nNotes here.\n";
   const mine = base.replace("Notes here.", "Notes here, and more.");

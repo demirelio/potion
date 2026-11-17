@@ -14,8 +14,8 @@ const isLoose = key => key === "b" || key === "i" || key[0] === "k";
 // What a span is to a rewrite. FORMAT is written afresh. BOX keeps its marks and has its text written inside them (a
 // link with text of its own, a comment). UNIT is kept whole, formatting only around it (a picture, an autolink, a link
 // whose text is its label). KEPT shows no formatting and stays where it is (a line break, a point comment, a tag that
-// draws nothing).
-const FORMAT = 0, BOX = 1, UNIT = 2, KEPT = 3;
+// draws nothing). A model of typed text (`boxes`) has no UNIT: typing changes the text of those too.
+export const FORMAT = 0, BOX = 1, UNIT = 2, KEPT = 3;
 const LBR = 91, RBR = 93, LPAREN = 40;
 
 // Mark keys, outermost first when several open together and run as far: a text colour, a highlight, then the rest.
@@ -33,6 +33,7 @@ const ALL_SPACE = /^\s+$/u;
 const BACKTICKS = /`+/g;
 
 const TEXT = 0, OPEN = 1, CLOSE = 2, CODE_RUN = 3, POINT = 4;
+const HARD = "hard", SOFT = "soft", LINE_ENDS = "\n\r";
 const ITEM_CHAR = 0, ITEM_BOX = 1, ITEM_UNIT = 2, ITEM_KEPT = 3;
 // How marks are written: markdown where it reads back as written, also never a delimiter run that could both open and
 // close, or tags only. The ways are tried in turn, the later ones with the text's markup characters escaped.
@@ -48,15 +49,23 @@ function roleOf(s, sp) {
 }
 
 // An inline link `[text](…)` or a full reference `[text][label]`: its text is not what finds its address.
-function ownText(s, sp) {
+export function ownText(s, sp) {
   if (s.charCodeAt(sp.start) !== LBR || s.charCodeAt(sp.to) !== RBR) return false;
   const next = s.charCodeAt(sp.to + 1);
   return next === LPAREN || (next === LBR && sp.end - sp.to > 3);
 }
 
-const scopeOf = sp => (sp.kind === "link" || sp.kind === "image" ? `${sp.kind}\u0001${sp.url}\u0001${sp.title}\u0002` : `${sp.kind}\u0001${sp.note}\u0002`);
+// A link whose address is its own text: an autolink, a web or mail address.
+const addressed = (s, sp) => sp.kind === "link" && s.charCodeAt(sp.start) !== LBR;
 
-function formatInto(f, sp) {
+// What a span adds to the scope of the text inside it. In a model of typed text an addressed link is named without
+// its address, which typing in it changes.
+function scopeOf(s, sp, boxes) {
+  if (boxes && addressed(s, sp)) return "link\u0001\u0002";
+  return sp.kind === "link" || sp.kind === "image" ? `${sp.kind}\u0001${sp.url}\u0001${sp.title}\u0002` : `${sp.kind}\u0001${sp.note}\u0002`;
+}
+
+export function formatInto(f, sp) {
   if (sp.kind !== "html") f.bits |= KIND_BITS[sp.kind];
   else if (sp.tag === "mark") f.mark = sp.color ?? "";
   else if (sp.tag === "span") f.color = sp.color;
@@ -119,7 +128,7 @@ const sideOf = ch => (!ch || WHITESPACE.test(ch) ? BY_SPACE : PUNCTUATION.test(c
 const lastChar = s => (s.length > 1 && s.charCodeAt(s.length - 1) >= 0xdc00 && s.charCodeAt(s.length - 1) <= 0xdfff ? s.slice(-2) : s.slice(-1));
 const firstChar = s => String.fromCodePoint(s.codePointAt(0));
 
-function clusterStart(s, from, x) {
+export function clusterStart(s, from, x) {
   for (let i = from; i < x;) {
     const j = graphemeEnd(s, i);
     if (j > x) return i;
@@ -128,39 +137,48 @@ function clusterStart(s, from, x) {
   return x;
 }
 
-function clusterEnd(s, from, to, x) {
+export function clusterEnd(s, from, to, x) {
   let i = from;
   while (i < x) i = graphemeEnd(s, i, to);
   return i;
 }
 
 class Model {
-  constructor(s, inline) {
+  constructor(s, inline, boxes) {
     this.s = s;
+    this.boxes = boxes;
     this.spans = inline.spans;
     this.runs = inline.runs;
     this.roles = new Uint8Array(this.spans.length);
-    for (const sp of this.spans) this.roles[sp.id] = roleOf(s, sp);
+    for (const sp of this.spans) {
+      const role = roleOf(s, sp);
+      this.roles[sp.id] = boxes && role === UNIT ? BOX : role;
+    }
     this.styles = new Map();
   }
 
+  scopeOf(sp) {
+    return scopeOf(this.s, sp, this.boxes);
+  }
+
   // { own, inner, unit, scope, line } for the spans around a run: `own` the formatting a rewrite may change, `inner`
-  // what lies inside the unit holding it, `scope` the links and comments around it.
+  // what lies inside the unit holding it, `scope` the links and comments around it, `line` HARD or SOFT for a line
+  // break (the field shows both; the file keeps only a hard one).
   styleOf(ids) {
     let st = this.styles.get(ids);
     if (st) return st;
     const own = { bits: 0, mark: null, color: null };
-    let inner = null, unit = -1, scope = "", line = false;
+    let inner = null, unit = -1, scope = "", line = "";
     for (const id of ids) {
       const sp = this.spans[id], role = this.roles[id];
       if (role === FORMAT) formatInto(inner ?? own, sp);
       else if (role === BOX || role === UNIT) {
-        scope += scopeOf(sp);
+        scope += this.scopeOf(sp);
         if (role === UNIT && unit < 0) {
           unit = id;
           inner = { bits: 0, mark: null, color: null };
         }
-      } else if (sp.kind === "break") line = true;
+      } else if (sp.kind === "break") line = sp.start === sp.from && LINE_ENDS.includes(this.s[sp.from]) ? SOFT : HARD;
     }
     st = { own, inner, unit, scope, line };
     this.styles.set(ids, st);
@@ -238,7 +256,7 @@ const isSpaceAt = (s, i) => {
 };
 
 // s[from, to) as its leading spaces, what lies between, and its trailing spaces: where a run may end before a space.
-function spacedPieces(s, from, to, st, out) {
+export function spacedPieces(s, from, to, st, out) {
   let lead = from, trail = to;
   while (lead < to && isSpaceAt(s, lead)) lead++;
   if (lead === to) return out.push(pieceOf(from, to, s.slice(from, to), true, st, true));
@@ -249,19 +267,23 @@ function spacedPieces(s, from, to, st, out) {
 }
 
 // The formatting that shows: the unit's own over what is around it.
-function shown(st, own) {
+export function shown(st, own) {
   const inner = st.inner;
   if (!inner) return own;
   return { bits: own.bits | inner.bits, mark: inner.mark ?? own.mark, color: inner.color ?? own.color };
 }
 
-// The model of the last read: the format bar asks after each key whether its marks are on, of the value the key just
-// wrote and read to check it.
-let last = null;
-function modelOf(value, defs) {
+// The models of the last reads: the format bar asks after each key whether its marks are on, of the value the key just
+// wrote and read to check it; typing reads the value before a key and the one after it.
+const MODELS_KEPT = 4;
+const models = [];
+export function modelOf(value, defs, boxes = false) {
   const inline = parsedInline(value, defs);
-  if (last?.inline !== inline) last = { inline, model: new Model(value, inline) };
-  return last.model;
+  for (const kept of models) if (kept.inline === inline && kept.boxes === boxes) return kept.model;
+  const model = new Model(value, inline, boxes);
+  models.unshift({ inline, boxes, model });
+  if (models.length > MODELS_KEPT) models.pop();
+  return model;
 }
 
 // The characters of the selection [start, end) of `value` that take formatting (not line breaks), as pieces, with the
@@ -334,7 +356,7 @@ function changeOf(op, chosen) {
 }
 
 // Whether a chosen piece's new formatting loses the mark of span `sp` around it.
-function loses(sp, own) {
+export function loses(sp, own) {
   if (sp.kind !== "html") return !(own.bits & KIND_BITS[sp.kind]);
   if (sp.tag === "mark") return own.mark === null;
   if (sp.tag === "span") return own.color === null;
@@ -374,8 +396,10 @@ function stretchOf(m, changed) {
 }
 
 // The pieces and spans of [L, R) as a tree of items: ITEM_CHAR { p }, ITEM_BOX { open, close, src, children },
-// ITEM_UNIT { src, at (where it starts), pieces }, ITEM_KEPT { src }.
-function itemsOf(m, L, R, pieces) {
+// ITEM_UNIT and ITEM_KEPT { src, at (where it starts), pieces (inside it) }. Spans in `dead` are left out, a box's
+// children staying; `closes` gives boxes other closing marks. A piece marked `lead` goes before a span starting where it
+// does.
+function itemsOf(m, L, R, pieces, { dead = null, closes = null } = {}) {
   const s = m.s, parts = m.spans.filter(sp => m.roles[sp.id] !== FORMAT && sp.start >= L && sp.end <= R);
   let pi = 0, si = 0;
   const past = end => {
@@ -384,22 +408,28 @@ function itemsOf(m, L, R, pieces) {
     while (si < parts.length && parts[si].start < end) si++;
     return pieces.slice(first, pi);
   };
+  const before = until => pi < pieces.length && (pieces[pi].start < until || (pieces[pi].lead && pieces[pi].start === until));
   const level = hi => {
     const items = [];
     for (;;) {
       const sp = si < parts.length && parts[si].start < hi ? parts[si] : null, until = sp ? sp.start : hi;
-      while (pi < pieces.length && pieces[pi].start < until) items.push({ type: ITEM_CHAR, p: pieces[pi++] });
+      while (before(until)) items.push({ type: ITEM_CHAR, p: pieces[pi++] });
       if (!sp) return items;
       si++;
-      const role = m.roles[sp.id], src = s.slice(sp.start, sp.end);
+      const role = m.roles[sp.id], src = s.slice(sp.start, sp.end), gone = dead?.has(sp.id);
       if (role === BOX) {
         const children = level(sp.to);
         past(sp.end);
-        items.push({ type: ITEM_BOX, open: s.slice(sp.start, sp.from), close: s.slice(sp.to, sp.end), src, children });
+        if (gone) items.push(...children);
+        else items.push({ type: ITEM_BOX, open: s.slice(sp.start, sp.from), close: closes?.get(sp.id) ?? s.slice(sp.to, sp.end), src, children });
+        continue;
+      }
+      if (gone) {
+        past(sp.end);
         continue;
       }
       const held = past(sp.end);
-      items.push(role === UNIT && held.length ? { type: ITEM_UNIT, src, at: sp.start, pieces: held } : { type: ITEM_KEPT, src });
+      items.push({ type: role === UNIT && held.length ? ITEM_UNIT : ITEM_KEPT, src, at: sp.start, pieces: held });
     }
   };
   return level(R);
@@ -519,7 +549,7 @@ class Writer {
       while (k < stack.length && want.includes(stack[k].key)) k++;
       while (stack.length > k) this.close(stack);
       if (held.length) {
-        for (const h of held) this.text(h.src);
+        for (const h of held) this.kept(h);
         held.length = 0;
       }
       if (stack.length < want.length) {
@@ -530,7 +560,14 @@ class Writer {
       this.emit(items[i], outer, stack);
     }
     while (stack.length) this.close(stack);
-    for (const h of held) this.text(h.src);
+    for (const h of held) this.kept(h);
+  }
+
+  // A line break, a point comment or a tag that draws nothing, as written; the caret may stand before or after it.
+  kept(it) {
+    if (it.pieces.includes(this.caret)) this.point("caret");
+    this.text(it.src);
+    if (it.pieces.includes(this.last)) this.point("end");
   }
 
   emit(it, outer, stack) {
@@ -632,7 +669,7 @@ function render(events) {
 function keyOf(st, own) {
   if (own.key === undefined) {
     const f = shown(st, own);
-    own.key = st.line ? `\n${st.scope}` : `${f.bits}|${f.mark ?? "-"}|${f.color ?? "-"}|${st.scope}`;
+    own.key = st.line ? `${st.line}\n${st.scope}` : `${f.bits}|${f.mark ?? "-"}|${f.color ?? "-"}|${st.scope}`;
     own.looseKey = st.line ? own.key : `${f.bits & ~LOOSE_BITS}|${f.mark ?? "-"}|${st.scope}`;
   }
   return own.key;
@@ -640,11 +677,21 @@ function keyOf(st, own) {
 
 const within = (sp, lo, hi) => sp.start >= lo && sp.end <= hi;
 const SPAN_DATA = ["kind", "url", "title", "note", "tag", "color", "alt"];
+// Typing in a picture's text changes its alt, and in an addressed link its address: in a model of typed text those
+// are the text, which is compared as text.
+const TYPED_DATA = ["kind", "title", "note", "tag", "color"];
+const sameData = (m, x, y) => (m.boxes
+  ? TYPED_DATA.every(k => x[k] === y[k]) && (addressed(m.s, x) || x.url === y.url)
+  : SPAN_DATA.every(k => x[k] === y[k]));
 
 // Whether the spans of `after` outside its stretch [L, L + len) are those of `m` outside [L, R), moved by the change
 // of length: nothing outside the stretch reads differently, and nothing reaches into it but the spans around it.
 function sameOutside(m, after, L, R, len) {
-  const delta = len - (R - L), moved = x => (x < R ? x : x + delta), old = m.spans, now = after.spans;
+  // At an insertion point (L === R) a span that ends there stays before the new text, one that starts there goes after
+  // it; text that shows from a span's start or up to its end (a point comment, an address) goes with that edge.
+  const delta = len - (R - L), right = x => (x < R ? x : x + delta), left = x => (x <= L ? x : x + delta);
+  const fromOf = sp => (sp.from === sp.start ? right(sp.from) : left(sp.from)), toOf = sp => (sp.to === sp.end ? left(sp.to) : right(sp.to));
+  const old = m.spans, now = after.spans;
   let i = 0, j = 0;
   for (;;) {
     while (i < old.length && within(old[i], L, R)) i++;
@@ -652,18 +699,30 @@ function sameOutside(m, after, L, R, len) {
     if (i >= old.length || j >= now.length) return i >= old.length && j >= now.length;
     const x = old[i++], y = now[j++];
     if (y.start < L + len && y.end > L && !(y.start < L && y.end > L + len)) return false;
-    if (moved(x.start) !== y.start || moved(x.end) !== y.end || moved(x.from) !== y.from || moved(x.to) !== y.to) return false;
-    if (SPAN_DATA.some(k => x[k] !== y[k]) || (x.noteAt !== undefined && moved(x.noteAt) !== y.noteAt)) return false;
+    if (right(x.start) !== y.start || left(x.end) !== y.end || fromOf(x) !== y.from || toOf(x) !== y.to) return false;
+    if (!sameData(m, x, y) || (x.noteAt !== undefined && right(x.noteAt) !== y.noteAt)) return false;
   }
 }
 
-const pointsIn = (model, lo, hi) => model.spans.reduce((n, sp) => n + (sp.kind === "point" && within(sp, lo, hi) ? 1 : 0), 0);
+// The point comments that lie in [lo, hi).
+export function pointsIn(model, lo, hi) {
+  const spans = model.spans;
+  let first = 0, last = spans.length, n = 0;
+  while (first < last) {
+    const mid = (first + last) >> 1;
+    if (spans[mid].start < lo) first = mid + 1;
+    else last = mid;
+  }
+  for (let i = first; i < spans.length && spans[i].start < hi; i++) if (spans[i].kind === "point" && spans[i].end <= hi) n++;
+  return n;
+}
 
 // Whether `next`, the value with [L, R) rewritten as `len` characters, shows what was asked: outside the stretch the
-// same; inside it the same text and point comments, each character with the formatting its piece asks for.
-function readsBack(m, next, L, R, len, pieces, defs) {
-  const after = modelOf(next, defs), end = L + len;
-  if (!sameOutside(m, after, L, R, len) || pointsIn(after, L, end) !== pointsIn(m, L, R)) return false;
+// same; inside it the same text and `points` point comments, each character with the formatting its piece asks for (any,
+// for a piece marked `free`; none showing, for one marked `unseen`).
+export function readsBack(m, next, L, R, len, written, defs, points = pointsIn(m, L, R)) {
+  const after = modelOf(next, defs, m.boxes), end = L + len, pieces = written.some(p => p.unseen) ? written.filter(p => !p.unseen) : written;
+  if (!sameOutside(m, after, L, R, len) || pointsIn(after, L, end) !== points) return false;
   const runs = after.runs, first = after.runAfter(L), shownOf = r => (r.verbatim ? next.slice(Math.max(r.start, L), Math.min(r.end, end)) : r.text);
   let text = "", got = "";
   for (const p of pieces) text += p.text;
@@ -672,7 +731,7 @@ function readsBack(m, next, L, R, len, pieces, defs) {
   let i = 0, k = first, x = 0, wantEnd = pieces.length ? pieces[0].text.length : 0, gotEnd = k < runs.length ? shownOf(runs[k]).length : 0;
   while (i < pieces.length && k < runs.length && runs[k].start < end) {
     const y = Math.min(wantEnd, gotEnd), w = pieces[i], wf = formatOf(w), g = after.styleOf(runs[k].spans);
-    if (y > x && keyOf(w.st, wf) !== keyOf(g, g.own)) {
+    if (y > x && !w.free && keyOf(w.st, wf) !== keyOf(g, g.own)) {
       if (!ALL_SPACE.test(text.slice(x, y)) || wf.looseKey !== g.own.looseKey) return false;
     }
     x = y;
@@ -710,23 +769,32 @@ export function restyle(value, range, op, { defs, caret = -1 } = {}) {
     last = p;
     if (p.start === caret) caretPiece = p;
   }
-  const items = itemsOf(m, L, R, pieces), outer = new Set();
+  const out = rewrite(m, L, R, pieces, { first, last, caret: caretPiece, defs: known });
+  if (!out) return null;
+  const { at, delta } = out, head = chosen[0], tail = chosen[chosen.length - 1];
+  const start = head.start < L ? head.start : L + at.start, end = tail.end > R ? tail.end + delta : L + at.end;
+  const moved = caret < 0 ? -1 : caret < L ? caret : caret >= R ? caret + delta : at.caret >= 0 ? L + at.caret : start;
+  return { value: out.value, start, end, caret: moved };
+}
+
+// [L, R) of the model's value written afresh from `pieces` (every piece of it that shows, each with the formatting it
+// asks for), tried in the ways of ATTEMPTS until one reads back. `first`, `last` and `caret` are pieces whose places
+// come back in `at` ({ start, end, caret }, offsets from L, -1 for none); `points`, `dead` and `closes` as readsBack
+// and itemsOf take them. -> { value, at, delta (the change of length) }, or null when no way reads back.
+export function rewrite(m, L, R, pieces, { first = null, last = null, caret = null, defs = null, points, dead, closes } = {}) {
+  const s = m.s, items = itemsOf(m, L, R, pieces, { dead, closes }), outer = new Set();
   for (const sp of m.spans) {
     if (sp.start >= L) break;
-    if (m.roles[sp.id] === FORMAT && sp.from <= L && sp.to >= R) outer.add(keyOfSpan(sp));
+    if (m.roles[sp.id] === FORMAT && sp.from <= L && sp.to >= R && !dead?.has(sp.id)) outer.add(keyOfSpan(sp));
   }
   const before = lastChar(s.slice(Math.max(0, L - 2), L)), after = R < s.length ? firstChar(s.slice(R)) : "";
   for (const [marks, escape] of ATTEMPTS) {
-    const w = new Writer(marks, escape, first, last, caretPiece);
+    const w = new Writer(marks, escape, first, last, caret);
     w.level(items, outer);
     const events = w.finish();
     if (marks !== AS_TAGS) settle(events, before, after, marks);
     const { out, at } = render(events), next = s.slice(0, L) + out + s.slice(R);
-    if (!readsBack(m, next, L, R, out.length, pieces, known)) continue;
-    const delta = out.length - (R - L), head = chosen[0], tail = chosen[chosen.length - 1];
-    const start = head.start < L ? head.start : L + at.start, end = tail.end > R ? tail.end + delta : L + at.end;
-    const moved = caret < 0 ? -1 : caret < L ? caret : caret >= R ? caret + delta : at.caret >= 0 ? L + at.caret : start;
-    return { value: next, start, end, caret: moved };
+    if (readsBack(m, next, L, R, out.length, pieces, defs, points)) return { value: next, at, delta: out.length - (R - L) };
   }
   return null;
 }

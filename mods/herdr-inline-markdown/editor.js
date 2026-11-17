@@ -14,6 +14,8 @@ import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, imageStart, placePictures } from "./pick.js";
 import { ACTIONS, KEYS_SETTLE_MS, NOTE, SOURCE, claimRebind, installKeys } from "./keys.js";
 import { actedOn, colorOf, hasMark, highlightOf, setColor, setMark, toggleMark, wordAround } from "./format.js";
+import { editOf, formatAt, mend } from "./mend.js";
+import { MARK_BITS } from "./restyle.js";
 import { addLink, clipboardAddress, linkAddress, setAddress, unlink } from "./links.js";
 import { addComment, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, timeLabel } from "./comments.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
@@ -192,6 +194,17 @@ function caretOf(state) {
   } catch { return null; }
 }
 const docRange = (f, r) => ({ start: fieldToDoc(f, r.start), end: fieldToDoc(f, r.end) });
+// Whether field change `edit` is one a key makes at the caret or selection `known` (else the caret moved unread).
+const madeAt = (known, edit) => known.valid && (known.start === known.end
+  ? edit.at === known.start || edit.at + edit.removed === known.start
+  : edit.at === known.start && edit.at + edit.removed === known.end);
+// The key that made field change `edit` at caret `at`, as the history groups keys: "type" for text typed there,
+// "backspace" or "delete" for a deletion ending or starting there; null for any other change.
+function strokeAt(edit, at) {
+  if (!edit.removed) return edit.at === at ? "type" : null;
+  if (edit.inserted) return null;
+  return edit.at + edit.removed === at ? "backspace" : edit.at === at ? "delete" : null;
+}
 const fieldRange = (f, r) => ({ start: docToField(f, r.start), end: docToField(f, r.end) });
 // Field value `a` to `b` as splices { at, removed, inserted } on either side of the text both keep, the later first. A
 // field shows a soft line break as a space, and typing over it would write the space into the file.
@@ -416,6 +429,9 @@ export class Editor {
     // `tinted` what tintNow last gave, with what it was worked out from.
     this.rich = null; this.tinted = null; this.pieces = new Map(); this.tokensHeld = false; this.tokensOff = false;
     this.echoes = new Map(); this.tokenSets = 0;
+    // The typing style: the formatting text typed next at one caret gets ({ act, value, at, format }), set by a format
+    // key at a caret outside a word and by the key typed or deleted before; null while none.
+    this.typingStyle = null;
     // Floats: `pressed` the last press in a field (its window x, which a token click lacks, the field's window origin,
     // the press in the field) and `released` where it ended; `pin` where a press or a drag put the floats of a range,
     // while the field draws it there; `wraps` the wrap estimates last asked for.
@@ -1022,10 +1038,14 @@ export class Editor {
       this.closeSlash(cx);
       return this.undo(UNDO_ACTIONS[name], cx);
     }
-    if (name === "mdb-note-cancel") return this.linkBoxOpen() ? this.cancelLinkBox(cx) : this.cancelNote(cx);
+    if (name === "mdb-note-cancel") {
+      this.typingStyle = null;
+      return this.linkBoxOpen() ? this.cancelLinkBox(cx) : this.cancelNote(cx);
+    }
     if (name === "mdb-note-save") return this.linkBoxOpen() ? this.applyLinkBox(cx) : this.saveNote(cx);
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
     this.syncField(cx);
+    if (name === "mdb-escape") this.typingStyle = null;
     if (this.slashOpen()) {
       if (this.slashAction(name, cx)) return;
     } else if ((name === "mdb-up" || name === "mdb-down") && this.rows === "many") {
@@ -2373,8 +2393,9 @@ export class Editor {
     return r ? drawnOffset(r, at) : at;
   }
 
-  // The one place the active field's tokens are set: only when they differ from the field's, so typing in plain words
-  // sets none. A set the field refuses is tried again without letters at the caret, then without tokens.
+  // The active field's tokens, set only when they differ from the field's, so typing in plain words sets none (a key
+  // mend repaired sets them with its value, through refill). A set the field refuses is tried again without letters at
+  // the caret, then without tokens.
   retoken() {
     if (this.tokensHeld || !this.activeKey || this.field.value() !== this.seen) return;
     const sel = this.known.valid ? this.known : caretOf(this.field);
@@ -2384,13 +2405,25 @@ export class Editor {
       if (want.sel.start !== sel.start || want.sel.end !== sel.end) this.selectField(want.sel);
       return;
     }
-    const tries = [want.tokens, r ? tokensFor(r, null).tokens : null, []];
-    for (const tokens of tries) {
+    this.putTokens(r, want);
+  }
+
+  // The field takes `this.seen` with the tokens `want` gives it, else without letters at the caret, else with none.
+  putTokens(r, want) {
+    for (const tokens of [want.tokens, r ? tokensFor(r, null).tokens : null, []]) {
       if (tokens && this.setTokens(tokens, want.sel)) {
         this.tokensOff = !tokens.length && want.tokens.length > 0;
-        return;
+        return true;
       }
     }
+    return false;
+  }
+
+  // The field shows `this.seen`, a repair of what was typed, with its tokens and the caret at field offset `caret`: one
+  // set_value, made as a token set is.
+  refill(caret) {
+    const sel = { start: caret, end: caret }, r = this.richNow();
+    return this.putTokens(r, r ? tokensFor(r, sel) : { tokens: [], sel });
   }
 
   // Herdr has no set_tokens: set_value takes the text with its tokens, and the selection goes back after it. A change
@@ -2581,7 +2614,7 @@ export class Editor {
     if (gone) this.f = null;
     this.commit(cx);
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
-    this.element = null; this.linkBox = null;
+    this.element = null; this.linkBox = null; this.typingStyle = null;
     this.letField();
     if (pending) this.forget(pending.key);
     if (gone) this.setText(applySplice(base, gone), cx);
@@ -2617,7 +2650,7 @@ export class Editor {
   release() {
     const pending = this.pending;
     this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
-    this.element = null; this.linkBox = null;
+    this.element = null; this.linkBox = null; this.typingStyle = null;
     this.letField();
     if (pending) this.forget(pending.key);
   }
@@ -2651,14 +2684,43 @@ export class Editor {
   // would make no block. A marker alone (`#`, `-`, `1.`, `>`) is held back until the shortcut's space, any other
   // character, Enter or leaving the block writes it as typed (writeHeld). So is a slash that opens the menu, with what
   // follows it, while the menu is open: a pick writes the block it makes instead. So are the marks of bold or
-  // strikethrough around nothing, which alone would make a rule or a fence.
-  pendingTyped(value, d, own, cx) {
-    const k = d.at + d.inserted.length;
+  // strikethrough around nothing, which alone would make a rule or a fence. A typing style waits with what is held back,
+  // formats the text that writes the block, and goes on in the block written.
+  pendingTyped(before, value, edit, own, style, cx) {
+    let k = edit.at + edit.inserted.length;
     this.seen = value;
     this.known = { start: k, end: k, valid: true };
-    this.slashChanged({ a: d.at, r: d.removed, ins: d.inserted }, value, own, cx);
-    if (!value.trim() || loneMarker(value) || EMPTY_MARKS.test(value) || this.slashOpen()) return;
-    this.writePending(value, k, cx);
+    this.slashChanged({ a: edit.at, r: edit.removed, ins: edit.inserted }, value, own, cx);
+    if (!value.trim() || loneMarker(value) || EMPTY_MARKS.test(value) || this.slashOpen()) return this.keepStyleAt(k, style);
+    const mended = style ? mend(before, edit, { defs: this.defsNow().map, style }) : null;
+    if (mended && mended.value !== value) {
+      this.seen = mended.value;
+      if (this.refill(mended.caret)) k = mended.caret;
+      else this.seen = value;
+    }
+    if (this.writePending(this.seen, k, cx) && this.known.valid) this.keepStyleAt(this.known.end, mended?.style ?? null);
+  }
+
+  // The typing style `format` stays with field caret `at` of the value now shown.
+  keepStyleAt(at, format) {
+    this.typingStyle = format ? { act: this.act, value: this.seen, at, format } : null;
+  }
+
+  // The typing style the change `edit` was made at: one set at the caret it typed at, or deleted from (Backspace ends
+  // there, Delete starts there), in the value it changed.
+  styleFor(edit) {
+    const t = this.typingStyle;
+    if (!t || t.act !== this.act || t.value !== this.seen) return null;
+    return t.at === edit.at || (edit.removed > 0 && t.at === edit.at + edit.removed) ? t.format : null;
+  }
+
+  // Whether the change `edit` typed in the field is checked, and repaired if need be, so that it keeps the formatting it
+  // did not delete: the person's own typing in a paragraph, heading, item or quote whose field draws it formatted. A
+  // field that shows its source (its tokens refused, a paragraph of pictures) is the person's to edit, marks and all:
+  // only text typed with a typing style is written there, with that style's marks.
+  mends(own, edit, style) {
+    if (own || this.mode !== "reading" || !this.takesMarks()) return false;
+    return (!this.tokensOff && this.richNow() !== null) || (style !== null && !edit.removed);
   }
 
   // Writes the pending block where it was opened, holding `value`, the caret at field offset k; Cmd+Z takes it away with
@@ -2720,7 +2782,8 @@ export class Editor {
   // What was typed in the active field goes into the text as one splice of its block's source; nothing is parsed. A
   // space that completes a markdown shortcut makes the block what its source says. `event`: the field told us, not an
   // action finding its value moved on. `own`: our own replace(), whose event is owed already; any other change is the
-  // user's, whose event is this one or one still to come.
+  // user's, whose event is this one or one still to come. The user's typing in a text block keeps the formatting it
+  // did not delete (mend.js): a repair goes into the field with its tokens, and is one change of the text with the key.
   fieldChanged(state, cx, { event = true, own = false } = {}) {
     if (state !== this.field || !this.activeKey || !this.editable()) {
       // Nobody types in a field that is not open: its changes are owed ones, from our replace() just before it was left.
@@ -2735,25 +2798,37 @@ export class Editor {
       return;
     }
     this.closeBar(cx);
-    const d = diff(before, value);
-    if (this.pending) return this.pendingTyped(value, d, own, cx);
-    const hint = this.known.valid && this.known.start === this.known.end ? this.known.start : undefined;
+    const edit = editOf(before, value, this.known, caretOf(state)?.end), style = own ? null : this.styleFor(edit);
+    this.typingStyle = null;
+    if (this.pending) return this.pendingTyped(before, value, edit, own, style, cx);
     // The field showed what its source does not have yet (withInnerLine): that goes in first.
     const innerLine = this.f.value !== before ? type(this.f, before) : null;
-    const s = type(this.f, value, hint);
-    this.seen = value;
+    const from = !innerLine && madeAt(this.known, edit) ? docRange(this.f, this.known) : null;
+    const stroke = !own && from && from.start === from.end ? strokeAt(edit, this.known.start) : null;
+    const mended = this.mends(own, edit, style) ? mend(before, edit, { defs: this.defsNow().map, style }) : null;
+    let change = edit;
+    if (mended && mended.value !== value) {
+      this.seen = mended.value;
+      if (this.refill(mended.caret)) change = mended.edit;
+      else this.seen = value;
+    } else this.seen = value;
+    const s = type(this.f, this.seen, change);
     if (!s) return this.retoken();
-    this.known = { start: s.fieldCaret, end: s.fieldCaret, valid: true };
+    if (change === edit) this.known = { start: s.fieldCaret, end: s.fieldCaret, valid: true };
     this.keepElement();
-    const a = s.fieldCaret - d.inserted.length;
-    this.slashChanged({ a, r: d.removed, ins: value.slice(a, s.fieldCaret) }, value, own, cx);
-    const rec = this.typing(this.act, s.end, s.caret);
+    this.slashChanged({ a: change.at, r: change.removed, ins: change.inserted }, this.seen, own, cx);
+    const caretAfter = change === edit ? s.caret : fieldToDoc(this.f, this.known.end);
+    const rec = this.typing(this.act, from ? from.end : s.end, caretAfter);
+    if (change !== edit) rec.join = fieldToDoc(this.f, mended.caret);
+    if (stroke) rec.stroke = stroke;
     if (innerLine) this.edited(applySplice(applySplice(this.text, innerLine), s), cx, rec);
     else this.edited(applySplice(this.text, s), cx, { ...rec, splice: s });
-    if (!d.removed && d.inserted === " " && this.shortcutAt(s.fieldCaret - 1, cx)) return this.retoken();
+    if (!own && from && from.start < from.end) this.history.select(this.text, from);
+    if (change === edit && !edit.removed && edit.inserted === " " && this.shortcutAt(s.fieldCaret - 1, cx)) return this.retoken();
     this.retoken();
     this.updateRows(cx);
     this.revealCaret(cx);
+    if (!own && this.known.start === this.known.end) this.keepStyleAt(this.known.end, mended?.style ?? null);
   }
 
   shortcutAt(k, cx) {
@@ -3155,10 +3230,12 @@ export class Editor {
     else this.openPending(cx);
   }
 
+  // The typing style stays only while the caret is where it was set.
   caretNow() {
     const c = caretOf(this.field);
     this.known = c ? { ...c, valid: true } : NO_CARET;
     this.keepElement();
+    if (!c || c.start !== c.end || !this.styleFor({ at: c.start, removed: 0 })) this.typingStyle = null;
     return c;
   }
 
@@ -3182,6 +3259,7 @@ export class Editor {
   // Enter in a text block (a raw block keeps the field's own newline). A selection that reaches an end of the field
   // is deleted first, as typing.
   enter(cx) {
+    this.typingStyle = null;
     if (this.pending) return this.pendingKey("enter", cx);
     const b = this.blockByKey(this.activeKey), value = this.seen;
     if (!b || !isText(b)) return;
@@ -3449,7 +3527,22 @@ export class Editor {
   }
 
   format(mark, cx) {
-    this.formatWith((value, r) => toggleMark(value, r, mark, { defs: this.doc?.defs }), cx);
+    if (!this.styleAt(mark)) this.formatWith((value, r) => toggleMark(value, r, mark, { defs: this.doc?.defs }), cx);
+  }
+
+  // A format key at a caret outside a word writes nothing: it switches `mark` on or off for the text typed next at that
+  // caret, starting from the formatting typed text gets there; what is typed after it is an entry of the history of its
+  // own, as after any format key. -> false for a selection or a caret in a word.
+  styleAt(mark) {
+    const bit = MARK_BITS[mark];
+    if ((!bit && mark !== "highlight") || !this.takesMarks()) return false;
+    const r = this.caretNow();
+    if (!r || r.start !== r.end || actedOn(this.seen, r).start !== undefined) return false;
+    const now = this.styleFor({ at: r.start, removed: 0 }) ?? formatAt(this.seen, r.start, { defs: this.defsNow().map });
+    const format = bit ? { ...now, bits: now.bits ^ bit } : { ...now, mark: now.mark === null ? "" : null };
+    this.keepStyleAt(r.start, format);
+    this.history.close();
+    return true;
   }
 
   // The bar's colour menu: every character of the selection (or the word holding the caret) in text colour `name`, one
@@ -3523,6 +3616,7 @@ export class Editor {
     if (!this.file || !this.loaded || this.error || this.remote || this.locked) return;
     this.syncSource(cx);
     this.syncField(cx);
+    this.typingStyle = null;
     const o = dir < 0 && this.mode === "reading" ? this.pending?.origin : null;
     if (o && this.blockByKey(o.key)) {
       this.release();

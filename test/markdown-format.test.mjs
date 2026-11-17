@@ -293,7 +293,7 @@ test("setMark puts a mark on, or takes it off, whatever the selection has: the c
   assert.equal(set("a | b", "highlight", false), null, "a caret outside a word: nothing to set");
 });
 
-test("a caret in a word acts on the word and keeps its place; a caret elsewhere writes empty marks, or takes them away", () => {
+test("a caret in a word acts on the word and keeps its place; a caret elsewhere changes nothing (the editor formats what is typed there next)", () => {
   assert.equal(press("Hello wo|rld.", "bold"), "Hello **wo|rld**.");
   assert.equal(press("Hello **wo|rld**.", "bold"), "Hello wo|rld.");
   assert.equal(press("Hello wo|rld.", "italic"), "Hello *wo|rld*.");
@@ -306,22 +306,16 @@ test("a caret in a word acts on the word and keeps its place; a caret elsewhere 
   assert.equal(press("snake_c|ase 42", "bold"), "**snake_c|ase** 42", "letters, digits and _ make a word");
   assert.equal(press("v1|2 x", "italic"), "*v1|2* x");
   assert.equal(press("naï|ve", "bold"), "**naï|ve**");
-  assert.equal(press("Hello| world.", "bold"), "Hello**|** world.", "at the end of a word");
-  assert.equal(press("Hello |world.", "italic"), "Hello *|*world.", "at the start of a word");
-  assert.equal(press("|", "strike"), "~~|~~");
-  assert.equal(press("a | b", "code"), "a `|` b");
-  assert.equal(press("a **|** b", "bold"), "a | b");
-  assert.equal(press("a `|` b", "code"), "a | b");
-  assert.equal(press("a ``|`` b", "code"), "a | b");
-  assert.equal(press("a | b", "underline"), "a <u>|</u> b");
-  assert.equal(press("a <u>|</u> b", "underline"), "a | b");
-  assert.equal(press("a | b", "highlight"), "a <mark>|</mark> b");
-  assert.equal(press("a <mark>|</mark> b", "highlight"), "a | b");
+  assert.equal(press("Hello| world.", "bold"), null, "at the end of a word");
+  assert.equal(press("Hello |world.", "italic"), null, "at the start of a word");
+  assert.equal(press("|", "strike"), null);
+  for (const mark of ["bold", "italic", "strike", "code", "underline", "highlight"]) assert.equal(press("a | b", mark), null, mark);
+  assert.equal(press("a **|** b", "bold"), null, "marks around nothing are text, left as they are");
   assert.equal(paint("a | b", "red"), null, "a colour needs text");
 });
 
 test("a second press of the same key puts the text back", () => {
-  for (const text of ["Hello [world].", "[a]", "x [a b] y", "**[x]**", "*[x]*", "`[a]`", "|", "a | b", "<u>[x]</u>"]) {
+  for (const text of ["Hello [world].", "[a]", "x [a b] y", "**[x]**", "*[x]*", "`[a]`", "<u>[x]</u>"]) {
     for (const mark of ["bold", "italic", "strike", "code", "underline", "highlight"]) {
       const once = press(text, mark);
       assert.equal(press(once, mark), text, `${mark} twice on ${text} (once: ${once})`);
@@ -346,7 +340,7 @@ test("spaces at the ends of the selection stay outside the marks; a selection of
   assert.equal(press("say[ hello ]there", "bold"), "say **[hello]** there");
   assert.equal(press("say[\thello\n]there", "code"), "say\t`[hello]`\nthere");
   assert.equal(press("say ** [hello] ** there", "bold"), "say ** **[hello]** ** there", "marks across a space are not the mark");
-  assert.equal(press("a[   ]b", "bold"), "a**|**   b");
+  assert.equal(press("a[   ]b", "bold"), null);
 });
 
 test("bold, italic and a colour show nothing on a space: a space between bold words does not make the selection mixed", () => {
@@ -366,7 +360,7 @@ test("offsets are UTF-16 code units: an emoji before or inside the selection, an
   assert.deepEqual(toggleMark("say 😀 hi", { start: 4, end: 9 }, "italic"), { value: "say *😀 hi*", start: 5, end: 10 });
   assert.deepEqual(toggleMark("😀 **hello** world", { start: 5, end: 10 }, "bold"), { value: "😀 hello world", start: 3, end: 8 });
   assert.deepEqual(toggleMark("𝒜𝒷c d", { start: 2, end: 2 }, "bold"), { value: "**𝒜𝒷c** d", start: 4, end: 4 }, "𝒜 and 𝒷 are letters of two code units each");
-  assert.deepEqual(toggleMark("a😀b", { start: 1, end: 1 }, "bold"), { value: "a****😀b", start: 3, end: 3 }, "an emoji is not a letter: the caret after a is at the end of a word");
+  assert.equal(toggleMark("a😀b", { start: 1, end: 1 }, "bold"), null, "an emoji is not a letter: the caret after a is at the end of a word");
   const cut = toggleMark("a 😀😀 b", { start: 3, end: 5 }, "bold");
   assert.equal(cut.value, "a **😀😀** b", "a selection end inside a character takes the whole character");
 });
@@ -415,8 +409,10 @@ test("a mark is on the selection when every character of it has the mark: its ke
   assert.equal(has("Hello <b>[world]</b>.", "bold"), true);
   assert.equal(has("[**a** **b**]", "bold"), true, "the space between them shows no bold");
   assert.equal(has("Hello [world].", "sparkle"), false, "a mark there is no key for");
-  assert.equal(has("a **|** b", "bold"), true, "a caret between empty marks: its key takes them away");
+  assert.equal(has("a **|** b", "bold"), false, "marks around nothing are text");
   assert.equal(has("a | b", "bold"), false);
+  assert.equal(has("**a | b**", "bold"), true, "a caret outside a word: whether what is typed there has the mark");
+  assert.equal(has("**a b**| c", "bold"), false, "typing right after a run is plain");
   for (const text of ["a **[b]** c", "a *[b]* c", "a ***[b]*** c", "a ~~[b]~~ c", "a `[b]` c", "a [**b**] c", "a [b] c", "a [*b] c", "*[a]** b", "[a **b**]"]) {
     for (const mark of ["bold", "italic", "strike", "code", "underline", "highlight"]) {
       const { value, range } = marked(text), out = toggleMark(value, range, mark);

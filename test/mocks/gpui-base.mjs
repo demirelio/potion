@@ -30,6 +30,9 @@ export function echoTokenSets(on) { echo = on; }
 
 // Herdr refuses a token whose text or label holds one.
 const CONTROL = /[\p{Cc}\u{2028}\u{2029}]/u;
+const graphemes = new Intl.Segmenter();
+const lastGrapheme = s => [...graphemes.segment(s)].at(-1)?.segment ?? "";
+const firstGrapheme = s => graphemes.segment(s).containing(0)?.segment ?? "";
 
 // Inline tokens as Herdr's field keeps them: set_value with { text, tokens } validates them against the text or throws,
 // edits move the tokens after them and drop one they cut through, and a selection set inside a token goes to its edges
@@ -161,6 +164,30 @@ class TextState {
     this.moveTokens(start, end - start, text.length);
     this.text = this.text.slice(0, start) + text + this.text.slice(end);
     this.selection = { start: start + text.length, end: start + text.length };
+    return this.report(cx);
+  }
+  // Backspace and Delete as Herdr's field does them: a selection goes; at a caret, back to the previous boundary (on to
+  // the next), the start (end) of a token holding the character before (after) the caret, else that character. At the
+  // start Backspace does nothing (the key table takes it); at the end Delete reports a change that leaves the value.
+  backspace(cx) {
+    const { start, end } = this.selection ?? { start: this.text.length, end: this.text.length };
+    if (start === end) {
+      if (start === 0) return undefined;
+      const t = this.spans.find(s => s.range.start < start && start <= s.range.end);
+      this.selection = { start: t ? t.range.start : start - lastGrapheme(this.text.slice(0, start)).length, end: start };
+    }
+    return this.type("", cx);
+  }
+  delete(cx) {
+    const { start, end } = this.selection ?? { start: this.text.length, end: this.text.length };
+    if (start === end) {
+      if (start === this.text.length) return this.report(cx);
+      const t = this.spans.find(s => s.range.start <= start && start < s.range.end);
+      this.selection = { start, end: t ? t.range.end : start + firstGrapheme(this.text.slice(start)).length };
+    }
+    return this.type("", cx);
+  }
+  report(cx) {
     if (live) { const at = live.cx; setImmediate(() => this.handlers.change?.({}, at)); return undefined; }
     return this.handlers.change?.({}, cx);
   }

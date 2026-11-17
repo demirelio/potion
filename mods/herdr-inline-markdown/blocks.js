@@ -1174,16 +1174,18 @@ function interrupts(body, rel, lazy) {
 // The typing splice: field `f` now holds `next`. -> { start, end, insert, caret, fieldCaret } (caret: a document
 // offset, fieldCaret: the same place in the field), with `f` updated in place, or null when nothing changed. `caret`,
 // the field caret before the change when known, says where an insert or a backspace happened inside a run of equal
-// characters, which the diff alone cannot tell.
+// characters, which the diff alone cannot tell; the change itself ({ at, removed, inserted } of the field value) may be
+// given instead.
 // `linePrefix`, when given, starts every new line as it is (paste), where typing keeps a new line the block's text.
 export function type(f, next, caret, linePrefix) {
   const old = f.value;
   if (next === old) return null;
-  let { at: a, removed: r, inserted: ins } = diff(old, next);
-  if (caret !== undefined && !r && caret < a && next.slice(caret + ins.length, a + ins.length) === old.slice(caret, a)) {
+  const given = typeof caret === "object" && caret !== null && old.slice(0, caret.at) + caret.inserted + old.slice(caret.at + caret.removed) === next;
+  let { at: a, removed: r, inserted: ins } = given ? caret : diff(old, next);
+  if (typeof caret === "number" && !r && caret < a && next.slice(caret + ins.length, a + ins.length) === old.slice(caret, a)) {
     ins = next.slice(caret, caret + ins.length);
     a = caret;
-  } else if (caret !== undefined && !ins && caret - r >= 0 && caret - r < a && old.slice(caret, a + r) === old.slice(caret - r, a)) a = caret - r;
+  } else if (typeof caret === "number" && !ins && caret - r >= 0 && caret - r < a && old.slice(caret, a + r) === old.slice(caret - r, a)) a = caret - r;
   const i0 = firstSepFrom(f, a), i1 = firstSepFrom(f, a + r);
   moveGap(f, i1);
   let start = fieldToDoc(f, a), end = fieldToDoc(f, a + r);

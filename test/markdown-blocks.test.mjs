@@ -292,6 +292,14 @@ test("the caret before a key says which side of a soft break a typed space goes,
   assert.deepEqual([b.start, b.end], [3, 4], "the t before the caret, not the last one");
   const q = parse("tt tt\n"), fq = field(q, q.blocks[0]);
   assert.deepEqual([type(fq, "tt t").start], [4], "without a caret, the diff's choice");
+  const e = parse("**ab**b\n"), fe = field(e, e.blocks[0]);
+  const forward = type(fe, "**ab", { at: 4, removed: 3, inserted: "" });
+  assert.deepEqual([forward.start, forward.end, forward.fieldCaret], [4, 7, 4], "the change itself: a Delete of `**b`");
+  const g = parse("**ab**b\n"), fg = field(g, g.blocks[0]);
+  const back = type(fg, "**ab", { at: 3, removed: 3, inserted: "" });
+  assert.deepEqual([back.start, back.end, back.fieldCaret], [3, 6, 3], "a Backspace of `b**`");
+  const h = parse("ab\n"), fh = field(h, h.blocks[0]);
+  assert.deepEqual([type(fh, "axb", { at: 0, removed: 0, inserted: "x" }).start], [1], "a change that does not make the value: the diff's");
 });
 
 test("fix-up, empty marker: typing into `-` or `#` puts one space after the marker first", () => {

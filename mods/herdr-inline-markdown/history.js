@@ -38,12 +38,23 @@ function align(text, g, e) {
   }
 }
 const hasNewline = s => s.includes("\n") || s.includes("\r");
-// A group that wrote more than was typed (a new block written with its first letter) continues at its `join`, before
-// the line end that follows the caret; else at the end of what it inserted.
+// A group that wrote more than was typed (a new block written with its first letter, a typed letter written with the
+// marks that close its run) continues at its `join`, where the next letter goes; else at the end of what it inserted.
 const joinOf = g => g.join ?? g.start + g.inserted.length;
 
-// -> a history. record(text, splice, meta) takes the text before the splice and
-// meta { caretBefore, caretAfter, typing, key, time, join }; undo(text) and redo(text) hand back the splice to apply
+// Folds edit `e`, made on `text` right after group `g`, into g: the stretch either touched, as before g and after e.
+function fold(text, g, e) {
+  const gEnd = g.start + g.inserted.length, eEnd = e.start + e.removed.length;
+  const lo = Math.min(g.start, e.start), hi = Math.max(gEnd, eEnd), join = e.join ?? e.start + e.inserted.length;
+  g.removed = text.slice(lo, g.start) + g.removed + text.slice(gEnd, hi);
+  g.inserted = text.slice(lo, e.start) + e.inserted + text.slice(eEnd, hi);
+  g.start = lo;
+  if (join === lo + g.inserted.length) delete g.join;
+  else g.join = join;
+}
+
+// -> a history. record(text, splice, meta) takes the text before the splice and meta { caretBefore, caretAfter,
+// typing, key, time, join, stroke }; undo(text) and redo(text) hand back the splice to apply
 // to `text`, with the caret and, for an entry given them by select(), the `select` range, or null when there is none or
 // the entry does not match `text`.
 export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, groupMs = GROUP_MS } = {}) {
@@ -54,12 +65,17 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
     size += bytes(e);
     while (done.length > 1 && (done.length > maxEntries || size > maxBytes)) size -= bytes(done.shift());
   };
+  const groupable = (g, e) => Boolean(g) && e.key === g.key && e.time - g.time < groupMs && !hasNewline(e.inserted)
+    && !(hasNewline(g.inserted) && g.join === undefined);
   // A typing edit that continues the open group: an insert at its join, or a backward delete ending at its start.
   const continues = (g, e) => {
-    if (!g || e.key !== g.key || e.time - g.time >= groupMs || hasNewline(e.inserted) || (hasNewline(g.inserted) && g.join === undefined)) return false;
+    if (!groupable(g, e)) return false;
     if (!e.removed) return e.start === joinOf(g);
     return !e.inserted && !g.inserted && e.start + e.removed.length === g.start;
   };
+  // A key made at caretBefore where the group left the caret continues it as unrepaired keys do, whatever a repair made
+  // of its edit: `stroke` "type" after any typing, "backspace" after keys that only deleted, "delete" never.
+  const follows = (g, e, stroke) => groupable(g, e) && e.caretBefore === g.caretAfter && (stroke === "type" || (stroke === "backspace" && g.deletes));
   const clear = () => {
     done = [];
     undone = [];
@@ -76,20 +92,24 @@ export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, 
     const e = {
       start: t.start, removed: text.slice(t.start, t.end), inserted: t.insert,
       caretBefore: meta.caretBefore ?? t.start, caretAfter: meta.caretAfter ?? t.start + t.insert.length,
-      key: meta.key ?? null, time: meta.time ?? 0,
+      key: meta.key ?? null, time: meta.time ?? 0, deletes: meta.stroke ? meta.stroke !== "type" : !t.insert,
     };
     if (meta.join !== undefined && t.start === t.end) e.join = meta.join;
     undone = [];
     const g = done.at(-1);
     if (meta.typing && open === g && g && g.join === undefined) align(text, g, e);
-    if (meta.typing && open === g && continues(g, e)) {
+    const joined = meta.typing && open === g && continues(g, e), folded = !joined && meta.typing && open === g && follows(g, e, meta.stroke);
+    if (joined || folded) {
       const before = { ...g, before: null, last: null };
       size -= bytes(g);
-      if (!e.removed) {
+      if (folded) fold(text, g, e);
+      else if (!e.removed) {
         const k = joinOf(g) - g.start;
         g.inserted = g.inserted.slice(0, k) + e.inserted + g.inserted.slice(k);
-        if (g.join !== undefined) g.join += e.inserted.length;
+        if (e.join !== undefined) g.join = e.join;
+        else if (g.join !== undefined) g.join += e.inserted.length;
       } else { g.start = e.start; g.removed = e.removed + g.removed; }
+      g.deletes = g.deletes && e.deletes;
       g.caretAfter = e.caretAfter;
       g.time = e.time;
       g.before = before;

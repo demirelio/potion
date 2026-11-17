@@ -6818,7 +6818,7 @@ test("Cmd+B, Cmd+I, Cmd+Shift+X and Cmd+Shift+C put marks around the selection t
   assert.equal(state.disk.get(FILE), "Hello **world**.\n\nEnd\n");
 });
 
-test("a format key on a caret in a word marks the word, the caret staying in it; on a caret elsewhere it writes the marks around it", async () => {
+test("a format key on a caret in a word marks the word, the caret staying in it; on a caret elsewhere it writes nothing and what is typed next has the mark", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
   const field = m.view.field;
@@ -6829,9 +6829,9 @@ test("a format key on a caret in a word marks the word, the caret staying in it;
   assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 8, end: 8 }]);
   field.select(5);
   act(m, "mdb-italic");
-  assert.deepEqual([m.view.text, field.selection], ["Hello** world.\n\nEnd\n", { start: 6, end: 6 }]);
+  assert.deepEqual([m.view.text, field.selection], ["Hello world.\n\nEnd\n", { start: 5, end: 5 }]);
   field.type("x", m.cx);
-  assert.equal(m.view.text, "Hello*x* world.\n\nEnd\n", "what is typed next goes between the marks");
+  assert.equal(m.view.text, "Hello*x* world.\n\nEnd\n", "what is typed next is italic");
 });
 
 test("one Cmd+Z takes back one format key and puts back the text and the selection there was; Cmd+Shift+Z formats again with its selection", async () => {
@@ -6939,7 +6939,7 @@ test("the paragraph a first letter writes below the last block can be formatted,
   await clickAt(e, { x: X + 50, y: 28 + e.view.sums[1] + 40 });
   assert.ok(pendingOf(e));
   act(e, "mdb-italic");
-  assert.deepEqual([e.view.field.value(), e.view.field.selection], ["**", { start: 1, end: 1 }]);
+  assert.deepEqual([e.view.field.value(), e.view.field.selection], ["", { start: 0, end: 0 }]);
   typed(e, "x");
   assert.equal(e.view.text, "Intro\n\n*x*\n");
   await e.save();
@@ -6964,7 +6964,9 @@ test("a format key closes the slash menu first", async () => {
   typed(m, "/");
   assert.ok(menuOf(m));
   act(m, "mdb-bold");
-  assert.deepEqual([menuOf(m), m.view.slash, m.view.text], [null, null, "Intro\n\n/****\n\nOutro\n"]);
+  assert.deepEqual([menuOf(m), m.view.slash, m.view.text], [null, null, "Intro\n\n/\n\nOutro\n"]);
+  typed(m, "x");
+  assert.equal(m.view.text, "Intro\n\n/**x**\n\nOutro\n", "the key set the formatting of what is typed next");
 });
 
 test("offsets after an emoji in the field fall in the right place of the file", async () => {
@@ -6977,15 +6979,14 @@ test("offsets after an emoji in the field fall in the right place of the file", 
   assert.deepEqual([m.view.text, m.view.field.selection], ["Intro\n\n😀 hello world\n", { start: 3, end: 8 }]);
 });
 
-test("bold or strikethrough around nothing in the block below the last one waits for a letter, as alone its marks would make a rule or a code fence", async () => {
-  for (const [action, marks, written] of [["mdb-bold", "****", "**x**"], ["mdb-strike", "~~~~", "~~x~~"]]) {
+test("bold or strikethrough at the caret of the block below the last one writes nothing, and the first letter typed writes the block with it", async () => {
+  for (const [action, written] of [["mdb-bold", "**x**"], ["mdb-strike", "~~x~~"]]) {
     reset();
     const m = await page("Intro\n", { 0: 24 });
     await clickAt(m, { x: X + 50, y: 28 + m.view.sums[1] + 40 });
     act(m, action);
-    assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection, Boolean(pendingOf(m))], ["Intro\n", marks, { start: 2, end: 2 }, true], action);
+    assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection, Boolean(pendingOf(m))], ["Intro\n", "", { start: 0, end: 0 }, true], action);
     act(m, action);
-    assert.deepEqual([m.view.text, m.view.field.value(), Boolean(pendingOf(m))], ["Intro\n", "", true], `${action} again takes them away`);
     act(m, action);
     typed(m, "x");
     assert.deepEqual([m.view.text, m.view.field.value(), m.view.doc.blocks.map(b => b.kind)], [`Intro\n\n${written}\n`, written, ["paragraph", "paragraph"]], action);
@@ -9185,3 +9186,325 @@ for (const blocks of [300, 600]) {
     assert.ok(m.view.pieces.size <= PIECES_LIMIT, `${m.view.pieces.size} token drawings kept`);
   });
 }
+
+// The caret or selection where the field puts it after a readout that split the letters of the words it touches, as a
+// press there does: placed, read out, and placed again among the letters.
+async function placeIn(m, start, end = start) {
+  for (let i = 0; i < 2; i++) {
+    m.view.field.select(start, end);
+    keyUp(m, "right", start === end ? {} : { shift: true });
+    await flush();
+  }
+}
+// What the edited field draws: its text with every token as its label.
+const drawnField = m => {
+  const v = m.view.field.value();
+  let out = "", at = 0;
+  for (const t of m.view.field.tokens()) { out += v.slice(at, t.range.start) + t.token.label; at = t.range.end; }
+  return out + v.slice(at);
+};
+// A key in the edited field: Backspace, Delete, or a character typed.
+const hit = (m, key) => (key === "backspace" ? m.view.field.backspace(m.cx) : key === "delete" ? m.view.field.delete(m.cx) : m.view.field.type(key, m.cx));
+const KEPT_FORMATTING = [
+  ["A1 Backspace after the last letter of a bold run", "Hello **world** there", 15, "backspace", "Hello **worl** there", "Hello worl there"],
+  ["A2 Delete before its first letter", "Hello **world** there", 6, "delete", "Hello **orld** there", "Hello orld there"],
+  ["A3 Backspace after its first letter", "Hello **world** there", 9, "backspace", "Hello **orld** there", "Hello orld there"],
+  ["A4 Delete before its last letter", "Hello **world** there", 12, "delete", "Hello **worl** there", "Hello worl there"],
+  ["A6 a run left ending on a space", "Hello **big w** there", 15, "backspace", "Hello **big**  there", "Hello big  there"],
+  ["A7 a selection from plain text into a run", "Hello **world**", [3, 10], "backspace", "Hel**rld**", "Helrld"],
+  ["A8 typed over", "Hello **world**", [3, 10], "X", "HelX**rld**", "HelXrld"],
+  ["A9 a selection out of a run", "Hello **world** there", [10, 18], "backspace", "Hello **wo**ere", "Hello woere"],
+  ["A11 bold and italic", "A ***bi***", 10, "backspace", "A ***b***", "A b"],
+  ["A12 a link's last letter", "See [docs](https://e.com) now", 25, "backspace", "See [doc](https://e.com) now", "See doc now"],
+  ["A12 a link's only letter: the link goes, address and all", "See [d](https://e.com) now", 22, "backspace", "See  now", "See  now"],
+  ["A13 commented text's last letter", "See {==this==}{>>2026-11-16 20:51 | note<<} now", 43, "backspace", "See {==thi==}{>>2026-11-16 20:51 | note<<} now", "See thi now"],
+  ["A14 a picture's text", "See ![ab](p.png) here", 7, "backspace", "See ![b](p.png) here", "See b here"],
+  ["A15 the letter before a hard break", "ab\\\ncd", 3, "backspace", "a\\\ncd", "a\ncd"],
+  ["A16 ] in a link's text", "See [docs](u) now", 7, "]", "See [do\\]cs](u) now", "See do]cs now"],
+  ["A17 a letter after bold that can't close before it", 'x **"q"** z', 9, "y", 'x <strong>"q"</strong>y z', 'x "q"y z'],
+  ["A20 typed over a bold word with its marks", "Hello **world** there", [6, 15], "X", "Hello **X** there", "Hello X there"],
+  ["A20 typed over a link with its marks", "See [docs](https://e.com) now", [4, 25], "X", "See [X](https://e.com) now", "See X now"],
+  ["A21 Delete in plain text", "Hello world", 6, "delete", "Hello orld", "Hello orld"],
+  ["A21 Delete between two equal letters", "Hello", 3, "delete", "Helo", "Helo"],
+];
+
+// The edited field's tokens: what each draws, with its formatting.
+const tokensOf = m => m.view.field.tokens().map(t => [t.range.start, t.range.end, t.token.id, t.token.label]);
+
+for (const [name, line, at, key, after, shows] of KEPT_FORMATTING) {
+  test(`typing keeps formatting, ${name}: the file, what the field draws, one undo with the caret or selection and the marks back, redo with the caret the key left`, async () => {
+    const disk = `${line}\n\nEnd\n`, m = await page(disk, { 0: 24, 1: 24 });
+    await openBlock(m, 0);
+    const [start, end] = Array.isArray(at) ? at : [at, at];
+    await placeIn(m, start, end);
+    const was = tokensOf(m);
+    hit(m, key);
+    const left = m.view.field.selection, drawn = tokensOf(m);
+    assert.deepEqual([m.view.field.value(), m.view.text, drawnField(m)], [after, `${after}\n\nEnd\n`, shows]);
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection, tokensOf(m)], [disk, line, { start, end }, was], "undo");
+    act(m, "mdb-redo");
+    assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection, tokensOf(m)], [`${after}\n\nEnd\n`, after, left, drawn], "redo");
+    act(m, "mdb-undo");
+    assert.equal(m.view.history.canUndo, false, "the key and its repair were one entry");
+  });
+}
+
+// Undo gives `line` back with the caret or selection [start, end) and the tokens `was`; redo gives the value `after`
+// back with the caret `left` and the tokens `drawn` the key left.
+function assertUndoRedo(m, { line, start, end, was }, { after, left, drawn }) {
+  const text = m.view.text;
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.field.value(), m.view.field.selection, tokensOf(m)], [line, { start, end }, was], "undo");
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection, tokensOf(m)], [text, after, left, drawn], "redo");
+}
+
+test("typing keeps formatting, A10: a selection over the end of one run and the start of another keeps both", async () => {
+  const line = "A **one** and *two* z", m = await page(`${line}\n`, { 0: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 5, 16);
+  const was = tokensOf(m);
+  hit(m, "backspace");
+  assert.equal(drawnField(m), "A owo z");
+  const tokens = m.view.field.tokens().map(t => [t.token.label, t.token.id.replace(/:\d+/g, "")]);
+  assert.deepEqual(tokens.filter(([label]) => /[ow]/.test(label)), [["o", "b"], ["w", "i"], ["o", "i"]]);
+  assertUndoRedo(m, { line, start: 5, end: 16, was }, { after: m.view.field.value(), left: m.view.field.selection, drawn: tokensOf(m) });
+});
+
+test("typing keeps formatting, A18: a backtick that would open code over hidden marks is written so it shows as typed", async () => {
+  const line = "Hello **wo`rld** ", m = await page(`${line}\n`, { 0: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 17);
+  const was = tokensOf(m);
+  hit(m, "`");
+  assert.equal(drawnField(m), "Hello wo`rld `");
+  assert.match(m.view.text, /^Hello \*\*wo\\`rld\*\* \\`\n/);
+  assertUndoRedo(m, { line, start: 17, end: 17, was }, { after: m.view.field.value(), left: m.view.field.selection, drawn: tokensOf(m) });
+});
+
+test("consecutive Backspaces after a repair are one entry; a plain keystroke in plain words sets no value and is one entry", async () => {
+  const m = await page("Hello **world** there\n\nEnd\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 15);
+  hit(m, "backspace");
+  hit(m, "backspace");
+  assert.equal(m.view.text, "Hello **wor** there\n\nEnd\n");
+  assert.equal(m.view.history.entries.length, 1);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.history.canUndo], ["Hello **world** there\n\nEnd\n", false]);
+  await placeIn(m, 2);
+  const sets = valueSets(m);
+  hit(m, "x");
+  assert.deepEqual([m.view.text, valueSets(m), m.view.history.entries.length], ["Hexllo **world** there\n\nEnd\n", sets, 1]);
+});
+
+test("A19: Cmd+B at a caret outside a word writes nothing; what is typed next is bold and one run, and Cmd+B again ends it", async () => {
+  const m = await page("Hello \n\nEnd\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 6);
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.field.value(), m.view.text], ["Hello ", "Hello \n\nEnd\n"], "nothing written, nothing shows");
+  for (const ch of "word") hit(m, ch);
+  assert.deepEqual([m.view.text, drawnField(m)], ["Hello **word**\n\nEnd\n", "Hello word"]);
+  const word = { left: m.view.field.selection, drawn: tokensOf(m) };
+  act(m, "mdb-bold");
+  hit(m, "s");
+  assert.equal(m.view.text, "Hello **word**s\n\nEnd\n");
+  act(m, "mdb-undo");
+  assert.equal(m.view.text, "Hello **word**\n\nEnd\n", "typing after a format key is an entry of its own");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello \n\nEnd\n", { start: 6, end: 6 }], "the bold word was one entry");
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, m.view.field.selection, tokensOf(m)], ["Hello **word**\n\nEnd\n", word.left, word.drawn], "redo: bold, the caret after it");
+  hit(m, "x");
+  assert.equal(m.view.text, "Hello **word**x\n\nEnd\n", "redo ended the typing style");
+});
+
+test("A5: after Backspace the letter typed at the same caret takes the deleted letter's formatting, a run whose last letter went too", async () => {
+  const m = await page("Hello **world** there\n\nHello **ab**\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 15);
+  hit(m, "backspace");
+  hit(m, "d");
+  assert.equal(m.view.text, "Hello **world** there\n\nHello **ab**\n");
+  await openBlock(m, 1);
+  await placeIn(m, 12);
+  const was = tokensOf(m), entries = m.view.history.entries.length;
+  hit(m, "backspace");
+  hit(m, "backspace");
+  assert.deepEqual([m.view.field.value(), drawnField(m)], ["Hello ", "Hello "]);
+  hit(m, "x");
+  assert.equal(m.view.text, "Hello **world** there\n\nHello **x**\n");
+  assert.equal(m.view.history.entries.length, entries + 1, "the Backspaces and the letter typed back, one entry");
+  assertUndoRedo(m, { line: "Hello **ab**", start: 12, end: 12, was }, { after: "Hello **x**", left: m.view.field.selection, drawn: tokensOf(m) });
+});
+
+test("the typing style survives a readout that finds the caret where it was, and ends when the caret moves", async () => {
+  const m = await page("Hello there\n\nEnd\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 6);
+  act(m, "mdb-bold");
+  await placeIn(m, 6);
+  hit(m, "x");
+  assert.equal(m.view.text, "Hello **x**there\n\nEnd\n");
+  act(m, "mdb-italic");
+  await placeIn(m, 2);
+  await placeIn(m, 11);
+  hit(m, "y");
+  assert.equal(m.view.text, "Hello **x**ythere\n\nEnd\n", "the caret went away and back: plain");
+});
+
+test("the typing style in a block not written yet: the first letter writes it formatted, and the next ones join the run", async () => {
+  const m = await page("Intro\n", { 0: 24 });
+  await clickAt(m, { x: X + 50, y: 28 + m.view.sums[1] + 40 });
+  assert.ok(pendingOf(m));
+  act(m, "mdb-bold");
+  assert.deepEqual([m.view.field.value(), m.view.text], ["", "Intro\n"]);
+  typed(m, "xy");
+  assert.equal(m.view.text, "Intro\n\n**xy**\n");
+});
+
+test("Option+Backspace through a run's marks, and the field's own cut of a selection, leave what is left formatted", async () => {
+  const m = await page("Hello **world** there\n\nHello **world**\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 15);
+  m.view.field.selection = { start: 10, end: 15 };
+  m.view.field.type("", m.cx);
+  assert.deepEqual([m.view.field.value(), drawnField(m)], ["Hello **wo** there", "Hello wo there"]);
+  await openBlock(m, 1);
+  await placeIn(m, 3, 10);
+  m.view.field.type("", m.cx);
+  assert.deepEqual([m.view.field.value(), drawnField(m)], ["Hel**rld**", "Helrld"]);
+});
+
+test("typing a new name over a clicked link, or over all of a comment's text, keeps every letter in it", async () => {
+  const m = await page("See [docs](https://e.com) now\n\nSee {==this==}{>>n<<} now\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 4, 25);
+  for (const ch of "New name") hit(m, ch);
+  assert.deepEqual([m.view.field.value(), m.view.history.entries.length], ["See [New name](https://e.com) now", 1]);
+  hit(m, "backspace");
+  hit(m, "s");
+  assert.deepEqual([m.view.field.value(), m.view.history.entries.length], ["See [New nams](https://e.com) now", 2]);
+  act(m, "mdb-undo");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.field.value(), m.view.field.selection], ["See [docs](https://e.com) now", { start: 4, end: 25 }], "the link back, selected");
+  act(m, "mdb-redo");
+  act(m, "mdb-redo");
+  assert.equal(m.view.field.value(), "See [New nams](https://e.com) now");
+  await openBlock(m, 1);
+  await placeIn(m, 4, 21);
+  for (const ch of "that") hit(m, ch);
+  assert.equal(m.view.field.value(), "See {==that==}{>>n<<} now");
+});
+
+test("the format keys' own two-step writing and the editor's own edits are never repaired", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  const sets = valueSets(m);
+  m.view.field.select(6, 11);
+  act(m, "mdb-bold");
+  assert.equal(m.view.text, "Hello **world**.\n\nEnd\n");
+  assert.equal(m.view.history.entries.length, 1);
+  assert.ok(valueSets(m) - sets <= 2, "only the format key's own token sets");
+});
+
+test("a paragraph of pictures shows its source while edited, and its keys edit that source as typed", async () => {
+  const m = await pictured();
+  await doubleClickAt(m, onPicture(m));
+  assert.equal(m.view.field.value(), "![x](a.png)");
+  await placeIn(m, 10);
+  hit(m, "backspace");
+  assert.deepEqual([m.view.field.value(), m.view.text], ["![x](a.pn)", "# Title\n\n![x](a.pn)\n\nBye\n"], "a letter of the address");
+  hit(m, "g");
+  await placeIn(m, 3);
+  hit(m, "backspace");
+  assert.deepEqual([m.view.field.value(), m.view.text], ["![](a.png)", "# Title\n\n![](a.png)\n\nBye\n"], "the alt's only letter");
+});
+
+test("Escape ends the typing style, also when all it does is close a link's popover", async () => {
+  const m = await page(LINK_DOC, { 0: 24, 1: 38 });
+  await clickToken(m, 0, tokenShowing(m, 0, "docs"));
+  hit(m, "N");
+  assert.deepEqual([m.view.field.value(), Boolean(popoverOf(m))], ["See [N](https://e.com/d) now", true], "renamed, the popover up");
+  escape(m);
+  assert.deepEqual([popoverOf(m), m.view.activeKey], [null, keyAt(m, 0)]);
+  hit(m, "x");
+  assert.equal(m.view.field.value(), "See [N](https://e.com/d)x now", "typed after the link, not in it");
+  await clickToken(m, 0, tokenShowing(m, 0, "N"));
+  hit(m, "M");
+  act(m, "mdb-bold");
+  assert.ok(popoverOf(m));
+  escape(m);
+  hit(m, "y");
+  assert.equal(m.view.field.value(), "See [M](https://e.com/d)yx now", "neither in the link nor bold");
+});
+
+test("the typing style ends on Enter, undo, leaving the block and the editor's own edits", async () => {
+  const m = await page("Hello \n\nEnd\n", { 0: 24, 1: 24 });
+  const styled = async () => {
+    await openBlock(m, 0);
+    await placeIn(m, m.view.field.value().length);
+    act(m, "mdb-bold");
+  };
+  await styled();
+  act(m, "mdb-enter");
+  hit(m, "a");
+  assert.equal(m.view.text, "Hello \n\na\n\nEnd\n", "Enter: the new block starts plain");
+  await styled();
+  hit(m, "b");
+  await styled();
+  act(m, "mdb-undo");
+  hit(m, "c");
+  assert.equal(m.view.text, "Hello c\n\na\n\nEnd\n", "undo, which took the bold b away");
+  await styled();
+  act(m, "mdb-redo");
+  hit(m, "d");
+  assert.equal(m.view.text, "Hello cd\n\na\n\nEnd\n", "redo, which had nothing to do");
+  await styled();
+  escape(m);
+  await m.key("enter");
+  hit(m, "e");
+  assert.equal(m.view.text, "Hello cde\n\na\n\nEnd\n", "left with Escape, back with Enter");
+  await styled();
+  m.cx.write_to_clipboard("f");
+  act(m, "mdb-paste");
+  hit(m, "g");
+  assert.equal(m.view.text, "Hello cdefg\n\na\n\nEnd\n", "a paste");
+});
+
+test("a styled phrase typed after Cmd+B is one entry of the history, and so are Backspaces after a repair that moved a run's marks", async () => {
+  const m = await page("Hello \n\nHello **big w** there\n", { 0: 24, 1: 24 });
+  await openBlock(m, 0);
+  await placeIn(m, 6);
+  act(m, "mdb-bold");
+  for (const ch of "big word") hit(m, ch);
+  assert.deepEqual([m.view.text, m.view.history.entries.length], ["Hello **big word**\n\nHello **big w** there\n", 1]);
+  const left = m.view.field.selection, drawn = tokensOf(m);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello \n\nHello **big w** there\n", { start: 6, end: 6 }]);
+  act(m, "mdb-redo");
+  assert.deepEqual([m.view.text, m.view.field.selection, tokensOf(m)], ["Hello **big word**\n\nHello **big w** there\n", left, drawn]);
+  await openBlock(m, 1);
+  await placeIn(m, 15);
+  hit(m, "backspace");
+  hit(m, "backspace");
+  assert.deepEqual([m.view.field.value(), m.view.history.entries.length], ["Hello **big** there", 2]);
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **big word**\n\nHello **big w** there\n", { start: 15, end: 15 }]);
+});
+
+test("in a field that took no tokens a format key at a caret still formats what is typed next, and the marks show there", async () => {
+  const m = await page("Hello **world**, \n\nEnd\n", { 0: 24, 1: 24 });
+  const field = m.view.blockField(keyAt(m, 0)), set = field.set_value.bind(field);
+  field.set_value = v => { if (v?.tokens?.length) throw new Error("token refused"); return set(v); };
+  await openBlock(m, 0);
+  await placeIn(m, 10);
+  await placeIn(m, 17);
+  assert.deepEqual([m.view.tokensOff, drawnField(m)], [true, "Hello **world**, "]);
+  act(m, "mdb-bold");
+  hit(m, "x");
+  hit(m, "y");
+  assert.deepEqual([m.view.field.value(), m.view.text], ["Hello **world**, **xy**", "Hello **world**, **xy**\n\nEnd\n"]);
+});
