@@ -4,7 +4,7 @@ import { state, calls, reset } from "./mocks/herdr.mjs";
 import { files, failing, log } from "./mocks/fs.mjs";
 import { png } from "./pictures.mjs";
 
-const { DialogUnavailable, IMAGE_FOLDER_KEY, PictureDialog, altNames, altOf, imageStart, placePictures } = await import("../mods/herdr-inline-markdown/pick.js");
+const { DialogUnavailable, IMAGE_FOLDER_KEY, PictureDialog, altNames, altOf, imageStart, placePictures } = await import("../mods/potion/pick.js");
 
 beforeEach(() => reset());
 
@@ -46,7 +46,7 @@ const DETACH = [
   ") </dev/null >/dev/null 2>&1 &",
   "echo $!",
 ].join("\n");
-const PID = 4242, IMAGES = "/home/user/.config/herdr-app/data/herdr-inline-markdown/images";
+const PID = 4242, IMAGES = "/home/user/.config/herdr-app/data/potion/images";
 
 // What the detached script leaves when osascript ends: stdout, stderr, and the exit status last.
 const finish = (base, { code = 0, stdout = "", stderr = "" } = {}) => {

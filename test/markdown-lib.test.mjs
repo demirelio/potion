@@ -11,9 +11,9 @@ import {
   markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, diagramKey, sharpName,
   toSource, sourceToDoc, docToSource, sourceSplice, eolOf, picturesOf, pictureName, pictureSource, touches,
   isPictureName, copyName, pictureLink, pictureMarkdown, escapeAlt, writtenAddress, pictureWithAlt, pictureWithAddress,
-} from "../mods/herdr-inline-markdown/lib.js";
-import { diff, parse } from "../mods/herdr-inline-markdown/blocks.js";
-import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
+} from "../mods/potion/lib.js";
+import { diff, parse } from "../mods/potion/blocks.js";
+import { parseInline } from "../mods/potion/inline.js";
 import { corpus } from "./markdown-corpus.mjs";
 
 const sh = promisify(execFile);

@@ -5,7 +5,7 @@ import * as fs from "fs/promises";
 import { basename, copyName, dirname, joinPath, pictureLink, uniqueName } from "./lib.js";
 import { imagesDir } from "./images.js";
 
-export const IMAGE_FOLDER_KEY = "herdr-inline-markdown.imageFolder";
+export const IMAGE_FOLDER_KEY = "potion.imageFolder";
 
 const TYPES = ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp", "com.microsoft.bmp", "public.svg-image"];
 const CANCELLED = /-128\b|User canceled/i;

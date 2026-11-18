@@ -4,8 +4,8 @@ Changes the **`tabs`** mod (the tab bar) of Herdr 0.1.12. Clone it as `my-tabs`.
 
 ## What it does
 
-A tab whose panes are all Markdown panes shows the file icon of the mod (`mods/herdr-inline-markdown/file-markdown.svg`)
-and is called "Markdown" while it has no name of its own. Nothing else changes: the tab bar opens nothing for the
+A tab whose panes are all Markdown panes shows the file icon of the mod (`mods/potion/file-markdown.svg`)
+and is called "Potion" while it has no name of its own. Nothing else changes: the tab bar opens nothing for the
 Markdown mod. The `cmd-m` and `cmd-shift-m` keys come with the plugin itself (`../../keys.json`, merged by
 `../../install.sh`).
 

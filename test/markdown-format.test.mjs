@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as format from "../mods/herdr-inline-markdown/format.js";
-import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { parse } from "../mods/herdr-inline-markdown/blocks.js";
+import * as format from "../mods/potion/format.js";
+import { parseInline } from "../mods/potion/inline.js";
+import { parse } from "../mods/potion/blocks.js";
 
 const { hasMark, toggleMark, wordAround } = format;
 

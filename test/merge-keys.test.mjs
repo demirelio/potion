@@ -7,7 +7,7 @@ const { chord, mergeKeys } = await import("../tools/merge-keys.mjs");
 
 const OURS_FILE = fileURLToPath(new URL("../keys.json", import.meta.url));
 const OURS = JSON.parse(readFileSync(OURS_FILE, "utf8"));
-const M = "mod.open:herdr-inline-markdown", BESIDE = "mod.open:herdr-inline-markdown-beside";
+const M = "mod.open:potion", BESIDE = "mod.open:potion-beside";
 
 // A keys.json as Herdr writes it: two spaces, one key a line, escapes kept as \u escapes.
 const HERDR = `{

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import {
   POINT, addComment, cellComments, commentable, commentsIn, editCellComment, editComment, highlight, noteText, oneLine,
   pointComment, readNote, resolveComment, showComments, stampOf, timeLabel,
-} from "../mods/herdr-inline-markdown/comments.js";
-import { tableCells } from "../mods/herdr-inline-markdown/geometry.js";
+} from "../mods/potion/comments.js";
+import { tableCells } from "../mods/potion/geometry.js";
 
 const COLOR = "#4a3b20";
 const shown = text => showComments(text, COLOR);

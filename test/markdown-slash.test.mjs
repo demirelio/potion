@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { COMMANDS, matches, opensAt, track, step, follow } from "../mods/herdr-inline-markdown/slash.js";
+import { COMMANDS, matches, opensAt, track, step, follow } from "../mods/potion/slash.js";
 
-const MOD = fileURLToPath(new URL("../mods/herdr-inline-markdown/", import.meta.url));
+const MOD = fileURLToPath(new URL("../mods/potion/", import.meta.url));
 const ids = list => list.map(c => c.id);
 const opened = { act: 1, at: 0, end: 1, query: "", items: COMMANDS, index: 0, first: 0, side: null };
 // The menu after typing `typed` (one change per character) at the end of "/" in the field "<before>/".

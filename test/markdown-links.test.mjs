@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { parse } from "../mods/herdr-inline-markdown/blocks.js";
-import { addLink, clipboardAddress, destinationOf, linkAddress, linkForm, pictureCut, pictureForm, setAddress, setPicture, unlink } from "../mods/herdr-inline-markdown/links.js";
-import { cellText, tableOf } from "../mods/herdr-inline-markdown/tables.js";
+import { parseInline } from "../mods/potion/inline.js";
+import { parse } from "../mods/potion/blocks.js";
+import { addLink, clipboardAddress, destinationOf, linkAddress, linkForm, pictureCut, pictureForm, setAddress, setPicture, unlink } from "../mods/potion/links.js";
+import { cellText, tableOf } from "../mods/potion/tables.js";
 
 const DEFS = parse("x\n\n[ref]: https://r.org \"T\"\n[cat]: <my cat.png> \"A cat\"\n").defs;
 const linksOf = value => parseInline(value, { defs: DEFS }).spans.filter(sp => sp.kind === "link");

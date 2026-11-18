@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { graphemeEnd, parseInline, parsedInline, visibleMap } from "../mods/herdr-inline-markdown/inline.js";
-import { parse, field, isText } from "../mods/herdr-inline-markdown/blocks.js";
-import { commentsIn } from "../mods/herdr-inline-markdown/comments.js";
+import { graphemeEnd, parseInline, parsedInline, visibleMap } from "../mods/potion/inline.js";
+import { parse, field, isText } from "../mods/potion/blocks.js";
+import { commentsIn } from "../mods/potion/comments.js";
 import { commonmark, gfm, docs, originals } from "./markdown-corpus.mjs";
 
 const label = (spans, s) => {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHistory, mergeChange, trim, MAX_ENTRIES } from "../mods/herdr-inline-markdown/history.js";
-import { parse, field, type, applySplice, diff } from "../mods/herdr-inline-markdown/blocks.js";
+import { createHistory, mergeChange, trim, MAX_ENTRIES } from "../mods/potion/history.js";
+import { parse, field, type, applySplice, diff } from "../mods/potion/blocks.js";
 
 const run = (text, s) => applySplice(text, s);
 

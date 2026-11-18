@@ -1,8 +1,8 @@
 {
-  "name": "herdr-inline-markdown-mermaid",
+  "name": "potion-mermaid",
   "private": true,
   "type": "module",
-  "description": "Draws mermaid diagrams to PNG for the herdr-inline-markdown mod; install.sh installs it",
+  "description": "Draws mermaid diagrams to PNG for the Potion mod; install.sh installs it",
   "dependencies": {
     "@mermaid-js/mermaid-cli": "12.2.0"
   }

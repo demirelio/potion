@@ -19,12 +19,12 @@ const PRUNE_DAYS = 45;
 const MEMO = 1000;
 const NOT_A_PICTURE = "Not a picture Herdr can show (PNG, JPEG, GIF, WebP, BMP, SVG)";
 const ON_ANOTHER_MACHINE = "Pictures on another machine aren't shown yet";
-const SPINNER = "mods/herdr-inline-markdown/spinner.svg";
+const SPINNER = "mods/potion/spinner.svg";
 
 const why = e => String(e?.message ?? e);
-export const imagesDir = () => `${appHome().replace(/\/+$/, "")}/data/herdr-inline-markdown/images`;
+export const imagesDir = () => `${appHome().replace(/\/+$/, "")}/data/potion/images`;
 // Where an image() finds a cached picture: relative to the app folder.
-export const pictureImagePath = name => `data/herdr-inline-markdown/images/${name}`;
+export const pictureImagePath = name => `data/potion/images/${name}`;
 
 const result = (state, more) => ({ state, path: null, width: 0, height: 0, error: null, ...more });
 const pending = () => result("pending");

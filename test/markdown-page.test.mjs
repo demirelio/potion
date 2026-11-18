@@ -5,15 +5,15 @@ import { all, find, fire, nodeOf, textOf } from "./mocks/element.mjs";
 import { div } from "./mocks/gpui-kit.mjs";
 import { makeCx, must } from "./helpers.mjs";
 
-const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
-const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
-const { CODE_HEAD, GRID, NOTES, RESIZE, lineX } = await import("../mods/herdr-inline-markdown/geometry.js");
-const { BOX, CALIBRATED, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, prefixStrip, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
-const { gridOf } = await import("../mods/herdr-inline-markdown/grid.js");
+const { parse } = await import("../mods/potion/blocks.js");
+const { POINT } = await import("../mods/potion/comments.js");
+const { CODE_HEAD, GRID, NOTES, RESIZE, lineX } = await import("../mods/potion/geometry.js");
+const { BOX, CALIBRATED, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, prefixStrip, renderBlock, spaceBefore } = await import("../mods/potion/page.js");
+const { gridOf } = await import("../mods/potion/grid.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
-const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
-const { piecesOf } = await import("../mods/herdr-inline-markdown/tokens.js");
-const { deepHighlightColor, highlightColor } = await import("../mods/herdr-inline-markdown/colors.js");
+const { TEXT, RAW } = await import("../mods/potion/keys.js");
+const { piecesOf } = await import("../mods/potion/tokens.js");
+const { deepHighlightColor, highlightColor } = await import("../mods/potion/colors.js");
 const { theme } = await import("./mocks/herdr.mjs");
 
 beforeEach(() => reset());
@@ -223,7 +223,7 @@ test("a rendered block with comments shows their count right of its first row, i
   const badge = must(el, `md-notes-${d.key}`);
   assert.deepEqual([badge.style.absolute, badge.style.left, badge.style.top, badge.style.w, badge.style.h], [true, 726, 1, NOTES.w, NOTES.h]);
   assert.equal(badge.style.tooltip, "2 comments");
-  assert.deepEqual(all(badge, n => n.kind === "svg").map(n => n.path), ["mods/herdr-inline-markdown/message-square.svg"]);
+  assert.deepEqual(all(badge, n => n.kind === "svg").map(n => n.path), ["mods/potion/message-square.svg"]);
   assert.equal(textOf(badge).trim(), "2");
   assert.ok(el.__node.style.relative, "the block places it");
   const plain = drawn("A plain one\n", 0, { notes: 0, notesX: 0, notesY: 0 });
@@ -236,7 +236,7 @@ test("a block's Comment button is drawn where the editor places it, a table's ra
   for (const [text, raised] of [["```js\nx\n```\n", false], ["| a |\n|---|\n| 1 |\n", true]]) {
     const { el, d } = drawn(text, 0, {}, also), button = must(el, `md-block-comment-${d.key}`);
     assert.deepEqual([button.style.absolute, button.style.left, button.style.top, button.style.w, button.style.h, el.__node.style.relative], [true, 500, 19, 22, 22, true]);
-    assert.deepEqual([button.style.tooltip, all(button, n => n.kind === "svg").map(n => n.path)], ["Comment (Cmd+Alt+M)", ["mods/herdr-inline-markdown/message-square-plus.svg"]]);
+    assert.deepEqual([button.style.tooltip, all(button, n => n.kind === "svg").map(n => n.path)], ["Comment (Cmd+Alt+M)", ["mods/potion/message-square-plus.svg"]]);
     assert.deepEqual([button.style.bg, button.style.shadow_sm], raised ? ["popover", true] : [undefined, undefined]);
     const cx = makeCx();
     fire(button, "on_mouse_down:left", {}, cx);
@@ -352,7 +352,7 @@ test("a drawn diagram is a frame from its block's data and the editor's view: th
   assert.deepEqual(views, [d.key]);
   assert.deepEqual([box.style.ml, box.style.w, box.style.h], [-257, 1230, 208]);
   const img = all(box, n => n.kind === "image")[0];
-  assert.deepEqual([img.path, img.style.absolute, img.style.left, img.style.top, img.style.w, img.style.h], ["data/herdr-inline-markdown/diagrams/k1.png", true, 12, 12, 1206, 184]);
+  assert.deepEqual([img.path, img.style.absolute, img.style.left, img.style.top, img.style.w, img.style.h], ["data/potion/diagrams/k1.png", true, 12, 12, 1206, 184]);
   assert.equal(box.kids.at(-1).id, `md-frame-edge-${d.key}`);
   assert.equal(shown.__node.style.cursor_pointer, true, "the block's own part keeps the pointer: a click on the space above it opens the source");
   const selected = renderBlock(owner, { ...d, selected: true });
@@ -360,8 +360,8 @@ test("a drawn diagram is a frame from its block's data and the editor's view: th
   assert.ok(find(selected, `md-frame-tint-${d.key}`));
 });
 
-const SHOT = { alt: "shot", src: "shot.png", href: null, state: "ok", path: "data/herdr-inline-markdown/images/aa.png", width: 300, height: 100, error: null };
-const BADGE = { alt: "badge", src: "b.svg", href: "https://e.com", state: "ok", path: "data/herdr-inline-markdown/images/bb.svg", width: 80, height: 20, error: null };
+const SHOT = { alt: "shot", src: "shot.png", href: null, state: "ok", path: "data/potion/images/aa.png", width: 300, height: 100, error: null };
+const BADGE = { alt: "badge", src: "b.svg", href: "https://e.com", state: "ok", path: "data/potion/images/bb.svg", width: 80, height: 20, error: null };
 
 const BOXES = [{ x: 0, y: 0, w: 300, h: 100 }, { x: 308, y: 0, w: 80, h: 20 }];
 

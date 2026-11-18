@@ -5,11 +5,11 @@ import { state, calls, reset, openOverlay } from "./mocks/herdr.mjs";
 import { all, textOf } from "./mocks/element.mjs";
 import { makeCx, fire_timers, space, pane } from "./helpers.mjs";
 
-const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
-const { default: Beside, MEMORY } = await import("../mods/herdr-inline-markdown-beside/main.js");
+const { default: Markdown } = await import("../mods/potion/main.js");
+const { default: Beside, MEMORY } = await import("../mods/potion-beside/main.js");
 
 const json = path => JSON.parse(readFileSync(new URL(`../${path}`, import.meta.url), "utf8"));
-const DIALOG = json("mods/herdr-inline-markdown/mod.json").overlay;
+const DIALOG = json("mods/potion/mod.json").overlay;
 const FOLDER = "/home/user/notes";
 
 const fresh = (more = {}) => reset({
@@ -31,12 +31,12 @@ function start(View, props, first) {
 }
 
 test("mod.json lets the editor's pane take the keyboard", () => {
-  assert.equal(json("mods/herdr-inline-markdown/mod.json").focusable, true);
+  assert.equal(json("mods/potion/mod.json").focusable, true);
 });
 
 test("mod.json: the companion is placed nowhere, and mod.open shows it as a frameless popup of 2 px (1 would be the whole window)", () => {
-  assert.deepEqual(json("mods/herdr-inline-markdown-beside/mod.json"), {
-    place: "none", title: "Markdown beside", overlay: { kind: "popup", frame: "none", width: 2, height: 2 },
+  assert.deepEqual(json("mods/potion-beside/mod.json"), {
+    place: "none", title: "Potion beside", overlay: { kind: "popup", frame: "none", width: 2, height: 2 },
   });
 });
 
@@ -73,7 +73,7 @@ test("the companion does nothing while init runs, then in its first callback clo
   await fire_timers(cx);
   assert.deepEqual(calls.order, ["closeOverlay", "openOverlay"], "it goes first, as Herdr's own menus do before they open a dialog");
   assert.deepEqual(calls.closeOverlay, ["ov-3"]);
-  assert.deepEqual(calls.openOverlay, [{ mod: "herdr-inline-markdown", ...DIALOG, props: { action: "open", place: "pane" } }]);
+  assert.deepEqual(calls.openOverlay, [{ mod: "potion", ...DIALOG, props: { action: "open", place: "pane" } }]);
   const drawn = view.render(cx);
   assert.equal(textOf(drawn), "");
   assert.equal(all(drawn, n => n.kind !== "div" || Object.keys(n.handlers).length > 0).length, 0, "one empty div, nothing to see or click");
@@ -106,25 +106,25 @@ test("the dialog the companion opens is the picker, for a pane beside the focuse
   calls.run.length = 0;
   view.role.open(`${FOLDER}/plan.md`);
   assert.deepEqual(calls.closeOverlay.at(-1), "overlay-1");
-  assert.deepEqual(calls.run[0], ["pane.split", { direction: "right", pane: "p1", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/plan.md`, machine: null } }]);
+  assert.deepEqual(calls.run[0], ["pane.split", { direction: "right", pane: "p1", mod: "potion", props: { file: `${FOLDER}/plan.md`, machine: null } }]);
 });
 
 test("the beside picker, opened from a Markdown pane that is beside a terminal, opens another file in a new pane beside it", async () => {
-  const md = { pane: "pm", terminal: null, tab: "s1-tab", cwd: null, focused: true, mod: "herdr-inline-markdown" };
+  const md = { pane: "pm", terminal: null, tab: "s1-tab", cwd: null, focused: true, mod: "potion" };
   fresh({
     panes: [pane("p1", "s1-tab", FOLDER), md],
     focused: { space: "s1", tab: "s1-tab", pane: "pm", terminal: null, shown: null, agent: null, cwd: null },
-    shared: { "herdr-inline-markdown.panes": { pm: `:${FOLDER}/a.md` } },
+    shared: { "potion.panes": { pm: `:${FOLDER}/a.md` } },
   });
   const { view, cx } = start(Markdown, { overlay: "ov-8", action: "open", place: "pane" });
   await cx.settle();
   view.role.open(`${FOLDER}/b.md`);
-  assert.deepEqual(calls.run[0], ["pane.split", { direction: "right", pane: "pm", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/b.md`, machine: null } }]);
+  assert.deepEqual(calls.run[0], ["pane.split", { direction: "right", pane: "pm", mod: "potion", props: { file: `${FOLDER}/b.md`, machine: null } }]);
 });
 
-const MODS = { "herdr-inline-markdown": Markdown, "herdr-inline-markdown-beside": Beside };
-const KEYS = { "cmd-m": "herdr-inline-markdown", "cmd-shift-m": "herdr-inline-markdown-beside" };
-const OPEN_PICKER = "herdr-inline-markdown.picker";
+const MODS = { "potion": Markdown, "potion-beside": Beside };
+const KEYS = { "cmd-m": "potion", "cmd-shift-m": "potion-beside" };
+const OPEN_PICKER = "potion.picker";
 
 // Herdr's side of the overlays. A key is mod.open: it shows the mod as its mod.json overlay ("key-N"), or closes the
 // one it showed for that mod if that is still open. An overlay a mod opens ("overlay-N", as the mock numbers them)
@@ -160,7 +160,7 @@ function herdr() {
     },
     // The + menu row of the new-menu integration.
     async menu() {
-      openOverlay({ mod: "herdr-inline-markdown", ...DIALOG, props: { action: "open", place: "tab", space: "s1" } });
+      openOverlay({ mod: "potion", ...DIALOG, props: { action: "open", place: "tab", space: "s1" } });
       await settle();
     },
     pickers: () => [...open].filter(([, it]) => it.view.role?.constructor.name === "Picker").map(([id, it]) => [id, it.view.role.place]),
@@ -184,13 +184,13 @@ test("cmd-shift-m twice closes the picker even when the second press runs in a m
   const h = herdr();
   await h.press("cmd-shift-m");
   assert.deepEqual(h.pickers(), [["overlay-1", "pane"]]);
-  MODS["herdr-inline-markdown-beside"] = (await import("../mods/herdr-inline-markdown-beside/main.js?copy=2")).default;
+  MODS["potion-beside"] = (await import("../mods/potion-beside/main.js?copy=2")).default;
   try {
     await h.press("cmd-shift-m");
     assert.deepEqual(h.pickers(), []);
     assert.equal(calls.openOverlay.length, 1, "no second pane picker");
   } finally {
-    MODS["herdr-inline-markdown-beside"] = Beside;
+    MODS["potion-beside"] = Beside;
   }
 });
 

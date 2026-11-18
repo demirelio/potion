@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Draws mermaid sources to PNG with one headless Chrome for the whole batch (the herdr-inline-markdown mod runs this).
+// Draws mermaid sources to PNG with one headless Chrome for the whole batch (the Potion mod runs this).
 //
 //   node render.mjs --config <config.json> --outdir <dir> [--scale 2] [--background transparent] [--jobs 4] <dir>/<key>.mmd ...
 //

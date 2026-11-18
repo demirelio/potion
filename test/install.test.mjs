@@ -11,8 +11,8 @@ import { fileURLToPath } from "node:url";
 // (HERDR_APP_HOME, HERDR_MERMAID_HOME, XDG_STATE_HOME): nothing here touches a real install.
 const REPO = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const SCRIPT = join(REPO, "install.sh");
-const MOD = join(REPO, "mods/herdr-inline-markdown");
-const MODS = ["herdr-inline-markdown", "herdr-inline-markdown-beside"];
+const MOD = join(REPO, "mods/potion");
+const MODS = ["potion", "potion-beside"];
 
 const tmp = mkdtempSync(join(tmpdir(), "install-"));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -32,9 +32,9 @@ function scratch(name) {
 }
 const env = where => ({ ...process.env, HERDR_APP_HOME: where.app, HERDR_MERMAID_HOME: where.mermaid, XDG_STATE_HOME: where.state });
 const bash = (where, body) => spawnSync("bash", ["-c", `source "${SCRIPT}"; ${body}`], { env: env(where), encoding: "utf8" });
-const installed = (where, name = "herdr-inline-markdown") => join(where.app, "mods", name);
+const installed = (where, name = "potion") => join(where.app, "mods", name);
 const list = dir => readdirSync(dir).sort();
-const backups = where => join(where.state, "herdr-inline-markdown/backups");
+const backups = where => join(where.state, "potion/backups");
 
 function loggingMv(name) {
   const bin = join(tmp, name, "bin"), log = join(tmp, name, "mv.log");
@@ -61,13 +61,13 @@ test("install_mod removes files the mod no longer has, keeps what Herdr writes, 
   const where = scratch("replace");
   mkdirSync(installed(where), { recursive: true });
   for (const name of ["old.js", "gpui-kit.d.ts", "jsconfig.json", "main.js.error"]) writeFileSync(join(installed(where), name), "x");
-  const run = bash(where, "install_mod herdr-inline-markdown");
+  const run = bash(where, "install_mod potion");
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(list(installed(where)), [...list(MOD), "gpui-kit.d.ts", "jsconfig.json", "main.js.error"].sort());
   const [stamp, ...more] = readdirSync(backups(where));
   assert.equal(more.length, 0);
-  assert.ok(existsSync(join(backups(where), stamp, "herdr-inline-markdown/old.js")), "the old copy is kept");
-  assert.match(run.stdout, /^mod: the installed copy of herdr-inline-markdown differed; saved it under .*\/herdr-inline-markdown$/m);
+  assert.ok(existsSync(join(backups(where), stamp, "potion/old.js")), "the old copy is kept");
+  assert.match(run.stdout, /^mod: the installed copy of potion differed; saved it under .*\/potion$/m);
 });
 
 test("install_mods saves every replaced copy in one backup folder, each under its name", () => {
@@ -113,7 +113,7 @@ test("install.sh --no-mermaid installs a copy of each mod's folder and nothing e
   for (const name of MODS) assert.deepEqual(list(installed(where, name)), list(join(REPO, "mods", name)), name);
   assert.equal(readFileSync(join(installed(where), "main.js"), "utf8"), readFileSync(join(MOD, "main.js"), "utf8"));
   assert.equal(existsSync(where.state), false, "nothing was there to back up");
-  assert.match(run.stdout, /^mod: herdr-inline-markdown installed in .*\nmod: herdr-inline-markdown-beside installed in /m);
+  assert.match(run.stdout, /^mod: potion installed in .*\nmod: potion-beside installed in /m);
   assert.match(run.stdout, /mermaid: skipped \(--no-mermaid\)/);
   assert.equal(existsSync(where.mermaid), false);
 });
@@ -146,7 +146,7 @@ const KEYS = `{
   }
 }
 `;
-const M = "mod.open:herdr-inline-markdown", BESIDE = "mod.open:herdr-inline-markdown-beside";
+const M = "mod.open:potion", BESIDE = "mod.open:potion-beside";
 const keysOf = where => join(where.app, "keys.json");
 function withKeys(name, text = KEYS) {
   const where = scratch(name);

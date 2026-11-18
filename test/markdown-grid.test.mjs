@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parse, reparse } from "../mods/herdr-inline-markdown/blocks.js";
-import { POINT } from "../mods/herdr-inline-markdown/comments.js";
-import { GRID, columnWidths, dashWidth } from "../mods/herdr-inline-markdown/geometry.js";
-import { cellMarkdown, drawsGrid, gridOf } from "../mods/herdr-inline-markdown/grid.js";
-import { tableOf } from "../mods/herdr-inline-markdown/tables.js";
+import { parse, reparse } from "../mods/potion/blocks.js";
+import { POINT } from "../mods/potion/comments.js";
+import { GRID, columnWidths, dashWidth } from "../mods/potion/geometry.js";
+import { cellMarkdown, drawsGrid, gridOf } from "../mods/potion/grid.js";
+import { tableOf } from "../mods/potion/tables.js";
 
 const LIGHT = "#aa000055", DEEP = "#bb0000";
 const head = { row: 21, advance: 7 }, body = { row: 21, advance: 6.5 };

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { sniffImage } from "../mods/herdr-inline-markdown/imagesize.js";
+import { sniffImage } from "../mods/potion/imagesize.js";
 
 import { ascii, u32le, bytes, png, gif, bmp, riff, vp8, vp8l, vp8x, segment, sof, jpeg } from "./pictures.mjs";
 

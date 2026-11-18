@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { applySplice, cellCount, parse, reparse } from "../mods/herdr-inline-markdown/blocks.js";
-import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { cellText, insertRow, rowAt, tableOf, writeCell, writeDashes } from "../mods/herdr-inline-markdown/tables.js";
+import { applySplice, cellCount, parse, reparse } from "../mods/potion/blocks.js";
+import { parseInline } from "../mods/potion/inline.js";
+import { cellText, insertRow, rowAt, tableOf, writeCell, writeDashes } from "../mods/potion/tables.js";
 import { originals } from "./markdown-corpus.mjs";
 
 const tableIn = text => {

@@ -13,10 +13,10 @@
 -import { panes, props, run, theme, home } from "herdr";
 +import { panes, props, run, theme, home, shared, setShared } from "herdr";
  
-+// A Markdown pane (herdr-inline-markdown) publishes { name, mode } under its pane id, and switches between its page and its source
++// A Markdown pane (potion) publishes { name, mode } under its pane id, and switches between its page and its source
 +// when the toggle raises the counter under its pane. Mods can't import each other, so the names are repeated there.
-+const MD_MOD = "herdr-inline-markdown", MD_HEADS = "herdr-inline-markdown.heads", MD_TOGGLE = "herdr-inline-markdown.toggle";
-+const MD_ICON = "mods/herdr-inline-markdown/file-markdown.svg";
++const MD_MOD = "potion", MD_HEADS = "potion.heads", MD_TOGGLE = "potion.toggle";
++const MD_ICON = "mods/potion/file-markdown.svg";
 +
 +function markdownHead(p) {
 +  return p.mod === MD_MOD ? shared(MD_HEADS)?.[p.pane] ?? null : null;
@@ -44,7 +44,7 @@
 +        cx.stop_propagation();
 +        setShared(MD_TOGGLE, { pane, n: (shared(MD_TOGGLE)?.n ?? 0) + 1 });
 +      })
-+      .child(svg("mods/herdr-inline-markdown/code.svg").size(12).flex_none())
++      .child(svg("mods/potion/code.svg").size(12).flex_none())
 +      .child("Markdown");
 +  }
 +

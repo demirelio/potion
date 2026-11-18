@@ -4,7 +4,7 @@
 import { spaces, panes, focused, machines, shared, setShared, run } from "herdr";
 import { basename, fileKey, remember } from "./lib.js";
 
-export const MOD = "herdr-inline-markdown", PANES = "herdr-inline-markdown.panes", RECENT = "herdr-inline-markdown.recent";
+export const MOD = "potion", PANES = "potion.panes", RECENT = "potion.recent";
 const RECENT_MAX = 30;
 
 // place "pane" focuses the pane already showing the file in that tab, else splits right of `pane` (default: the focused

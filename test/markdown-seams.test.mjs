@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { copyOf, joinRuns, pasteInto, pasteParagraphs, splitRuns } from "../mods/herdr-inline-markdown/seams.js";
-import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { parse } from "../mods/herdr-inline-markdown/blocks.js";
-import { mend } from "../mods/herdr-inline-markdown/mend.js";
-import { MARK_BITS, UNIT, modelOf } from "../mods/herdr-inline-markdown/restyle.js";
+import { copyOf, joinRuns, pasteInto, pasteParagraphs, splitRuns } from "../mods/potion/seams.js";
+import { parseInline } from "../mods/potion/inline.js";
+import { parse } from "../mods/potion/blocks.js";
+import { mend } from "../mods/potion/mend.js";
+import { MARK_BITS, UNIT, modelOf } from "../mods/potion/restyle.js";
 
 const DEFS = parse("x\n\n[d]: https://e.com \"Docs\"\n").defs;
 const halves = out => [out.value.slice(0, out.start), out.value.slice(out.end)];

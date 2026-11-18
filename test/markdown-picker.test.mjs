@@ -6,9 +6,9 @@ import { state, calls, reset } from "./mocks/herdr.mjs";
 import { find, all, ids, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, fire_timers, space, must } from "./helpers.mjs";
 
-const { Picker } = await import("../mods/herdr-inline-markdown/picker.js");
-const { fileKey } = await import("../mods/herdr-inline-markdown/lib.js");
-const { FIND_SCRIPT } = await import("../mods/herdr-inline-markdown/lib.js");
+const { Picker } = await import("../mods/potion/picker.js");
+const { fileKey } = await import("../mods/potion/lib.js");
+const { FIND_SCRIPT } = await import("../mods/potion/lib.js");
 
 const FOLDER = "/home/user/Projects/herdr";
 const NUL = list => list.map(p => `${p}\0`).join("");
@@ -98,7 +98,7 @@ test("a closed dialog does not grab the focus when the timer fires", async () =>
   assert.equal(cx.timers[0].cancelled, true);
 });
 
-const OPEN_PICKER = "herdr-inline-markdown.picker";
+const OPEN_PICKER = "potion.picker";
 
 test("one picker at a time: a dialog names its overlay the open picker, and closes the one named before it", async () => {
   state.shared[OPEN_PICKER] = "ov-0";
@@ -218,18 +218,18 @@ test("the footer's key hint says where Enter opens the file: beside for a pane, 
 const FOCUS = { space: "s1", tab: "s1-tab", terminal: null, shown: null, agent: null };
 const focusPane = (pane, cwd = null) => { state.focused = { ...FOCUS, pane, cwd }; };
 const termPane = (pane, cwd) => ({ pane, terminal: `t-${pane}`, tab: "s1-tab", cwd, focused: true });
-const mdPaneIn = pane => ({ pane, terminal: null, tab: "s1-tab", cwd: null, focused: true, mod: "herdr-inline-markdown" });
+const mdPaneIn = pane => ({ pane, terminal: null, tab: "s1-tab", cwd: null, focused: true, mod: "potion" });
 const lookedIn = () => calls.exec.find(c => c.command === "git").options;
 
 test("no folder: the folder of the Markdown file the focused pane shows, on that file's machine", async () => {
   state.panes = [termPane("p1", "/home/user/elsewhere"), mdPaneIn("p2")];
-  state.shared["herdr-inline-markdown.panes"] = { p2: ":/home/user/notes/deep/plan.md" };
+  state.shared["potion.panes"] = { p2: ":/home/user/notes/deep/plan.md" };
   focusPane("p2");
   const { tree } = await mount({ folder: null });
   assert.deepEqual([lookedIn().cwd, lookedIn().on], ["/home/user/notes/deep", null]);
   assert.ok(textOf(must(tree(), "mdp-footer")).endsWith("~/notes/deep"));
 
-  state.shared["herdr-inline-markdown.panes"] = { p2: "devbox:/home/dev/Work/plan.md" };
+  state.shared["potion.panes"] = { p2: "devbox:/home/dev/Work/plan.md" };
   state.exec = fakeExec({ git: ["a.md"], home: "/home/dev" });
   calls.exec.length = 0;
   const remote = await mount({ folder: null });
@@ -239,7 +239,7 @@ test("no folder: the folder of the Markdown file the focused pane shows, on that
 
 test("no folder: a file at the top of the file system is looked at in /", async () => {
   state.panes = [mdPaneIn("p2")];
-  state.shared["herdr-inline-markdown.panes"] = { p2: ":/README.md" };
+  state.shared["potion.panes"] = { p2: ":/README.md" };
   focusPane("p2");
   await mount({ folder: null });
   assert.equal(lookedIn().cwd, "/");
@@ -249,12 +249,12 @@ test("no folder: a registry entry that is not an absolute path is no file; the p
   state.panes = [mdPaneIn("p2")];
   focusPane("p2", "/home/user/from-focus");
   for (const key of ["devbox:relative/a.md", "garbage", ":", "", 7]) {
-    state.shared["herdr-inline-markdown.panes"] = { p2: key };
+    state.shared["potion.panes"] = { p2: key };
     calls.exec.length = 0;
     await mount({ folder: null });
     assert.equal(lookedIn().cwd, "/home/user/from-focus", JSON.stringify(key));
   }
-  state.shared["herdr-inline-markdown.panes"] = {};
+  state.shared["potion.panes"] = {};
   focusPane("p2", null);
   calls.exec.length = 0;
   await mount({ folder: null });
@@ -274,7 +274,7 @@ test("no folder: a Markdown pane the registry does not know yet is not a file; a
 
 test("no folder: a registry entry on a pane that is not a Markdown pane is not read", async () => {
   state.panes = [termPane("p1", "/home/user/pane-cwd")];
-  state.shared["herdr-inline-markdown.panes"] = { p1: ":/home/user/notes/plan.md" };
+  state.shared["potion.panes"] = { p1: ":/home/user/notes/plan.md" };
   focusPane("p1");
   await mount({ folder: null });
   assert.equal(lookedIn().cwd, "/home/user/pane-cwd");
@@ -299,7 +299,7 @@ test("no folder and no space at all: this computer's home folder", async () => {
 
 test("a folder in the props wins over the focused Markdown pane, with the machine the props give", async () => {
   state.panes = [mdPaneIn("p2")];
-  state.shared["herdr-inline-markdown.panes"] = { p2: "devbox:/home/dev/Work/plan.md" };
+  state.shared["potion.panes"] = { p2: "devbox:/home/dev/Work/plan.md" };
   focusPane("p2", "/home/user/focus-cwd");
   await mount({ folder: "/home/user/given" });
   assert.deepEqual([lookedIn().cwd, lookedIn().on], ["/home/user/given", null], "no machine in the props: this computer");
@@ -310,7 +310,7 @@ test("a folder in the props wins over the focused Markdown pane, with the machin
 });
 
 test("recent files of this machine come first, inside the folder relative to it, outside with ~, once each", async () => {
-  state.shared["herdr-inline-markdown.recent"] = [
+  state.shared["potion.recent"] = [
     { machine: null, path: "/home/user/notes/todo.md" },
     { machine: "devbox", path: `${FOLDER}/other-machine.md` },
     { machine: null, path: `${FOLDER}/docs/plan.md` },
@@ -326,7 +326,7 @@ test("recent files of this machine come first, inside the folder relative to it,
 });
 
 test("recent files show while the folder is still being listed", async () => {
-  state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
+  state.shared["potion.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
   state.exec = () => new Promise(() => {});
   const { tree } = await mount({ settle: false });
   assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0"]);
@@ -334,12 +334,12 @@ test("recent files show while the folder is still being listed", async () => {
 });
 
 test("a file already open in a pane of the focused tab says open, and the highlight starts on the first file that is not", async () => {
-  state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }, { machine: null, path: "/home/user/notes/todo.md" }];
-  state.shared["herdr-inline-markdown.panes"] = { pm: fileKey(null, `${FOLDER}/docs/plan.md`), elsewhere: fileKey(null, "/home/user/notes/todo.md") };
+  state.shared["potion.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }, { machine: null, path: "/home/user/notes/todo.md" }];
+  state.shared["potion.panes"] = { pm: fileKey(null, `${FOLDER}/docs/plan.md`), elsewhere: fileKey(null, "/home/user/notes/todo.md") };
   state.panes = [
     { pane: "p1", terminal: "t-p1", tab: "tb1", cwd: FOLDER, focused: false },
-    { pane: "pm", terminal: null, tab: "tb1", cwd: null, focused: true, mod: "herdr-inline-markdown" },
-    { pane: "elsewhere", terminal: null, tab: "tb2", cwd: null, focused: false, mod: "herdr-inline-markdown" },
+    { pane: "pm", terminal: null, tab: "tb1", cwd: null, focused: true, mod: "potion" },
+    { pane: "elsewhere", terminal: null, tab: "tb2", cwd: null, focused: false, mod: "potion" },
   ];
   state.focused = { space: "s1", tab: "tb1", pane: "pm", terminal: null, shown: null, agent: null, cwd: null };
   const { tree } = await mount({ props: { place: "pane" } });
@@ -349,9 +349,9 @@ test("a file already open in a pane of the focused tab says open, and the highli
 });
 
 test("with every listed file already open in the tab, the highlight stays on the first file", async () => {
-  state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
-  state.shared["herdr-inline-markdown.panes"] = { pm: fileKey(null, `${FOLDER}/docs/plan.md`) };
-  state.panes = [{ pane: "pm", terminal: null, tab: "tb1", cwd: null, focused: true, mod: "herdr-inline-markdown" }];
+  state.shared["potion.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
+  state.shared["potion.panes"] = { pm: fileKey(null, `${FOLDER}/docs/plan.md`) };
+  state.panes = [{ pane: "pm", terminal: null, tab: "tb1", cwd: null, focused: true, mod: "potion" }];
   state.focused = { space: "s1", tab: "tb1", pane: "pm", terminal: null, shown: null, agent: null, cwd: null };
   state.exec = async () => ({ code: 0, stdout: "", stderr: "" });
   const { tree } = await mount();
@@ -403,7 +403,7 @@ test("no Create row when the query names a listed file (any case), or has no usa
 });
 
 test("a recent file outside the folder does not count as the listed file a Create name would clash with", async () => {
-  state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: "/home/user/x.md" }];
+  state.shared["potion.recent"] = [{ machine: null, path: "/home/user/x.md" }];
   const { view, tree } = await mount();
   type(view, "~/x.md");
   assert.equal(row(tree(), "mdp-file-0"), "x.md ~ recent");
@@ -453,9 +453,9 @@ test("Enter opens the highlighted file: the dialog closes first, then a Markdown
   const { view, cx } = await mount();
   view.input.submit(cx);
   assert.deepEqual(calls.closeOverlay, ["ov-1"]);
-  assert.deepEqual(calls.run, [["tab.new", { name: "README.md", space: "s1", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/README.md`, machine: null } }]]);
+  assert.deepEqual(calls.run, [["tab.new", { name: "README.md", space: "s1", mod: "potion", props: { file: `${FOLDER}/README.md`, machine: null } }]]);
   assert.deepEqual(calls.order, ["closeOverlay", "run", "setShared"]);
-  assert.equal(calls.setShared[0][0], "herdr-inline-markdown.recent");
+  assert.equal(calls.setShared[0][0], "potion.recent");
   assert.deepEqual(calls.setShared[0][1], [{ machine: null, path: `${FOLDER}/README.md` }]);
   assert.equal(calls.writeTextFile.length, 0, "opening writes nothing");
 });
@@ -475,8 +475,8 @@ test("Enter after moving down opens that row; a click opens the row clicked", as
 });
 
 test("a file already open in a tab of its own is switched to, not opened twice", async () => {
-  state.shared["herdr-inline-markdown.panes"] = { p1: `:${FOLDER}/README.md` };
-  state.panes = [{ pane: "p1", terminal: null, tab: "s1-tab", cwd: null, focused: false, mod: "herdr-inline-markdown" }];
+  state.shared["potion.panes"] = { p1: `:${FOLDER}/README.md` };
+  state.panes = [{ pane: "p1", terminal: null, tab: "s1-tab", cwd: null, focused: false, mod: "potion" }];
   const { view, cx } = await mount({ props: { place: "tab" } });
   view.input.submit(cx);
   assert.deepEqual(calls.run, [["space.select", { id: "s1" }], ["tab.select", { id: "s1-tab" }]]);
@@ -508,9 +508,9 @@ test("place pane: Enter closes the dialog, then opens the file in a pane to the 
   const { view, cx } = await mount({ props: { place: "pane" } });
   view.input.submit(cx);
   assert.deepEqual(calls.closeOverlay, ["ov-1"]);
-  assert.deepEqual(calls.run, [["pane.split", { direction: "right", pane: "p2", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/README.md`, machine: null } }]]);
+  assert.deepEqual(calls.run, [["pane.split", { direction: "right", pane: "p2", mod: "potion", props: { file: `${FOLDER}/README.md`, machine: null } }]]);
   assert.deepEqual(calls.order, ["closeOverlay", "run", "setShared"]);
-  assert.deepEqual(calls.setShared[0], ["herdr-inline-markdown.recent", [{ machine: null, path: `${FOLDER}/README.md` }]]);
+  assert.deepEqual(calls.setShared[0], ["potion.recent", [{ machine: null, path: `${FOLDER}/README.md` }]]);
 });
 
 test("place pane: the anchor is the pane focused when the dialog opened, not the one focused when a file is chosen", async () => {
@@ -524,7 +524,7 @@ test("place pane: the anchor is the pane focused when the dialog opened, not the
 
 test("place pane: a click on a row opens that file beside the pane too, and a file the tab shows already gets the focus", async () => {
   state.panes = [termPane("p1", FOLDER), mdPaneIn("p2")];
-  state.shared["herdr-inline-markdown.panes"] = { p2: `:${FOLDER}/docs/plan.md` };
+  state.shared["potion.panes"] = { p2: `:${FOLDER}/docs/plan.md` };
   focusPane("p1", FOLDER);
   const { tree } = await mount({ props: { place: "pane" } });
   fire(must(tree(), "mdp-file-1"), "on_click", {}, makeCx());
@@ -548,14 +548,14 @@ test("place pane: a note made here opens beside the pane, and so does a listed f
   const { tree } = await mount({ props: { place: "pane" } });
   fire(must(tree(), "mdp-new"), "on_click", {}, makeCx());
   await new Promise(done => setImmediate(done));
-  assert.deepEqual(calls.run, [["pane.split", { direction: "right", pane: "p1", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/untitled.md`, machine: null } }]]);
+  assert.deepEqual(calls.run, [["pane.split", { direction: "right", pane: "p1", mod: "potion", props: { file: `${FOLDER}/untitled.md`, machine: null } }]]);
 
   reset({ spaces: [space("s1", "herdr", { folder: FOLDER, active: true })], exec: fakeExec({ git: ["a.md"], home: "/home/dev" }) });
   state.panes = [termPane("p1", "/home/dev/Work")];
   focusPane("p1");
   const remote = await mount({ folder: "/home/dev/Work", machine: "devbox", props: { place: "pane" } });
   remote.view.input.submit(remote.cx);
-  assert.deepEqual(calls.run, [["pane.split", { direction: "right", pane: "p1", mod: "herdr-inline-markdown", props: { file: "/home/dev/Work/a.md", machine: "devbox" } }]]);
+  assert.deepEqual(calls.run, [["pane.split", { direction: "right", pane: "p1", mod: "potion", props: { file: "/home/dev/Work/a.md", machine: "devbox" } }]]);
 });
 
 test("place tab never splits, whatever pane is focused", async () => {
@@ -644,7 +644,7 @@ test("New note makes the first free untitled name in the folder's top level, clo
   await cx.settle();
   assert.deepEqual(calls.writeTextFile, [{ path: `${FOLDER}/untitled-3.md`, text: "", expected: null }]);
   assert.deepEqual(calls.order, ["write", "closeOverlay", "run", "setShared"]);
-  assert.deepEqual(calls.run[0][1], { name: "untitled-3.md", space: "s1", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/untitled-3.md`, machine: null } });
+  assert.deepEqual(calls.run[0][1], { name: "untitled-3.md", space: "s1", mod: "potion", props: { file: `${FOLDER}/untitled-3.md`, machine: null } });
   assert.equal(calls.exec.some(c => c.command === "mkdir"), false, "a name without folders needs no mkdir");
 });
 
@@ -769,12 +769,12 @@ test("a folder on another machine: asked there, files open with the machine, cre
 
   type(view, "readme");
   view.input.submit(cx);
-  assert.deepEqual(calls.run, [["tab.new", { name: "README.md", space: "s1", mod: "herdr-inline-markdown", props: { file: "/home/dev/Work/README.md", machine: "devbox" } }]]);
-  assert.deepEqual(calls.setShared.at(-1), ["herdr-inline-markdown.recent", [{ machine: "devbox", path: "/home/dev/Work/README.md" }]]);
+  assert.deepEqual(calls.run, [["tab.new", { name: "README.md", space: "s1", mod: "potion", props: { file: "/home/dev/Work/README.md", machine: "devbox" } }]]);
+  assert.deepEqual(calls.setShared.at(-1), ["potion.recent", [{ machine: "devbox", path: "/home/dev/Work/README.md" }]]);
 });
 
 test("another machine with no folder given: its home is the folder, and recent files there come first", async () => {
-  state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: "/home/user/mine.md" }, { machine: "devbox", path: "/home/dev/Work/old.md" }];
+  state.shared["potion.recent"] = [{ machine: null, path: "/home/user/mine.md" }, { machine: "devbox", path: "/home/dev/Work/old.md" }];
   state.exec = fakeExec({ git: ["a.md"], home: "/home/dev" });
   const { tree } = await mount({ folder: null, machine: "devbox" });
   assert.equal(calls.exec[0].args[1], 'printf %s "$HOME"');
@@ -834,7 +834,7 @@ test("only the rows that fit are drawn; the keys and the wheel move the window",
 test("the status line takes one of the rows", async () => {
   let finish;
   state.exec = () => new Promise(resolve => { finish = resolve; });
-  state.shared["herdr-inline-markdown.recent"] = Array.from({ length: 6 }, (_, i) => ({ machine: null, path: `${FOLDER}/r${i}.md` }));
+  state.shared["potion.recent"] = Array.from({ length: 6 }, (_, i) => ({ machine: null, path: `${FOLDER}/r${i}.md` }));
   const { cx, tree } = await mount({ settle: false });
   fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 32 * 4 }, cx);
   assert.equal(rowIds(tree()).length, 3, "four rows of height, one of them is 'Looking for markdown files…'");
@@ -846,7 +846,7 @@ test("the status line takes one of the rows", async () => {
 });
 
 test("every element with a handler has an id, and ids are unique", async () => {
-  state.shared["herdr-inline-markdown.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
+  state.shared["potion.recent"] = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
   const { view, tree } = await mount();
   for (const q of ["", "plan", "zzz", "../x"]) {
     type(view, q);

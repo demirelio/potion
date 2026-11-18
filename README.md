@@ -1,8 +1,8 @@
-# herdr-inline-markdown
+# Potion
 
-A Markdown reader and editor for the Herdr app, with mermaid diagrams and pictures.
+Potion is a Markdown reader and editor for the Herdr app, with mermaid diagrams and pictures. It is a Herdr mod.
 
-A **Markdown pane** shows one markdown file, as a rendered page you edit in place or as its source, and saves what
+A **Markdown pane** (Potion's pane) shows one markdown file, as a rendered page you edit in place or as its source, and saves what
 you type. It opens beside your terminals in the current tab, or in a tab of its own. It is meant for reading the
 plans an agent writes into a file as they appear, and for writing notes next to your terminals.
 
@@ -10,8 +10,8 @@ The package holds:
 
 | Path | What it is |
 |---|---|
-| `mods/herdr-inline-markdown/` | The mod: the Markdown pane, the file picker and the right-click popup. Plain JavaScript, no build step |
-| `mods/herdr-inline-markdown-beside/` | A small second mod, behind `cmd-shift-m`: it opens the picker for a pane beside the focused one (see [Keys](#keys)) |
+| `mods/potion/` | The mod: the Markdown pane, the file picker and the right-click popup. Plain JavaScript, no build step |
+| `mods/potion-beside/` | A small second mod, behind `cmd-shift-m`: it opens the picker for a pane beside the focused one (see [Keys](#keys)) |
 | `keys.json` | The two keys the mods expect; `install.sh` merges them into yours |
 | `tools/mermaid/` | The diagram renderer: mermaid-cli driving a headless Chrome. Not a Herdr mod; `install.sh` puts it where the mod looks |
 | `tools/merge-keys.mjs` | What `install.sh` merges `keys.json` with |
@@ -42,11 +42,11 @@ The package holds:
 ./install.sh --replace-keys  # also take over cmd-m / cmd-shift-m when you bound them to something else
 ```
 
-The script copies `mods/herdr-inline-markdown` and `mods/herdr-inline-markdown-beside` into
+The script copies `mods/potion` and `mods/potion-beside` into
 `${HERDR_APP_HOME:-~/.config/herdr-app}/mods/`, merges `keys.json` into the `keys.json` there (see [Keys](#keys)),
-and installs the renderer in `~/.local/share/herdr-inline-markdown/mermaid` (`npm ci` there, then the headless
+and installs the renderer in `~/.local/share/potion/mermaid` (`npm ci` there, then the headless
 browser; the mod reads that exact path). It can be run again at any time: files of an older copy of a mod that are
-gone are removed, a copy that differed is saved under `~/.local/state/herdr-inline-markdown/backups/` first, and
+gone are removed, a copy that differed is saved under `~/.local/state/potion/backups/` first, and
 `npm ci` only runs again when `tools/mermaid/package-lock.json` changed. A first install puts each mod folder in
 place whole, so Herdr never sees one without its `mod.json`. Herdr reloads mods and `keys.json` as their files
 change, so there is nothing to restart.
@@ -55,25 +55,25 @@ change, so there is nothing to restart.
 the default place, so the second one is for trying an install somewhere else.
 
 The mods place themselves nowhere: a file opens from the keys, or from Herdr's `tab.new` or `pane.split` command
-with `mod: "herdr-inline-markdown"` and `props: { file: "/absolute/path/note.md" }` (`herdr-app commands` lists
+with `mod: "potion"` and `props: { file: "/absolute/path/note.md" }` (`herdr-app commands` lists
 the arguments), or from the [integrations](integrations/README.md).
 
 ### Keys
 
 | Keys | Action in `keys.json` | What it does |
 |---|---|---|
-| `cmd-m` | `mod.open:herdr-inline-markdown` | Opens the file picker; the chosen file opens in a new tab |
-| `cmd-shift-m` | `mod.open:herdr-inline-markdown-beside` | Opens the same picker; the chosen file opens beside the focused pane |
+| `cmd-m` | `mod.open:potion` | Opens the file picker; the chosen file opens in a new tab |
+| `cmd-shift-m` | `mod.open:potion-beside` | Opens the same picker; the chosen file opens beside the focused pane |
 
 Herdr's `mod.open` shows a mod as the overlay its `mod.json` describes, and a mod opened that way gets no props but
 the overlay's id, so it can't tell which key opened it. That is why there are two mods. `cmd-m` opens the Markdown
 mod itself, which takes an overlay with nothing else in its props as the picker for a new tab. `cmd-shift-m` opens
-`herdr-inline-markdown-beside`, an empty 2 px popup that, once it has started, closes itself and opens the Markdown
+`potion-beside`, an empty 2 px popup that, once it has started, closes itself and opens the Markdown
 mod's picker with `place: "pane"`. Both pickers look in the folder of the focused pane, in the active space.
 
 There is one picker at a time. A picker that opens closes any other still open (from the other key or the `+`
 menu), and with a picker open `cmd-shift-m` closes it, as a second `cmd-m` closes the one `cmd-m` opened. The open
-picker is named in the shared key `herdr-inline-markdown.picker`.
+picker is named in the shared key `potion.picker`.
 
 `install.sh` merges the keys the way Herdr asks a shared mod's `keys.json` to be merged: a key your `keys.json`
 lacks is added at the end of its section; a key that already has the action stays; a key you bound to something
@@ -536,7 +536,7 @@ by `install.sh`. Without it the footer says "Diagrams need the mermaid renderer:
 a code block; without Node.js it says "Diagrams need Node.js".
 
 Each diagram is drawn once per text, theme and renderer version, and the picture is kept in
-`~/.config/herdr-app/data/herdr-inline-markdown/diagrams/` (`.mmd` source, `.png`, `.json` result; the renderer deletes
+`~/.config/herdr-app/data/potion/diagrams/` (`.mmd` source, `.png`, `.json` result; the renderer deletes
 entries older than 45 days, and the folder can be emptied by hand at any time). The diagrams of a document are drawn
 together, one Chrome start per batch. A diagram with a syntax error shows mermaid's message in its place, over the
 last good picture if there was one.
@@ -639,7 +639,7 @@ too (see **Pictures in text** below).
   not again.
 - **Errors:** a picture that can't be shown is a box with its name and the reason: not found, not a picture, too big,
   the download failed. A box says Loading picture… while one loads.
-- **Cache:** every picture is copied into `~/.config/herdr-app/data/herdr-inline-markdown/images/` under a name made
+- **Cache:** every picture is copied into `~/.config/herdr-app/data/potion/images/` under a name made
   from its bytes, because Herdr draws only pictures from its app folder. Once each time Herdr starts, files there
   older than 45 days are deleted, and the folder can be emptied by hand at any time.
 
@@ -650,7 +650,7 @@ each file's last state (Reading or Markdown) and the folder the last picture cam
 
 [`integrations/`](integrations/README.md) has one folder per optional integration, each with a patch and a README:
 the tab bar (Markdown tab icon and name), the file panel (click a `.md` file), the pane header (file name and
-Markdown toggle) and the `+` menu (a Markdown row). They patch clones of Herdr's shipped mods, because Herdr replaces
+Markdown toggle) and the `+` menu (a Potion row). They patch clones of Herdr's shipped mods, because Herdr replaces
 its own mods on every start. The keys need none of them.
 
 ## Tests
@@ -671,11 +671,10 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
 
 ## Before open-sourcing
 
-- **Rename the mod.** `herdr-inline-markdown` is a personal prefix. It names the two mod folders, the shared-state keys
-  (`herdr-inline-markdown.panes`, `.recent`, `.modes`, `.heads`, `.toggle`, `.picker`, `.imageFolder`), the cache folder (`data/herdr-inline-markdown`), the key
-  contexts (`MdText5`...), the asset paths in the mod, `keys.json`, `install.sh`, the patches and the tests. The integrations also assume the
-  clone names `my-tabs`, `my-files`, `my-pane` and `my-new-menu`. Rename them together, with one search and replace
-  and `npm test`.
+- **Publish on herdr.dev.** Herdr lists a public GitHub repo with the topic `herdr-mod` at herdr.dev/mods within the
+  hour. The repo needs a `RECIPE.md` (the brief another agent builds the mod from: what you see, how it behaves, what
+  it is built from, what to watch out for) and a `preview.png` screenshot; the folder layout (`mods/<name>/` and
+  `keys.json`) is already the one Herdr expects.
 - **Choose a license** and add `LICENSE`. `package.json` is `"private": true` and carries no author or license.
   [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists the bundled icons and the test fixtures taken from the
   CommonMark and GFM specs, which are CC BY-SA 4.0: they are test data only, but decide whether that fits the license

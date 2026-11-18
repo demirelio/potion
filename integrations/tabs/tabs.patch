@@ -4,10 +4,10 @@
        const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
 -      const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
 +      const inTab = panes().filter(p => p.tab === c.id);
-+      const markdown = inTab.length > 0 && inTab.every(p => p.mod === "herdr-inline-markdown");
-+      const name = /^tb\d+$/.test(c.name) ? markdown ? "Markdown" : program?.name ?? "Terminal" : c.name;
++      const markdown = inTab.length > 0 && inTab.every(p => p.mod === "potion");
++      const name = /^tb\d+$/.test(c.name) ? markdown ? "Potion" : program?.name ?? "Terminal" : c.name;
        return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
 @@ -67,2 +69,3 @@
          .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
-+        .when(markdown, el => el.child(image("mods/herdr-inline-markdown/file-markdown.svg").size(14)))
++        .when(markdown, el => el.child(image("mods/potion/file-markdown.svg").size(14)))
          .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))

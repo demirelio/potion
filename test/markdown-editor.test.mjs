@@ -7,26 +7,26 @@ import { all, find, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, fire_timers, space, must } from "./helpers.mjs";
 import { png } from "./pictures.mjs";
 
-const { Editor } = await import("../mods/herdr-inline-markdown/editor.js");
-const { default: Markdown } = await import("../mods/herdr-inline-markdown/main.js");
-const { stats, fileKey, diagramKey, mermaidConfig, sharpName, picturesOf } = await import("../mods/herdr-inline-markdown/lib.js");
-const { parseInline } = await import("../mods/herdr-inline-markdown/inline.js");
-const { owners, STYLES, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, BOX, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
+const { Editor } = await import("../mods/potion/editor.js");
+const { default: Markdown } = await import("../mods/potion/main.js");
+const { stats, fileKey, diagramKey, mermaidConfig, sharpName, picturesOf } = await import("../mods/potion/lib.js");
+const { parseInline } = await import("../mods/potion/inline.js");
+const { owners, STYLES, INDENT, MARKER_W, QUOTE_BAR, QUOTE_PAD, BOX, spaceBefore } = await import("../mods/potion/page.js");
 const { theme } = await import("./mocks/herdr.mjs");
 const { echoTokenSets, liveFields, TextareaState } = await import("./mocks/gpui-base.mjs");
-const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
+const { parse, diff } = await import("../mods/potion/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
-const { TEXT, RAW, SOURCE, NOTE, LANG, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
-const { PICTURE, pictureLayout, BAR, BAR_MENU, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths, dashWidth, dashesFor, dashesAtLeast, draggedWidth, lineX, COLUMN, MARGIN, RESIZE, BLOCK_BUTTON, FRAME, tableRowTop } = await import("../mods/herdr-inline-markdown/geometry.js");
-const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
-const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
-const { tableOf } = await import("../mods/herdr-inline-markdown/tables.js");
-const { clipOf } = await import("../mods/herdr-inline-markdown/tokens.js");
+const { TEXT, RAW, SOURCE, NOTE, LANG, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/potion/keys.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths, dashWidth, dashesFor, dashesAtLeast, draggedWidth, lineX, COLUMN, MARGIN, RESIZE, BLOCK_BUTTON, FRAME, tableRowTop } = await import("../mods/potion/geometry.js");
+const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/potion/colors.js");
+const { POINT } = await import("../mods/potion/comments.js");
+const { tableOf } = await import("../mods/potion/tables.js");
+const { clipOf } = await import("../mods/potion/tokens.js");
 
 const FILE = "/n/docs/note.md";
 const DOC = "# Title\n\nHello **world**.\n\n```mermaid\ngraph TD\nA-->B\n```\n\nBye\n";
 // The blocks of DOC: the heading, the paragraph, the diagram (block 2), the last paragraph.
-const MERMAID = "/home/user/.local/share/herdr-inline-markdown/mermaid";
+const MERMAID = "/home/user/.local/share/potion/mermaid";
 const SANS = ".SystemUIFont";
 const NONCHAR = String.fromCharCode(0xffff), BOM = String.fromCharCode(0xfeff);
 
@@ -61,13 +61,13 @@ const flush = async () => { for (let i = 0; i < 3; i++) await new Promise(done =
 
 // What Herdr does, as seen in the running app: a copy starts while focused() still names the tab before its own and
 // panes() does not list its pane yet; it is drawn only while its tab is the shown one, then focused().tab is its own.
-const PANES = "herdr-inline-markdown.panes";
+const PANES = "potion.panes";
 const tabOf = (id, name) => ({ id, name, active: false, zoomed: false, status: null });
 const farFocus = (tab, pane = null) => { state.focused = { space: "s1", tab, pane, terminal: null, shown: null, agent: null, cwd: null }; };
 const shellPane = { pane: "p1", terminal: "t-p1", tab: "tb1", cwd: "/n", focused: true };
-const mdPane = (pane, tab) => ({ pane, terminal: null, tab, cwd: null, focused: false, mod: "herdr-inline-markdown" });
+const mdPane = (pane, tab) => ({ pane, terminal: null, tab, cwd: null, focused: false, mod: "potion" });
 const mdPaneOf = tab => ({ ...mdPane(`p-${tab}`, tab), focused: true });
-const split = (pane, file, machine = null) => ["pane.split", { direction: "right", pane, mod: "herdr-inline-markdown", props: { file, machine } }];
+const split = (pane, file, machine = null) => ["pane.split", { direction: "right", pane, mod: "potion", props: { file, machine } }];
 
 async function mount({ file = FILE, machine, disk, props } = {}) {
   if (disk !== undefined) state.disk.set(file, disk);
@@ -211,7 +211,7 @@ test("chrome: markers by depth, numbers, checkboxes, the quote bar, the code lan
   const open = must(t, `md-task-${keyAt(m, 4)}`), done = must(t, `md-task-${keyAt(m, 5)}`);
   assert.deepEqual([open.style.border_color, open.style.bg, open.style.cursor_pointer], ["input", undefined, true]);
   assert.deepEqual([done.style.bg, done.style.border_color], ["accent", "accent"]);
-  assert.deepEqual(all(done, n => n.kind === "svg").map(n => [n.path, n.style.text_color]), [["mods/herdr-inline-markdown/check.svg", "accent_foreground"]]);
+  assert.deepEqual(all(done, n => n.kind === "svg").map(n => [n.path, n.style.text_color]), [["mods/potion/check.svg", "accent_foreground"]]);
   assert.deepEqual([shownAt(m, 5, t), texts(ownField(m, 5))], ["done", ["done"]], "a done task's words are tokens, which draw the line through it");
   assert.deepEqual(texts(ownField(m, 4)), []);
   assert.deepEqual([6, 7].map(i => [textOf(markerOf(i)).trim(), markerOf(i).style.justify_end]), [["3.", true], ["4)", true]]);
@@ -347,7 +347,7 @@ test("the Markdown toggle: pressed while the source shows, which takes the keybo
   assert.equal(find(m.tree(), "md-modes"), null, "the three-way switch is gone");
   let b = button();
   assert.deepEqual([b.style.bg, b.style.text_color, b.hover], [undefined, "muted", true], "off: muted, with a hover background");
-  assert.deepEqual(all(b, n => n.kind === "svg").map(n => n.path), ["mods/herdr-inline-markdown/code.svg"]);
+  assert.deepEqual(all(b, n => n.kind === "svg").map(n => n.path), ["mods/potion/code.svg"]);
   assert.equal(textOf(b).trim(), "Markdown");
   m.view.handle.focused = false;
   await m.click("md-markdown");
@@ -370,26 +370,26 @@ test("the Markdown toggle: pressed while the source shows, which takes the keybo
 test("the state is remembered per file as reading or markdown (newest last, at most 200), and used the next time the file opens", async () => {
   const a = await mount({ disk: DOC });
   await a.click("md-markdown");
-  assert.deepEqual(calls.setShared.filter(([k]) => k === "herdr-inline-markdown.modes").at(-1), ["herdr-inline-markdown.modes", { [fileKey(null, FILE)]: "markdown" }]);
+  assert.deepEqual(calls.setShared.filter(([k]) => k === "potion.modes").at(-1), ["potion.modes", { [fileKey(null, FILE)]: "markdown" }]);
   const b = await mount();
   assert.equal(b.view.mode, "markdown");
   reset();
-  state.shared["herdr-inline-markdown.modes"] = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`:/old/${i}.md`, "edit"]));
+  state.shared["potion.modes"] = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`:/old/${i}.md`, "edit"]));
   const c = await mount({ disk: DOC });
   await c.click("md-markdown");
-  const kept = state.shared["herdr-inline-markdown.modes"];
+  const kept = state.shared["potion.modes"];
   assert.equal(Object.keys(kept).length, 200);
   assert.equal(Object.keys(kept).at(-1), fileKey(null, FILE));
   assert.ok(!(":/old/0.md" in kept) && ":/old/1.md" in kept);
   await c.click("md-markdown");
-  assert.equal(Object.keys(state.shared["herdr-inline-markdown.modes"]).at(-1), fileKey(null, FILE), "switching again keeps it newest");
-  assert.equal(state.shared["herdr-inline-markdown.modes"][fileKey(null, FILE)], "reading");
+  assert.equal(Object.keys(state.shared["potion.modes"]).at(-1), fileKey(null, FILE), "switching again keeps it newest");
+  assert.equal(state.shared["potion.modes"][fileKey(null, FILE)], "reading");
 });
 
 test("remembered states from the old modes: a stored split or edit opens in Markdown, read in Reading, nonsense is ignored", async () => {
   for (const [stored, disk, mode] of [["split", DOC, "markdown"], ["edit", DOC, "markdown"], ["read", "", "reading"], ["sideways", "x", "reading"], ["reading", "", "reading"]]) {
     reset();
-    state.shared["herdr-inline-markdown.modes"] = { [fileKey(null, FILE)]: stored };
+    state.shared["potion.modes"] = { [fileKey(null, FILE)]: stored };
     const m = await mount({ disk });
     assert.equal(m.view.mode, mode, stored);
   }
@@ -1313,7 +1313,7 @@ test("a file straight in the home folder (or /) is polled, not watched", async (
 });
 
 test("a file on another machine opens in Reading, shows Read-only, is polled every 5 s, and is never written", async () => {
-  state.shared["herdr-inline-markdown.modes"] = { [fileKey("devbox", FILE)]: "markdown" };
+  state.shared["potion.modes"] = { [fileKey("devbox", FILE)]: "markdown" };
   state.disk.set(FILE, "remote text\n\n- [ ] a task\n");
   const m = await mount({ machine: "devbox" });
   assert.equal(m.view.mode, "reading", "whatever was remembered");
@@ -1349,7 +1349,7 @@ test("a file on another machine opens in Reading, shows Read-only, is polled eve
   await m.key("cmd-s");
   await fire_timers(m.cx);
   assert.equal(m.view.text, "remote text\n\n- [ ] a task\n");
-  assert.deepEqual(calls.setShared.filter(([k]) => k === "herdr-inline-markdown.modes"), [], "its state is not remembered");
+  assert.deepEqual(calls.setShared.filter(([k]) => k === "potion.modes"), [], "its state is not remembered");
 
   state.disk.set(FILE, "remote changed");
   m.cx.timers.find(x => !x.once).fn(m.cx);
@@ -1603,7 +1603,7 @@ test("a link before the copy knows its pane opens beside the focused pane", asyn
 test("a link with no pane to open beside opens a tab, in the space being looked at", async () => {
   const m = await mount({ disk: CELL_LINK });
   fire(viewAt(m, 0), "on_link_click", "next.md", m.cx);
-  assert.deepEqual(calls.run, [["tab.new", { name: "next.md", mod: "herdr-inline-markdown", props: { file: "/n/docs/next.md", machine: null } }]], "no space when none is focused");
+  assert.deepEqual(calls.run, [["tab.new", { name: "next.md", mod: "potion", props: { file: "/n/docs/next.md", machine: null } }]], "no space when none is focused");
   calls.run.length = 0;
   state.focused = { space: "s7", tab: "t", pane: null, terminal: null, shown: null, agent: null, cwd: null };
   fire(viewAt(m, 0), "on_link_click", "next.md", m.cx);
@@ -1897,8 +1897,8 @@ test("the footer counts words and lines of the buffer and shows the path with ~ 
   const bar = must(m.tree(), "md-toolbar");
   assert.equal(textOf(bar).includes("plan.md"), true);
   assert.equal(textOf(bar).includes("~/notes"), false, "the folder is in the footer, not the toolbar");
-  assert.deepEqual(all(bar, n => n.kind === "image").map(n => n.path), ["mods/herdr-inline-markdown/file-markdown.svg"], "the file's own full-colour icon");
-  assert.deepEqual(all(bar, n => n.kind === "svg").map(n => n.path), ["mods/herdr-inline-markdown/code.svg"], "the toggle at the right end");
+  assert.deepEqual(all(bar, n => n.kind === "image").map(n => n.path), ["mods/potion/file-markdown.svg"], "the file's own full-colour icon");
+  assert.deepEqual(all(bar, n => n.kind === "svg").map(n => n.path), ["mods/potion/code.svg"], "the toggle at the right end");
   assert.equal(bar.kids.at(-1).id, "md-markdown");
   await m.click("md-markdown");
   await m.type("one");
@@ -1967,7 +1967,7 @@ test("diagrams: pending box, then the image, with the footer saying what is goin
   assert.deepEqual(m.cx.notifiedEntities, [m.view.entities.get(keyAt(m, 2))], "the diagram's block alone is told to draw again");
   t = m.tree();
   const img = imageOf(t, dia(m));
-  assert.equal(img.path, `data/herdr-inline-markdown/diagrams/${keyOf("graph TD\nA-->B", "mmdc-test+1")}.png`);
+  assert.equal(img.path, `data/potion/diagrams/${keyOf("graph TD\nA-->B", "mmdc-test+1")}.png`);
   assert.deepEqual([img.style.w, img.style.h], [400, 200]);
   assert.equal(textOf(must(t, "md-diagrams")), "1 diagram");
   audit(t);
@@ -2323,7 +2323,7 @@ test("the − % + group with a paragraph being edited keeps it being edited; on 
 const DIR = "/n/docs", SHOT = png(40, 30);
 const PICDOC = "# Title\n\n![x](a.png)\n\nBye\n";
 const LINKED = "# Title\n\n[![x](a.png)](https://e.com/page)\n\nBye\n";
-const cached = (bytes, ext = "png") => `data/herdr-inline-markdown/images/${createHash("sha256").update(bytes).digest("hex").slice(0, 16)}.${ext}`;
+const cached = (bytes, ext = "png") => `data/potion/images/${createHash("sha256").update(bytes).digest("hex").slice(0, 16)}.${ext}`;
 const picsOf = (m, i = 1) => `md-pictures-${keyAt(m, i)}`;
 const serveDownloads = bytes => {
   state.exec = async (command, args) => {
@@ -2630,9 +2630,9 @@ test("zoomed past what its picture holds, a frame asks 300 ms later for one tran
   assert.equal(sharpRuns().length, 0, "not while zooming");
   await fire_timers(m.cx, { ms: 300 });
   assert.equal(sharpRuns().length, 1);
-  assert.deepEqual(sharpRuns()[0].args.slice(5), ["--scale", "4", "--background", "transparent", `/home/user/.config/herdr-app/data/herdr-inline-markdown/diagrams/${sharpFile(baseKey, 4)}.mmd`]);
+  assert.deepEqual(sharpRuns()[0].args.slice(5), ["--scale", "4", "--background", "transparent", `/home/user/.config/herdr-app/data/potion/diagrams/${sharpFile(baseKey, 4)}.mmd`]);
   const img = frameOn(m).img;
-  assert.deepEqual(img.map(i => i.path), [`data/herdr-inline-markdown/diagrams/${baseKey}.png`, `data/herdr-inline-markdown/diagrams/${sharpFile(baseKey, 4)}.png`], "over the base");
+  assert.deepEqual(img.map(i => i.path), [`data/potion/diagrams/${baseKey}.png`, `data/potion/diagrams/${sharpFile(baseKey, 4)}.png`], "over the base");
   assert.deepEqual([img[1].style.w, img[1].style.h], [img[0].style.w, img[0].style.h]);
   hover(m, at);
   await clickAt(m, { x: f.left + f.w - 8 - 102 + 50, y: f.top + 8 + 10 });
@@ -2654,8 +2654,8 @@ test("zoomed to 200 %, the stress diagram asks 300 ms later for one sharp pictur
   await fire_timers(m.cx, { ms: 400 });
   assert.deepEqual(sharpRuns(), [], "not before the zoom has rested 300 ms");
   await fire_timers(m.cx, { ms: 300 });
-  assert.deepEqual(sharpRuns().map(c => c.args.slice(5)), [["--scale", "2.5", "--background", "transparent", `/home/user/.config/herdr-app/data/herdr-inline-markdown/diagrams/${sharpFile(baseKey, 2.5)}.mmd`]]);
-  assert.deepEqual(frameOn(m).img.map(i => i.path), [`data/herdr-inline-markdown/diagrams/${baseKey}.png`, `data/herdr-inline-markdown/diagrams/${sharpFile(baseKey, 2.5)}.png`]);
+  assert.deepEqual(sharpRuns().map(c => c.args.slice(5)), [["--scale", "2.5", "--background", "transparent", `/home/user/.config/herdr-app/data/potion/diagrams/${sharpFile(baseKey, 2.5)}.mmd`]]);
+  assert.deepEqual(frameOn(m).img.map(i => i.path), [`data/potion/diagrams/${baseKey}.png`, `data/potion/diagrams/${sharpFile(baseKey, 2.5)}.png`]);
 });
 
 test("at app zoom 1.5 a frame that opens at 100 % asks for no sharp picture until a zoom of it rests; a theme switch keeps the one it has and asks for no other", async () => {
@@ -2678,7 +2678,7 @@ test("at app zoom 1.5 a frame that opens at 100 % asks for no sharp picture unti
   await fire_timers(m.cx, { ms: 300 });
   assert.equal(sharpRuns().length, 1, "nor does the next zoom: one sharp picture per diagram");
   assert.ok(sharpRuns()[0].args.at(-1).endsWith(`/${sharpFile(f.d.imgKey, 6)}.mmd`));
-  assert.ok(frameOn(m).img.some(i => i.path === `data/herdr-inline-markdown/diagrams/${sharpFile(f.d.imgKey, 6)}.png`), "which the frame still draws");
+  assert.ok(frameOn(m).img.some(i => i.path === `data/potion/diagrams/${sharpFile(f.d.imgKey, 6)}.png`), "which the frame still draws");
 });
 
 test("diagrams keep their last image across edits made in Markdown: dimmed while the changed one is drawn, at once when unchanged", async () => {
@@ -2743,7 +2743,7 @@ test("no renderer installed: the diagram says how to get it, with its source, an
   await flush();
   const t = m.tree();
   assert.match(textOf(must(t, dia(m))), /Diagrams need the mermaid renderer/);
-  assert.match(textOf(must(t, dia(m))), /Run install\.sh in the herdr-inline-markdown folder/);
+  assert.match(textOf(must(t, dia(m))), /Run install\.sh in Potion's folder/);
   assert.equal(must(t, `${dia(m)}-source`).markdown, "```mermaid\ngraph TD\nA-->B\n```");
   assert.equal(textOf(must(t, "md-diagrams")), "Diagrams need the mermaid renderer: run install.sh");
   assert.equal(calls.exec.length, 0);
@@ -2775,7 +2775,7 @@ test("no node: the diagram says so and so does the footer", async () => {
 
 test("a Markdown editor remembers the file as a recent one as it starts", async () => {
   await mount({ disk: "x" });
-  assert.deepEqual(state.shared["herdr-inline-markdown.recent"], [{ machine: null, path: FILE }]);
+  assert.deepEqual(state.shared["potion.recent"], [{ machine: null, path: FILE }]);
 });
 
 const registry = () => state.shared[PANES];
@@ -2794,7 +2794,7 @@ test("the pane registry: not at init (focused() is still the previous tab), but 
   m.tree();
   await flush();
   assert.deepEqual(registry(), { "p-tb2": fileKey(null, FILE) });
-  assert.deepEqual(state.shared["herdr-inline-markdown.heads"], { "p-tb2": { name: "note.md", mode: "reading" } });
+  assert.deepEqual(state.shared["potion.heads"], { "p-tb2": { name: "note.md", mode: "reading" } });
   const writes = calls.setShared.length;
   m.tree(); m.tree();
   await flush();
@@ -2811,7 +2811,7 @@ test("init files nothing, and a draw while the previous tab is focused does not 
   m.tree();
   await flush();
   assert.deepEqual(registry(), { "p-tb1": fileKey(null, "/n/docs/other.md") }, "the other pane keeps its own file");
-  assert.deepEqual(calls.setShared.map(c => c[0]), ["herdr-inline-markdown.recent"]);
+  assert.deepEqual(calls.setShared.map(c => c[0]), ["potion.recent"]);
   assert.equal(m.view.claimed, null);
 });
 
@@ -2894,7 +2894,7 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.ok(find(t, `md-diagram-${diagram}`));
   assert.ok(find(t, `md-frame-tools-${diagram}`) && find(t, `md-frame-comment-${diagram}`), "the hovered diagram's − % + group and its Comment button");
   const pictureKey = view.doc.blocks.find(b => b.image).key, picture = imageOf(t, `md-pictures-${pictureKey}`);
-  assert.deepEqual([picture.path, picture.style.w, picture.style.h], ["mods/herdr-inline-markdown/file-markdown.svg", 32, 32], "a real picture, so check draws an image");
+  assert.deepEqual([picture.path, picture.style.w, picture.style.h], ["mods/potion/file-markdown.svg", 32, 32], "a real picture, so check draws an image");
   assert.ok(find(t, `md-pictures-${pictureKey}-0-picked`) && find(t, "md-picture"), "picked, with its ring and its float");
   assert.equal(must(t, `md-pictures-${pictureKey}-0-comment`).style.border_color, highlightColor(theme()), "its comment's frame");
   assert.equal(textOf(must(t, `md-card-${pictureKey}-0-text`)).trim(), "a comment on the picture", "and its card");
@@ -2976,7 +2976,7 @@ test("once claimed it stops looking while its pane is listed, and looks again wh
 });
 
 test("a file's pane is filed under its machine, and openMarkdown then goes to it instead of opening another", async () => {
-  const { openMarkdown } = await import("../mods/herdr-inline-markdown/open.js");
+  const { openMarkdown } = await import("../mods/potion/open.js");
   state.spaces = [space("s1", "docs", { tabs: [tabOf("tb1", "Main"), tabOf("tb2", "note.md")] })];
   state.panes = [shellPane, mdPaneOf("tb2")];
   farFocus("tb1");
@@ -2992,7 +2992,7 @@ test("a file's pane is filed under its machine, and openMarkdown then goes to it
   assert.deepEqual(calls.run, [["space.select", { id: "s1" }], ["tab.select", { id: "tb2" }]], "found by the registry");
   calls.run.length = 0;
   openMarkdown({ file: FILE, machine: "devbox", place: "pane", pane: "p1" });
-  assert.deepEqual(calls.run, [["pane.split", { direction: "right", pane: "p1", mod: "herdr-inline-markdown", props: { file: FILE, machine: "devbox" } }]], "tb1 does not show it");
+  assert.deepEqual(calls.run, [["pane.split", { direction: "right", pane: "p1", mod: "potion", props: { file: FILE, machine: "devbox" } }]], "tb1 does not show it");
   calls.run.length = 0;
   openMarkdown({ file: FILE, machine: null, place: "tab", space: "s1" });
   assert.deepEqual(calls.run.map(c => c[0]), ["tab.new"], "the same path on this computer is another file");
@@ -3032,9 +3032,9 @@ test("main.js: a tab (or no props) is the editor, a dialog with action open is t
   await flush();
   assert.equal(dialog.role.constructor.name, "Picker");
   assert.ok(find(dialog.render(dcx), "mdp-root"), "render reaches the picker");
-  assert.equal(state.shared["herdr-inline-markdown.picker"], "ov-1", "the dialog is the open picker");
+  assert.equal(state.shared["potion.picker"], "ov-1", "the dialog is the open picker");
   await dialog.close(dcx);
-  assert.equal(state.shared["herdr-inline-markdown.picker"], null, "close reaches the picker, which gives up its place");
+  assert.equal(state.shared["potion.picker"], null, "close reaches the picker, which gives up its place");
 
   reset();
   state.disk.set(FILE, "x");
@@ -5423,7 +5423,7 @@ test("a theme switch draws every block again, mounted or not, and measures the s
   assert.equal(all(find(t, `md-diagram-${key}`), n => n.style.bg === "dark").length, 0);
   await fire_timers(m.cx, { ms: 400 });
   const now = imageOf(m.tree(), `md-diagram-${key}`);
-  assert.deepEqual([now.path, now.style.opacity], [`data/herdr-inline-markdown/diagrams/${keyOf(source, version)}.png`, undefined]);
+  assert.deepEqual([now.path, now.style.opacity], [`data/potion/diagrams/${keyOf(source, version)}.png`, undefined]);
   assert.equal(now.path, first);
   assert.equal(calls.exec.length, runs, "the renderer is not run again");
   t = m.tree();
@@ -5489,7 +5489,7 @@ test("a theme change while the source shows measures the samples once Reading sh
   calibrateRun(m, 1, 25);
   assert.deepEqual([m.view.calibrating, m.view.data.get(keyAt(m, 0)).row], [false, 25]);
   reset();
-  state.shared["herdr-inline-markdown.modes"] = { [fileKey(null, FILE)]: "markdown" };
+  state.shared["potion.modes"] = { [fileKey(null, FILE)]: "markdown" };
   const src = await mount({ disk: "Text\n" });
   src.tree();
   state.theme = { ...theme(), foreground: "dark" };
@@ -5534,7 +5534,7 @@ test("a long note that opens as its source is parsed in the background; Cmd+E be
   let clock = 0;
   Date.now = () => (clock += 5);
   try {
-    state.shared["herdr-inline-markdown.modes"] = { [fileKey(null, FILE)]: "markdown" };
+    state.shared["potion.modes"] = { [fileKey(null, FILE)]: "markdown" };
     const m = await mount({ disk: big });
     assert.equal(m.view.mode, "markdown");
     assert.ok(find(m.tree(), "md-source"), "the source shows at once");
@@ -5562,7 +5562,7 @@ test("while Loading… hides the source, md-root takes the keyboard from it, so 
   let clock = 0;
   Date.now = () => (clock += 5);
   try {
-    state.shared["herdr-inline-markdown.modes"] = { [fileKey(null, FILE)]: "markdown" };
+    state.shared["potion.modes"] = { [fileKey(null, FILE)]: "markdown" };
     const m = await mount({ disk: big });
     await fire_timers(m.cx, { ms: 0 });
     m.view.handle.focused = false;
@@ -5583,7 +5583,7 @@ test("a parse in the background that ends after Reading made a page of its own l
   let clock = 0;
   Date.now = () => (clock += 5);
   try {
-    state.shared["herdr-inline-markdown.modes"] = { [fileKey(null, FILE)]: "markdown" };
+    state.shared["potion.modes"] = { [fileKey(null, FILE)]: "markdown" };
     const m = await mount({ disk: big });
     await fire_timers(m.cx, { ms: 0 });
     assert.equal(m.view.parsing, true);
@@ -6133,7 +6133,7 @@ test("an image left without an address is drawn as a box called Picture: Escape 
   assert.equal(textOf(must(m.tree(), `md-pictures-${key}`)).trim(), "Picture: No picture address");
 });
 
-const DESKTOP = "/home/user/Desktop", PICS = "/Users/me/pics", IMAGE_FOLDER = "herdr-inline-markdown.imageFolder", OTHER = png(41, 31);
+const DESKTOP = "/home/user/Desktop", PICS = "/Users/me/pics", IMAGE_FOLDER = "potion.imageFolder", OTHER = png(41, 31);
 const OK = { code: 0, stdout: "", stderr: "" };
 const PID = "4242";
 // What exec answers while pictures are chosen. `dialog` is how osascript ends ({ code, stdout, stderr }, a promise of that, a
@@ -6741,7 +6741,7 @@ test("the pane header's Markdown toggle switches this pane's copy at every press
   await flush();
   assert.equal(m.view.claimed, "pa");
   const press = async (pane, n) => {
-    state.shared["herdr-inline-markdown.toggle"] = { pane, n };
+    state.shared["potion.toggle"] = { pane, n };
     m.tree();
     await fire_timers(m.cx, { ms: 0 });
     m.tree();
@@ -6755,7 +6755,7 @@ test("the pane header's Markdown toggle switches this pane's copy at every press
   assert.equal(m.view.mode, "reading", "a press for another pane");
   await press("pa", 4);
   assert.equal(m.view.mode, "markdown", "fourth press");
-  assert.deepEqual(state.shared["herdr-inline-markdown.heads"]?.pa, { name: "note.md", mode: "markdown" });
+  assert.deepEqual(state.shared["potion.heads"]?.pa, { name: "note.md", mode: "markdown" });
 });
 
 const FORMAT_ACTIONS = ["mdb-bold", "mdb-italic", "mdb-underline", "mdb-strike", "mdb-code", "mdb-highlight", "mdb-link"];
@@ -6996,7 +6996,7 @@ const FORMAT_MARKS = ["bold", "italic", "underline", "strike", "code", "link"];
 const BAR_ORDER = ["comment", "|", "style", "|", "bold", "italic", "underline", "strike", "code", "|", "color", "|", "list", "|", "link"];
 // Seven square buttons, three with a chevron, five rules, the padding and the border.
 const BAR_W = 7 * BAR.button + 3 * (BAR.button + BAR.chevron) + 5 * BAR.sep + 2 * (BAR.pad + 1);
-const icon = name => `mods/herdr-inline-markdown/${name}.svg`;
+const icon = name => `mods/potion/${name}.svg`;
 const barOf = m => find(m.tree(), "md-format");
 const barButtons = m => all(must(m.tree(), "md-format"), n => /^md-format-/.test(n.id ?? "")).map(n => (n.id.startsWith("md-format-rule-") ? "|" : n.id.slice("md-format-".length)));
 const iconOf = node => all(node, n => n.kind === "svg")[0];
@@ -10937,7 +10937,7 @@ test("Backspace at the start of a block holding code does nothing; in an empty o
 
 // Comments under a code block, a diagram or a table: a paragraph of point comments right after the block. Once it is
 // hidden, the page's indices of the blocks after it are one less than their document's: these helpers go by key.
-const { counters: noteCounters } = await import("../mods/herdr-inline-markdown/blocknotes.js");
+const { counters: noteCounters } = await import("../mods/potion/blocknotes.js");
 const keyOfKind = (m, kind, n = 0) => m.view.doc.blocks.filter(b => b.kind === kind)[n].key;
 const notesOf = (m, key) => m.view.doc.blocks[m.view.doc.blocks.findIndex(b => b.key === key) + 1].key;
 const pageTop = (m, key) => 28 + m.view.sums[m.view.at.get(key)] - m.view.offset;

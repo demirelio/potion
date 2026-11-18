@@ -18,12 +18,12 @@
 -const key = () => JSON.stringify(location());
 +const key = context => JSON.stringify(location(context));
 +
-+// Mods can't import each other: isMarkdown is a copy of herdr-inline-markdown's lib.js, openMarkdown of its open.js
++// Mods can't import each other: isMarkdown is a copy of potion's lib.js, openMarkdown of its open.js
 +// (test/integrations.test.mjs of the package checks that the copies act alike).
 +const isMarkdown = name => /\.(md|markdown|mdown|mkd|mkdn|mdx)$/i.test(name);
 +
 +function openMarkdown({ file, machine = null, place, space }) {
-+  const MOD = "herdr-inline-markdown", key = `${machine ?? ""}:${file}`, known = shared(`${MOD}.panes`) ?? {};
++  const MOD = "potion", key = `${machine ?? ""}:${file}`, known = shared(`${MOD}.panes`) ?? {};
 +  const all = panes(), mine = all.filter(p => p.mod === MOD), name = file.split("/").pop();
 +  const inTab = tab => all.filter(p => p.tab === tab);
 +  const ownTab = tab => inTab(tab).length > 0 && inTab(tab).every(p => p.mod === MOD);
@@ -70,7 +70,7 @@
 +  }
 +
 +  openMarkdownMenu(path) {
-+    openOverlay({ mod: "herdr-inline-markdown", kind: "popup", width: 200, height: 44,
++    openOverlay({ mod: "potion", kind: "popup", width: 200, height: 44,
 +      props: { action: "menu", file: `${this.root}/${path}`, machine: this.on ?? null, space: location(this.context).space } });
 +  }
 +

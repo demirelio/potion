@@ -5,8 +5,8 @@ import {
   insertBefore, insertAt, mergeIntoPrevious, mergeNext, remove, removeRange, toParagraph, indent, outdent, nest, unnest,
   move, toggleTask, paste, closeFence, fenceGuard, shortcut, codeIndent, FENCE, CLOSE, closes, parseInSteps,
   retype, insertLines, picturesIn, removePicture, lengthenFence, setLanguage,
-} from "../mods/herdr-inline-markdown/blocks.js";
-import { visibleMap } from "../mods/herdr-inline-markdown/inline.js";
+} from "../mods/potion/blocks.js";
+import { visibleMap } from "../mods/potion/inline.js";
 import { originals, corpus, docs, htmlKinds, docKinds, random, bigDocument, VARIANTS } from "./markdown-corpus.mjs";
 
 const kinds = d => d.blocks.map(b => b.kind);

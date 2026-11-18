@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LANGUAGES, PLAIN, COMMON, MENU_ROWS, infoWord, languageOf, languageName, languageMatches, typedLanguage } from "../mods/herdr-inline-markdown/languages.js";
+import { LANGUAGES, PLAIN, COMMON, MENU_ROWS, infoWord, languageOf, languageName, languageMatches, typedLanguage } from "../mods/potion/languages.js";
 
 const names = list => list.map(l => l.name);
 

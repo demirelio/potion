@@ -6,7 +6,7 @@ import { MOD, PANES, RECENT, openMarkdown } from "./open.js";
 
 // A picker that opens closes the one named here, so one is open at a time; the cmd-shift-m mod reads it to close the
 // picker it opened itself. Shared state is persisted, so a name left by a quit is of an overlay Herdr no longer has.
-const OPEN_PICKER = "herdr-inline-markdown.picker";
+const OPEN_PICKER = "potion.picker";
 const ROW_H = 32, ROWS_BEFORE_MEASURED = 8;
 const HINTS = {
   pane: "↑↓ to move · ↵ to open beside · esc to close",
@@ -240,7 +240,7 @@ export class Picker {
         this.at = i;
         cx.notify();
       })
-      .child(svg(file ? "mods/herdr-inline-markdown/markdown.svg" : "mods/herdr-inline-markdown/file-plus.svg").size(14).flex_none().text_color(t.muted))
+      .child(svg(file ? "mods/potion/markdown.svg" : "mods/potion/file-plus.svg").size(14).flex_none().text_color(t.muted))
       .child(div().flex_none().max_w(320).truncate().font_semibold().child(name))
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(hint))
       .when(file && (row.entry.recent || this.isOpenHere(row.entry.file)), el => el.child(div().flex_none().text_size(11).text_color(t.dim)
@@ -264,9 +264,9 @@ export class Picker {
         cx.stop_propagation();
         cx.notify();
       })
-      .child(div().text_size(15).font_semibold().child("Markdown"))
+      .child(div().text_size(15).font_semibold().child("Potion"))
       .child(h_flex().h(36).flex_none().px(10).gap(8).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
-        .child(svg("mods/herdr-inline-markdown/search.svg").size(15).flex_none().text_color(t.dim))
+        .child(svg("mods/potion/search.svg").size(15).flex_none().text_color(t.dim))
         .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .when(Boolean(note), el => el.child(div().id("mdp-note").flex_none().text_size(12).text_color(this.problem ? t.blocked : t.dim).child(note)))
       .child(v_flex().id("mdp-list").flex_1().min_h(0).overflow_hidden()

@@ -4,9 +4,9 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
-// Asset paths in the mod ("mods/herdr-inline-markdown/plus.svg") start at Herdr's app home, which this folder mirrors.
+// Asset paths in the mod ("mods/potion/plus.svg") start at Herdr's app home, which this folder mirrors.
 const root = fileURLToPath(new URL("..", import.meta.url));
-const modDir = join(root, "mods/herdr-inline-markdown");
+const modDir = join(root, "mods/potion");
 
 const PATTERN_TILES = ["dots.svg"];
 const FULL_COLOUR = ["file-markdown.svg"];
@@ -18,7 +18,7 @@ const svgs = readdirSync(modDir).filter(f => f.endsWith(".svg"));
 function named() {
   const out = new Set();
   for (const [, source] of sources) {
-    for (const [, name] of source.matchAll(/mods\/herdr-inline-markdown\/([\w.-]+\.svg)/g)) out.add(name);
+    for (const [, name] of source.matchAll(/mods\/potion\/([\w.-]+\.svg)/g)) out.add(name);
     for (const [, name] of source.matchAll(/\bICON\("([\w-]+)"\)/g)) out.add(`${name}.svg`);
     for (const [, name] of source.matchAll(/\bicon: "([\w-]+)"/g)) out.add(`${name}.svg`);
   }
@@ -38,7 +38,7 @@ test("every icon in the mod folder is named by a source", () => {
 
 test("the mod draws nothing from another mod's folder, so it works without Herdr's shipped mods", () => {
   for (const [file, source] of sources) {
-    const foreign = [...source.matchAll(/mods\/([\w-]+)\//g)].map(m => m[1]).filter(name => name !== "herdr-inline-markdown");
+    const foreign = [...source.matchAll(/mods\/([\w-]+)\//g)].map(m => m[1]).filter(name => name !== "potion");
     assert.deepEqual(foreign, [], `${file} names another mod's files`);
   }
 });
@@ -55,7 +55,7 @@ test("our icons are lucide-style: 24x24, stroke currentColor, no fixed colors", 
 });
 
 test("the companion mod has no assets and names no file of any mod", () => {
-  const dir = join(root, "mods/herdr-inline-markdown-beside"), herdrs = /\.d\.ts$|^jsconfig\.json$|\.error$|^\.DS_Store$/;
+  const dir = join(root, "mods/potion-beside"), herdrs = /\.d\.ts$|^jsconfig\.json$|\.error$|^\.DS_Store$/;
   assert.deepEqual(readdirSync(dir).filter(f => !herdrs.test(f)).sort(), ["main.js", "mod.json"], "besides what Herdr writes into a mod folder");
   assert.doesNotMatch(readFileSync(join(dir, "main.js"), "utf8"), /mods\//);
 });

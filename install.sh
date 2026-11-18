@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh: put the Markdown mods, their keys and the diagram renderer where Herdr and the mods look for them.
 #
-#   ./install.sh                  copy mods/herdr-inline-markdown and mods/herdr-inline-markdown-beside into the Herdr
+#   ./install.sh                  copy mods/potion and mods/potion-beside into the Herdr
 #                                 app home, add the keys of keys.json to yours, then install the diagram renderer
 #   ./install.sh --no-mermaid     no diagram renderer: diagrams then show as code blocks
 #   ./install.sh --no-keys        leave keys.json alone
@@ -13,16 +13,16 @@
 #
 # Environment:
 #   HERDR_APP_HOME      Herdr's app folder, default ~/.config/herdr-app: the mods go to its mods/, the keys to its keys.json
-#   HERDR_MERMAID_HOME  where the renderer goes, default ~/.local/share/herdr-inline-markdown/mermaid. The mod only looks in
+#   HERDR_MERMAID_HOME  where the renderer goes, default ~/.local/share/potion/mermaid. The mod only looks in
 #                       the default place, so set this to try an install somewhere else, not to move it.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
-MERMAID_HOME="${HERDR_MERMAID_HOME:-$HOME/.local/share/herdr-inline-markdown/mermaid}"
-BACKUPS="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-inline-markdown/backups"
+MERMAID_HOME="${HERDR_MERMAID_HOME:-$HOME/.local/share/potion/mermaid}"
+BACKUPS="${XDG_STATE_HOME:-$HOME/.local/state}/potion/backups"
 BACKUP="$BACKUPS/$(date +%Y%m%d-%H%M%S)" # this run's, made by the first thing it saves
-MODS=(herdr-inline-markdown herdr-inline-markdown-beside)
+MODS=(potion potion-beside)
 # Herdr writes these into every mod folder: never ours, never copied, never removed.
 DIFF_EXCLUDES=(-x '*.d.ts' -x 'jsconfig.json' -x '*.error' -x '.DS_Store')
 

@@ -7,11 +7,11 @@ import { all, find, textOf } from "./mocks/element.mjs";
 import { makeCx } from "./helpers.mjs";
 import { png, svg, bytes } from "./pictures.mjs";
 
-const { Images, pictureBlock, imagesDir, pictureImagePath } = await import("../mods/herdr-inline-markdown/images.js");
-const { PICTURE } = await import("../mods/herdr-inline-markdown/geometry.js");
-const { hash } = await import("../mods/herdr-inline-markdown/lib.js");
+const { Images, pictureBlock, imagesDir, pictureImagePath } = await import("../mods/potion/images.js");
+const { PICTURE } = await import("../mods/potion/geometry.js");
+const { hash } = await import("../mods/potion/lib.js");
 
-const IMAGES = "/home/user/.config/herdr-app/data/herdr-inline-markdown/images";
+const IMAGES = "/home/user/.config/herdr-app/data/potion/images";
 const DOC = "/n/docs/a.md", DIR = "/n/docs";
 const LOCAL = { remote: null };
 const PENDING = { state: "pending", path: null, width: 0, height: 0, error: null };
@@ -23,7 +23,7 @@ const NOT_A_PICTURE = "Not a picture Herdr can show (PNG, JPEG, GIF, WebP, BMP, 
 beforeEach(() => reset());
 
 const sha = picture => createHash("sha256").update(picture).digest("hex").slice(0, 16);
-const okAt = (picture, ext, width, height) => ({ state: "ok", path: `data/herdr-inline-markdown/images/${sha(picture)}.${ext}`, width, height, error: null });
+const okAt = (picture, ext, width, height) => ({ state: "ok", path: `data/potion/images/${sha(picture)}.${ext}`, width, height, error: null });
 const failed = error => ({ state: "error", path: null, width: 0, height: 0, error });
 const flush = async () => { for (let i = 0; i < 3; i++) await new Promise(done => setImmediate(done)); };
 function mount() {
@@ -42,9 +42,9 @@ const serve = body => {
 const exits = (code, stderr = "") => { state.exec = async () => ({ code, stdout: "", stderr }); };
 const parts = () => [...files.keys()].filter(path => path.endsWith(".part"));
 
-test("the cache folder is the app folder's data/herdr-inline-markdown/images, and an image path is relative to the app folder", () => {
+test("the cache folder is the app folder's data/potion/images, and an image path is relative to the app folder", () => {
   assert.equal(imagesDir(), IMAGES);
-  assert.equal(pictureImagePath("abc.png"), "data/herdr-inline-markdown/images/abc.png");
+  assert.equal(pictureImagePath("abc.png"), "data/potion/images/abc.png");
   state.appHome = "/home/user/.config/herdr-app/";
   assert.equal(imagesDir(), IMAGES, "a trailing slash does not double");
 });
@@ -505,7 +505,7 @@ test("close: loads that end after it make no callback and write nothing, and the
 
 // Each import with its own query is a copy of the module with its own once-per-run flag.
 test("the cache folder is pruned once per app run, before the first load, with find, and a failing find is no matter", async () => {
-  const fresh = await import("../mods/herdr-inline-markdown/images.js?prune-once");
+  const fresh = await import("../mods/potion/images.js?prune-once");
   files.set(`${DIR}/a.png`, png(4, 4));
   files.set(`${DIR}/b.png`, png(5, 5));
   state.exec = async () => { throw new Error("find: not found"); };
@@ -522,7 +522,7 @@ test("the cache folder is pruned once per app run, before the first load, with f
 });
 
 test("find is not run for addresses that need no load", async () => {
-  const fresh = await import("../mods/herdr-inline-markdown/images.js?prune-none");
+  const fresh = await import("../mods/potion/images.js?prune-none");
   const { cx } = mount(), images = new fresh.Images();
   state.exec = async () => DONE;
   images.get("", DOC, LOCAL, cx);
@@ -535,7 +535,7 @@ test("find is not run for addresses that need no load", async () => {
 });
 
 const t = theme();
-const READY = { state: "ok", path: "data/herdr-inline-markdown/images/0123456789abcdef.png", alt: "logo", src: "logo.png", error: null, href: null };
+const READY = { state: "ok", path: "data/potion/images/0123456789abcdef.png", alt: "logo", src: "logo.png", error: null, href: null };
 const PENDING_ITEM = { state: "pending", path: null, alt: "wait", src: "wait.png", error: null, href: null };
 const ERROR_ITEM = { state: "error", path: null, alt: "gone", src: "img/gone.png", error: "Not found", href: null };
 const block = (items, boxes, more = {}) => pictureBlock({ id: "pic-1", items, boxes, height: 120, selected: false, t, ...more });
@@ -552,10 +552,10 @@ test("pictureBlock: a box of the given height that its pictures are laid in by p
 });
 
 test("pictureBlock: a ready picture is its image at its box, with ids from the block's id", () => {
-  const el = block([READY, { ...READY, path: "data/herdr-inline-markdown/images/fedcba9876543210.jpg" }], [{ x: 0, y: 0, w: 100, h: 50 }, { x: 108, y: 4, w: 60, h: 30 }]);
+  const el = block([READY, { ...READY, path: "data/potion/images/fedcba9876543210.jpg" }], [{ x: 0, y: 0, w: 100, h: 50 }, { x: 108, y: 4, w: 60, h: 30 }]);
   const [a, b] = all(el, n => n.kind === "image");
   assert.deepEqual([a.id, a.path, a.style.absolute, a.style.left, a.style.top, a.style.w, a.style.h], ["pic-1-0", READY.path, true, 0, 0, 100, 50]);
-  assert.deepEqual([b.id, b.path, b.style.left, b.style.top, b.style.w, b.style.h], ["pic-1-1", "data/herdr-inline-markdown/images/fedcba9876543210.jpg", 108, 4, 60, 30]);
+  assert.deepEqual([b.id, b.path, b.style.left, b.style.top, b.style.w, b.style.h], ["pic-1-1", "data/potion/images/fedcba9876543210.jpg", 108, 4, 60, 30]);
   assert.equal(a.style.cursor_pointer, undefined, "no hand without a link");
   assert.deepEqual(all(el, n => n.id !== null).map(n => n.id), ["pic-1", "pic-1-0", "pic-1-1"]);
 });
@@ -587,7 +587,7 @@ test("pictureBlock: a picture on its way is a box with the spinner and 'Loading 
   assert.deepEqual([box.style.absolute, box.style.left, box.style.top, box.style.w, box.style.h], [true, 0, 0, 300, PICTURE.boxH]);
   assert.equal(textOf(box), "Loading picture…");
   const [spinner] = all(box, n => n.kind === "svg");
-  assert.equal(spinner.path, "mods/herdr-inline-markdown/spinner.svg");
+  assert.equal(spinner.path, "mods/potion/spinner.svg");
   assert.equal(spinner.style.spin, 900);
   assert.equal(all(el, n => n.kind === "image").length, 0);
 });

@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeCx } from "./helpers.mjs";
 
-const { BINDINGS, INSTALLED, LANG, NOTE, RAW, SOURCE, TEXT, installKeys } = await import("../mods/herdr-inline-markdown/keys.js");
+const { BINDINGS, INSTALLED, LANG, NOTE, RAW, SOURCE, TEXT, installKeys } = await import("../mods/potion/keys.js");
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-const MAIN = "herdr-inline-markdown", BESIDE = "herdr-inline-markdown-beside";
+const MAIN = "potion", BESIDE = "potion-beside";
 const jsIn = mod => readdirSync(join(root, "mods", mod)).filter(f => f.endsWith(".js"));
 const modFiles = jsIn(MAIN);
 const code = (name, mod = MAIN) => readFileSync(join(root, "mods", mod, name), "utf8");
@@ -32,7 +32,7 @@ for (const { mod, file, label } of modules) {
     assert.doesNotMatch(source, /^await\b/m, "no top-level await");
     // The exceptions outlive a module on purpose: the key table's flag and when it was last put back, and the companion's
     // memory of its picker.
-    const allowed = file === "keys.js" ? /\bglobalThis\[(?:INSTALLED|REBOUND)\]/g : mod === "herdr-inline-markdown-beside" ? /\bglobalThis\[MEMORY\]/g : null;
+    const allowed = file === "keys.js" ? /\bglobalThis\[(?:INSTALLED|REBOUND)\]/g : mod === "potion-beside" ? /\bglobalThis\[MEMORY\]/g : null;
     const own = allowed ? source.replace(allowed, "") : source;
     assert.doesNotMatch(own, /this\.\w*cx\b|\bglobalThis\b/, "a cx is never kept, nothing hangs on globalThis");
   });
@@ -54,7 +54,7 @@ test("installKeys binds the table once per run, under a flag that carries the ve
   for (const { context } of BINDINGS) assert.equal(/^Md(?:Text|Raw|Source|Note|Lang)(\d+)/.exec(context)?.[1], version(TEXT), context);
 });
 
-test("herdr-inline-markdown names its key contexts only through keys.js, so raising VERSION renames every one", () => {
+test("potion names its key contexts only through keys.js, so raising VERSION renames every one", () => {
   for (const file of modFiles.filter(f => f !== "keys.js")) {
     assert.doesNotMatch(code(file).replace(/\/\/.*$/gm, ""), /\bMd(?:Text|Raw|Source|Note|Lang)\d/, file);
   }

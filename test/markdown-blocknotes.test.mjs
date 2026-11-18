@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parse, reparse, applySplice } from "../mods/herdr-inline-markdown/blocks.js";
+import { parse, reparse, applySplice } from "../mods/potion/blocks.js";
 import {
   addBlockNote, addPictureNote, blockUnit, counters, editBlockNote, editCellNote, editPictureNote, notesAfter, ownerOf, pairNotes,
   removeWithNotes, resolveBlockNote, resolveCellNote, resolvePictureNote,
-} from "../mods/herdr-inline-markdown/blocknotes.js";
-import { picturesOf } from "../mods/herdr-inline-markdown/lib.js";
+} from "../mods/potion/blocknotes.js";
+import { picturesOf } from "../mods/potion/lib.js";
 
 const run = (text, s) => applySplice(text, s);
 const WHEN = new Date(2026, 10, 17, 9, 0);

@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { POINT } from "../mods/herdr-inline-markdown/comments.js";
-import { parse } from "../mods/herdr-inline-markdown/blocks.js";
-import { clipOf, drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "../mods/herdr-inline-markdown/tokens.js";
+import { parseInline } from "../mods/potion/inline.js";
+import { POINT } from "../mods/potion/comments.js";
+import { parse } from "../mods/potion/blocks.js";
+import { clipOf, drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "../mods/potion/tokens.js";
 
 const rich = (value, opts) => richOf(value, parseInline(value, opts));
 const caret = at => ({ start: at, end: at });

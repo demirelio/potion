@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { editOf, formatAt, mend } from "../mods/herdr-inline-markdown/mend.js";
-import { MARK_BITS } from "../mods/herdr-inline-markdown/restyle.js";
-import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { richOf, tokensFor } from "../mods/herdr-inline-markdown/tokens.js";
-import { parse } from "../mods/herdr-inline-markdown/blocks.js";
+import { editOf, formatAt, mend } from "../mods/potion/mend.js";
+import { MARK_BITS } from "../mods/potion/restyle.js";
+import { parseInline } from "../mods/potion/inline.js";
+import { richOf, tokensFor } from "../mods/potion/tokens.js";
+import { parse } from "../mods/potion/blocks.js";
 
 const DEFS = parse("x\n\n[r]: http://r.org/ref\n").defs;
 const BOLD = { bits: MARK_BITS.bold, mark: null, color: null }, PLAIN = { bits: 0, mark: null, color: null };

@@ -9,9 +9,9 @@ import {
   NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
   CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, tablePress, TABLE_VIEW, tableRowTop, GRID, columnWidths, gridRowHeights,
   gridAt, gridRowTop, dashWidth, dashesFor, dashesAtLeast, isSized, lineX, lineNear, revealSpan, tableSpan, gridPlace, draggedWidth,
-} from "../mods/herdr-inline-markdown/geometry.js";
-import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
-import { POINT } from "../mods/herdr-inline-markdown/comments.js";
+} from "../mods/potion/geometry.js";
+import { parse, field } from "../mods/potion/blocks.js";
+import { POINT } from "../mods/potion/comments.js";
 
 const cal = { rowPx: 20, advance: 8, monoAdvance: 7.8 };
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as colors from "../mods/herdr-inline-markdown/colors.js";
+import * as colors from "../mods/potion/colors.js";
 
 const rgb = hex => [1, 3, 5].map(i => Number.parseInt(hex.slice(i, i + 2), 16));
 const near = (a, b, units, label) => {

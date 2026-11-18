@@ -30,10 +30,10 @@ import { drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensF
 
 const SAVE_MS = 700;
 const LOCAL_POLL = 4000, REMOTE_POLL = 5000;
-const MODES_KEY = "herdr-inline-markdown.modes", MODES_MAX = 200;
+const MODES_KEY = "potion.modes", MODES_MAX = 200;
 // Same names as in the my-pane header mod: mods can't import each other.
-const HEADS_KEY = "herdr-inline-markdown.heads", TOGGLE_KEY = "herdr-inline-markdown.toggle", HEADER_MOD = "my-pane";
-const MARKDOWN_ICON = "mods/herdr-inline-markdown/file-markdown.svg";
+const HEADS_KEY = "potion.heads", TOGGLE_KEY = "potion.toggle", HEADER_MOD = "my-pane";
+const MARKDOWN_ICON = "mods/potion/file-markdown.svg";
 const WIDE = 560;
 const BIG = 50000; // a longer buffer is counted when it settles (a save timer, a load, a mode switch), not on every key
 // Texts this long are parsed in SLICE_MS slices so the app keeps running: one parse of 1 MiB blocks it for 330 ms or more.
@@ -233,7 +233,7 @@ function softBreaksIn(f) {
   return out + f.value.slice(at);
 }
 
-const ICON = name => `mods/herdr-inline-markdown/${name}.svg`;
+const ICON = name => `mods/potion/${name}.svg`;
 const why = e => String(e?.message ?? e);
 // What readTextFile says about a file over its 1 MiB limit is not written down anywhere: go by the usual words.
 const tooBig = e => /mib|too (large|big)|exceed|larger than/i.test(why(e));
@@ -470,7 +470,7 @@ function mappedThrough(edits, p) {
 // picture picked with its float, the comments of the quote, the js block, a table cell and the picture on their cards in
 // the margin while a new comment's card is being written, and the js block's language menu open.
 const FIXTURE = [
-  "---", "title: herdr-inline-markdown check fixture", "---",
+  "---", "title: potion check fixture", "---",
   "# Every kind of block", "",
   "A paragraph with **bold**, _emphasis_, `code` and a [link](https://example.com). /", "",
   "Plain words only.", "",
@@ -680,7 +680,7 @@ export class Editor {
       // A task spawned here starts inside the draw, where focus and notify throw: a timer runs it after.
       cx.timer.after(0, cx => this.toggle(cx));
     }
-    const head = { name: this.file ? basename(this.file) : "Markdown", mode: this.mode }, sig = `${pane}\0${head.name}\0${head.mode}`;
+    const head = { name: this.file ? basename(this.file) : "Potion", mode: this.mode }, sig = `${pane}\0${head.name}\0${head.mode}`;
     if (sig === this.headSig) return;
     this.headSig = sig;
     cx.spawn(async () => {
@@ -7133,7 +7133,7 @@ export class Editor {
       .when(labels, el => el.child("Markdown"));
     return h_flex().id("md-toolbar").h(40).flex_none().px(14).gap(10).items_center().border_b(1).border_color(t.border)
       .child(image(MARKDOWN_ICON).w(14).h(14).flex_none())
-      .child(div().flex_1().min_w(0).truncate().font_medium().child(this.file ? basename(this.file) : "Markdown"))
+      .child(div().flex_1().min_w(0).truncate().font_medium().child(this.file ? basename(this.file) : "Potion"))
       .child(toggle);
   }
 

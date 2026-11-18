@@ -15,10 +15,10 @@ const RECHECK_MS = 10000;
 const RETRY_MS = 15000;
 
 const why = e => String(e?.message ?? e);
-export const mermaidHome = () => `${home().replace(/\/+$/, "")}/.local/share/herdr-inline-markdown/mermaid`;
-export const cacheDir = () => `${appHome().replace(/\/+$/, "")}/data/herdr-inline-markdown/diagrams`;
+export const mermaidHome = () => `${home().replace(/\/+$/, "")}/.local/share/potion/mermaid`;
+export const cacheDir = () => `${appHome().replace(/\/+$/, "")}/data/potion/diagrams`;
 // Where an image() finds the PNG: relative to the app folder.
-export const imagePath = key => `data/herdr-inline-markdown/diagrams/${key}.png`;
+export const imagePath = key => `data/potion/diagrams/${key}.png`;
 
 function configOf() {
   const json = JSON.stringify(mermaidConfig());
@@ -255,7 +255,7 @@ export class Diagrams {
 // A fence longer than any run of backticks in the text, so the text cannot close it.
 const fence = text => "`".repeat((text.match(/`+/g) ?? []).reduce((n, run) => Math.max(n, run.length + 1), 3));
 
-const ICON = name => `mods/herdr-inline-markdown/${name}.svg`;
+const ICON = name => `mods/potion/${name}.svg`;
 
 // `d` is what get() answered; `frame` is what its frame draws, or null when it draws none:
 // { key, w, h, ml, natW, natH, image, dim, selected, view: { z, x, y, sharp, tools, cursor }, comment }. `image` is the
@@ -267,7 +267,7 @@ export function diagramBlock({ id, source, d, frame, t, mono }) {
   const out = v_flex().id(id).w_full().gap(8);
   if (d.state === "missing") {
     return out.child(box().child(title("Diagrams need the mermaid renderer", t.foreground))
-      .child(div().text_size(12).text_color(t.muted).child("Run install.sh in the herdr-inline-markdown folder"))
+      .child(div().text_size(12).text_color(t.muted).child("Run install.sh in Potion's folder"))
       .child(TextView.markdown(`${id}-source`, `${fence(source)}mermaid\n${source}\n${fence(source)}`).selectable(true)));
   }
   if (d.state === "error") {

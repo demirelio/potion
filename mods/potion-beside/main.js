@@ -5,8 +5,8 @@
 import { View, div } from "gpui-kit";
 import { props, shared, openOverlay, closeOverlay } from "herdr";
 
-const PICKER = { mod: "herdr-inline-markdown", kind: "dialog", width: 560, height: 460, props: { action: "open", place: "pane" } };
-const OPEN_PICKER = "herdr-inline-markdown.picker";
+const PICKER = { mod: "potion", kind: "dialog", width: 560, height: 460, props: { action: "open", place: "pane" } };
+const OPEN_PICKER = "potion.picker";
 
 // Where this mod remembers the picker it opened last. Each copy of a mod gets its own module, but globalThis lasts as
 // long as Herdr runs, so a picker that shared state still names after a quit (Herdr no longer has it, and closing it

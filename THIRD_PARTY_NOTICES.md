@@ -4,7 +4,7 @@
 
 ### Lucide icons (ISC; some derived from Feather, MIT)
 
-The line icons in `mods/herdr-inline-markdown/` are Lucide icons (https://lucide.dev) reduced to a bare `<svg>` element:
+The line icons in `mods/potion/` are Lucide icons (https://lucide.dev) reduced to a bare `<svg>` element:
 `bold`, `check`, `chevron-down`, `code`, `copy`, `external-link`, `file-plus`, `heading`, `heading-1`, `heading-2`,
 `heading-3`, `image`, `image-up`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `markdown` (Lucide's
 `file-text`), `message-square`, `message-square-plus`, `minus`, `palette`, `pencil`, `plus`, `search`, `strikethrough`,
@@ -65,7 +65,7 @@ SOFTWARE.
 
 ### Material Icon Theme (MIT)
 
-`mods/herdr-inline-markdown/file-markdown.svg` is the markdown file icon of the Material Icon Theme for VS Code
+`mods/potion/file-markdown.svg` is the markdown file icon of the Material Icon Theme for VS Code
 (pkief.material-icon-theme, https://github.com/material-extensions/vscode-material-icon-theme), unmodified.
 
 ```
@@ -87,7 +87,7 @@ the Creative Commons Attribution-ShareAlike 4.0 license (CC BY-SA 4.0).
 
 ## Not bundled, installed on demand
 
-`install.sh` downloads these into the renderer folder (`~/.local/share/herdr-inline-markdown/mermaid`); none of them is
+`install.sh` downloads these into the renderer folder (`~/.local/share/potion/mermaid`); none of them is
 part of this package. The versions are pinned in `tools/mermaid/package-lock.json`.
 
 | Package | License (from the lock file) |

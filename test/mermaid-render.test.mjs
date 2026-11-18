@@ -7,9 +7,9 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-// These run tools/mermaid/render.mjs the way the herdr-inline-markdown mod does: the installed copy, started with the node
+// These run tools/mermaid/render.mjs the way the potion mod does: the installed copy, started with the node
 // from node-path. Without install.sh having installed the renderer there is nothing to run, so they skip.
-const HOME = process.env.HERDR_MERMAID_HOME ?? join(homedir(), ".local/share/herdr-inline-markdown/mermaid");
+const HOME = process.env.HERDR_MERMAID_HOME ?? join(homedir(), ".local/share/potion/mermaid");
 const REPO_RENDER = new URL("../tools/mermaid/render.mjs", import.meta.url);
 const installed = ["version", "node-path", "render.mjs", "node_modules"].every(f => existsSync(join(HOME, f)));
 const NEED = "the mermaid renderer is not installed: ./install.sh";

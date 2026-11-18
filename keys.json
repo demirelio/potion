@@ -1,6 +1,6 @@
 {
   "global": {
-    "cmd-m": "mod.open:herdr-inline-markdown",
-    "cmd-shift-m": "mod.open:herdr-inline-markdown-beside"
+    "cmd-m": "mod.open:potion",
+    "cmd-shift-m": "mod.open:potion-beside"
   }
 }
