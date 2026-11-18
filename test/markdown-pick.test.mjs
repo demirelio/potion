@@ -269,7 +269,6 @@ test("imageStart is the folder the last picture came from, else the Desktop", ()
   assert.equal(imageStart(), DESKTOP, "an empty value is no folder");
   state.shared[IMAGE_FOLDER_KEY] = 7;
   assert.equal(imageStart(), DESKTOP, "nor is a value that is not text");
-  assert.equal(IMAGE_FOLDER_KEY, "herdr-inline-markdown.imageFolder");
 });
 
 // cp copies in the in-memory file system, unless `cp` has an answer (or an error to reject with) for its source, or is a

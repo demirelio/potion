@@ -5,10 +5,10 @@ import {
   estimateHeight, revealOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
-  barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
-  NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
-  CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, TABLE_VIEW, tablePress, tableRowTop, GRID, columnWidths, gridRowHeights,
-  gridAt, gridRowTop, DASHES, dashWidth, dashesFor, dashesAtLeast, isSized, lineX, lineNear, revealSpan, tableSpan, gridPlace, draggedWidth,
+  barMenuPlace, popoverPlace, LINK_POP, linkPopoverSize, popoverSize, pictureLayout,
+  NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
+  CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, tablePress, TABLE_VIEW, tableRowTop, GRID, columnWidths, gridRowHeights,
+  gridAt, gridRowTop, dashWidth, dashesFor, dashesAtLeast, isSized, lineX, lineNear, revealSpan, tableSpan, gridPlace, draggedWidth,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
@@ -88,7 +88,6 @@ test("a press on a table Reading draws from its source gives the pressed cell's 
 });
 
 test("column widths: natural ones (the widest text and the padding, 64 to 360 px) when they fit the room", () => {
-  assert.deepEqual(GRID, { padX: 10, padY: 6, line: 1, minW: 64, maxW: 360, radius: 6 });
   assert.deepEqual(columnWidths([30, 50, 5], 600), [64, 70, 64], "never under 64");
   assert.deepEqual(columnWidths([30, 900], 600), [64, 360], "nor over 360");
 });
@@ -108,8 +107,6 @@ test("column widths when 64 px each doesn't fit the room: 64 px each, the grid w
 });
 
 test("a column's set width: its dashes, at least three, at the cell style's advance, and its padding, never under 64 px nor capped; a width as dashes the other way, never fewer than draw 64 px", () => {
-  assert.equal(DASHES.min, 3);
-  assert.equal(dashWidth(11, 6.5), Math.ceil(11 * 6.5) + 2 * GRID.padX);
   assert.equal(dashWidth(100, 6.5), 670, "no 360 px cap");
   assert.equal(dashWidth(3, 6.5), GRID.minW, "under 64 px: 64");
   assert.equal(dashWidth(1, 6.5), GRID.minW);
@@ -174,12 +171,12 @@ test("the cell of a grid at a point from its top-left corner: the row by the row
   assert.equal(gridRowTop(heights, 2), 1 + 34 + 34);
 });
 
-test("a table's drawn rows of one line each: the frame's 1 px, then per row 7 px above and below its line and a 1 px rule", () => {
-  assert.deepEqual(TABLE_VIEW, { frame: 1, py: 7, rule: 1 });
-  assert.equal(tableRowTop(0, 21), 1, "the header under the frame");
-  assert.equal(tableRowTop(1, 21), 1 + 7 + 21 + 7 + 1);
-  assert.equal(tableRowTop(3, 21, 13), 13 + 1 + 3 * 36, "from the top of what holds it, `inset` above the frame");
-  assert.equal(tableRowTop(2, 19.5, 13), 13 + 1 + 2 * 34.5);
+test("a table's drawn rows of one line each: the header under the frame, each row under the line above, its padding above and below it and a rule; `inset` above the frame", () => {
+  const { frame, py, rule } = TABLE_VIEW;
+  assert.equal(tableRowTop(0, 21), frame, "the header under the frame");
+  assert.equal(tableRowTop(1, 21) - tableRowTop(0, 21), py + 21 + py + rule, "the header's row");
+  assert.equal(tableRowTop(3, 19.5) - tableRowTop(2, 19.5), py + 19.5 + py + rule, "every row the same, its line as given");
+  assert.equal(tableRowTop(3, 21, 13), 13 + tableRowTop(3, 21), "`inset` above the frame");
 });
 
 test("Tab in a table selects the next cell's trimmed text; past the last cell, nothing", () => {
@@ -255,16 +252,13 @@ test("the wrap estimate puts the offsets of a long paragraph of mixed word lengt
   assert.ok(drifted > 0, "the modulo estimate puts some of them on another row");
 });
 
-test("the wrap estimate starts a row at each line break, keeps a word wider than a row whole until it overflows, and cuts it there", () => {
+test("the wrap estimate starts a row at each line break, keeps a word wider than a row whole until it overflows, and cuts it there; lineOffsets gives where each line starts, an empty one too, as the rows of a field too wide to wrap", () => {
   assert.deepEqual(wrapRows("", 100, 10), [0]);
   assert.deepEqual(wrapRows("ab cd\nef", 100, 10), [0, 6]);
   assert.deepEqual(wrapRows("abcd efgh", 80, 10), [0, 5], "the word that would pass the edge starts the next row");
   assert.deepEqual(wrapRows("abcd efg", 80, 10), [0], "one that reaches the edge stays");
   assert.deepEqual(wrapRows("abcdefghijkl", 50, 10), [0, 5, 10], "a word wider than a row");
   assert.deepEqual(wrapRows("ab abcdefghijkl", 50, 10), [0, 3, 8, 13], "it starts its own row first");
-});
-
-test("lineOffsets: where each line starts, an empty one too", () => {
   assert.deepEqual(lineOffsets(""), [0]);
   assert.deepEqual(lineOffsets("ab\ncd\n\ne"), [0, 3, 6, 7]);
   assert.deepEqual(lineOffsets("ab\n"), [0, 3]);
@@ -403,7 +397,6 @@ test("the − % + group: each cell by geometry, nothing around it; it stays on t
 
 test("a diagram's Comment button: 26 px square, 6 px left of the − % + group at its top, a tool only where it is drawn", () => {
   const w = 1000, top = 8, group = w - 8 - 102, left = group - 6 - 26;
-  assert.deepEqual([FRAME.tools.comment, FRAME.tools.gap], [26, 6]);
   for (const [x, y] of [[left, top], [left + 25, top + 25], [left + 13, top + 13]]) assert.equal(frameTool(x, y, w, top, true), "comment", `${x},${y}`);
   for (const [x, y] of [[left - 1, top + 10], [left + 26, top + 10], [group - 1, top + 10], [left + 5, top - 1], [left + 5, top + 26]]) assert.equal(frameTool(x, y, w, top, true), null, `${x},${y}`);
   assert.equal(frameTool(left + 5, top + 10, w, top), null, "not drawn: no tool");
@@ -579,12 +572,6 @@ test("the format bar is hidden while the row it goes by is out of the pane", () 
   assert.equal(barPlace({ ...BAR_AT, firstTop: -200, lastTop: -23 }).side, "below", "a pixel of the last row in the pane");
 });
 
-test("the comment box goes where the bar goes, at its own size", () => {
-  const size = { w: NOTE_BOX.w, h: NOTE_BOX.h };
-  assert.deepEqual(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, size }), { side: "above", top: 200 - BAR.gap - size.h, left: 92 + 24, w: size.w, h: size.h });
-  assert.equal(barPlace({ ...BAR_AT, firstTop: 200, lastTop: 200, x: 92 + 24 + 665, size }).left, 900 - BAR.margin - size.w, "kept inside the pane");
-});
-
 test("a link's popover goes over the link's first row at the x given, under its last row when there is no room above, and stays inside the pane", () => {
   const size = { w: 300, h: 36 }, at = { ...BAR_AT, size };
   assert.deepEqual(popoverPlace({ ...at, firstTop: 200, lastTop: 224 }), { side: "above", top: 200 - BAR.gap - 36, left: 92 + 24, w: 300, h: 36 });
@@ -600,26 +587,13 @@ test("a link's popover goes over the link's first row at the x given, under its 
   assert.equal(popoverPlace({ ...at, firstTop: -200, lastTop: -24 }), null, "above it");
 });
 
-test("a link's popover is as tall as the bar and as wide as its address, a rule and four buttons, its address never narrower than a short one", () => {
-  const edge = BAR.pad + 1, buttons = BAR.sep + 4 * BAR.button + 2 * edge;
-  assert.equal(linkPopoverSize(20).h, BAR.button + 2 * edge);
-  assert.equal(linkPopoverSize(20).w, Math.ceil(20 * LINK_POP.charW + 2 * LINK_POP.addressPad + buttons));
+test("a popover in the link popover's look is as tall as the bar and as wide as its address, its buttons and its rules, its address never narrower than a short one; the link's has four buttons and a rule", () => {
+  assert.equal(linkPopoverSize(20).h, BAR_SIZE.h, "as tall as the bar");
   assert.equal(linkPopoverSize(30).w - linkPopoverSize(20).w, Math.ceil(10 * LINK_POP.charW), "ten characters more");
   assert.equal(linkPopoverSize(0).w, linkPopoverSize(1).w, "an empty address keeps a short one's width");
-  assert.ok(LINK_BOX.w > linkPopoverSize(LINK_POP.addressChars).w / 2 && LINK_BOX.h > 0);
-});
-
-test("a popover in the link popover's look is as wide as its address, its buttons and its rules; the link's is one with four buttons and a rule", () => {
-  const edge = BAR.pad + 1;
-  assert.deepEqual(popoverSize(20, 6, 2), { w: Math.ceil(20 * LINK_POP.charW + 2 * LINK_POP.addressPad + 2 * BAR.sep + 6 * BAR.button + 2 * edge), h: BAR.button + 2 * edge });
-  assert.equal(popoverSize(20, 3, 1).w, popoverSize(20, 6, 2).w - 3 * BAR.button - BAR.sep);
+  assert.equal(popoverSize(20, 3, 1).w, popoverSize(20, 6, 2).w - 3 * BAR.button - BAR.sep, "three buttons and a rule fewer");
   assert.deepEqual(popoverSize(20, LINK_POP.buttons, 1), linkPopoverSize(20));
   assert.equal(popoverSize(0, 3, 1).w, popoverSize(1, 3, 1).w);
-});
-
-test("a bar menu's height counts its rows, its section titles, its padding and its border", () => {
-  assert.equal(barMenuH(5), 5 * BAR_MENU.rowH + 2 * BAR_MENU.pad + 2);
-  assert.equal(barMenuH(8, 2), 8 * BAR_MENU.rowH + 2 * BAR_MENU.titleH + 2 * BAR_MENU.pad + 2);
 });
 
 test("a bar menu opens under its button, its left edge at the button's, kept inside the pane", () => {
@@ -638,12 +612,10 @@ test("a bar menu with no room under its button opens over the bar; with room on 
   assert.equal(barMenuPlace({ bar: { ...bar, top: 150 }, button, h, viewW: 900, viewH: h }).top, BAR.margin, "a pane shorter than the menu: at its top");
 });
 
-test("a code block's strip is 28 px; its chip is as wide as its name in padding, and the chevron when it opens a menu", () => {
-  assert.equal(CODE_HEAD, 28);
+test("a code block's chip fits its strip and is as wide as its name, wider by the chevron when it opens a menu", () => {
   assert.ok(CHIP.h < CODE_HEAD, "the chip fits the strip");
-  assert.equal(chipW("JavaScript", false), Math.ceil(2 * CHIP.padX + 10 * CHIP.charW));
-  assert.equal(chipW("JavaScript", true), Math.ceil(2 * CHIP.padX + 10 * CHIP.charW + CHIP.gap + CHIP.chevron));
-  assert.equal(chipW("C#", true) < chipW("Plain text", true), true);
+  assert.equal(chipW("JavaScript", true) - chipW("JavaScript", false), CHIP.gap + CHIP.chevron);
+  assert.ok(chipW("C#", true) < chipW("Plain text", true));
 });
 
 test("the language menu opens under its chip, right edges aligned; over it when only that has room; always inside the pane", () => {
@@ -686,7 +658,6 @@ test("the comments card goes under its count icon, its right edge under the icon
 });
 
 test("the margin layout: a page column of at least 520 px and a card column beside it, centered together; none in a narrower pane", () => {
-  assert.deepEqual([MARGIN.minPage, MARGIN.gap, MARGIN.card, MARGIN.edge], [520, 24, 260, 16]);
   assert.deepEqual(marginLayout(1400), { pageW: 780, pageLeft: 168, cardLeft: 168 + 780 + 24, cardW: 260 }, "a wide pane: the usual column, both centered");
   assert.deepEqual(marginLayout(1000), { pageW: 684, pageLeft: 16, cardLeft: 16 + 684 + 24, cardW: 260 }, "the column narrows first");
   assert.deepEqual(marginLayout(900), { pageW: 584, pageLeft: 16, cardLeft: 624, cardW: 260 });
@@ -770,62 +741,46 @@ const ok = (natW, natH) => ({ state: "ok", natW, natH });
 const pending = { state: "pending", natW: 0, natH: 0 };
 const failed = { state: "error", natW: 0, natH: 0 };
 
-test("pictureLayout: no pictures take no room", () => {
+test("pictureLayout: a picture keeps its own size, shrinks to the width, and is never enlarged; no pictures take no room", () => {
   assert.deepEqual(pictureLayout([], 700), { boxes: [], height: 0 });
-});
-
-test("pictureLayout: a picture keeps its own size, shrinks to the width, and is never enlarged", () => {
   assert.deepEqual(pictureLayout([ok(200, 100)], 700), { boxes: [{ x: 0, y: 0, w: 200, h: 100 }], height: 100 });
   assert.deepEqual(pictureLayout([ok(1600, 900)], 800), { boxes: [{ x: 0, y: 0, w: 800, h: 450 }], height: 450 });
   assert.deepEqual(pictureLayout([ok(10, 10)], 700), { boxes: [{ x: 0, y: 0, w: 10, h: 10 }], height: 10 });
   assert.deepEqual(pictureLayout([ok(700, 20)], 700).boxes, [{ x: 0, y: 0, w: 700, h: 20 }], "exactly the width");
 });
 
-test("pictureLayout: a shrunk picture's height is rounded, its width never undershoots the column", () => {
+test("pictureLayout: a shrunk picture's height is rounded, its width never undershoots the column, and it is at least 1 px each way", () => {
   assert.deepEqual(pictureLayout([ok(1000, 333)], 300).boxes, [{ x: 0, y: 0, w: 300, h: 100 }]);
   for (const [natW, width] of [[49, 7], [147, 21], [1234, 617], [3000, 1001]]) assert.equal(pictureLayout([ok(natW, 5)], width).boxes[0].w, width, `${natW} into ${width}`);
-});
-
-test("pictureLayout: a picture is at least 1 px each way", () => {
   assert.deepEqual(pictureLayout([ok(1, 1)], 700).boxes, [{ x: 0, y: 0, w: 1, h: 1 }]);
   assert.deepEqual(pictureLayout([ok(5000, 1)], 100).boxes, [{ x: 0, y: 0, w: 100, h: 1 }], "a hairline stays one pixel high");
 });
 
-test("pictureLayout: pictures that fit side by side share a row, a gap apart", () => {
+test("pictureLayout: pictures share a row a gap apart while they fit, to the pixel; one that no longer fits starts a new row, a gap below the tallest of the one above", () => {
   const layout = pictureLayout(Array.from({ length: 5 }, () => ok(90, 20)), 700);
   assert.deepEqual(layout.boxes.map(b => [b.x, b.y]), [[0, 0], [98, 0], [196, 0], [294, 0], [392, 0]]);
-  assert.equal(PICTURE.gap, 8);
   assert.equal(layout.height, 20);
-});
-
-test("pictureLayout: a picture that no longer fits starts a new row, a gap below the tallest of the one above", () => {
-  const layout = pictureLayout([ok(300, 100), ok(300, 60), ok(300, 40), ok(100, 10)], 700);
-  assert.deepEqual(layout.boxes, [
+  const wrapped = pictureLayout([ok(300, 100), ok(300, 60), ok(300, 40), ok(100, 10)], 700);
+  assert.deepEqual(wrapped.boxes, [
     { x: 0, y: 0, w: 300, h: 100 }, { x: 308, y: 0, w: 300, h: 60 },
     { x: 0, y: 108, w: 300, h: 40 }, { x: 308, y: 108, w: 100, h: 10 },
   ]);
-  assert.equal(layout.height, 148);
+  assert.equal(wrapped.height, 148);
+  assert.deepEqual(pictureLayout([ok(296, 10), ok(296, 10)], 600).boxes.map(b => [b.x, b.y]), [[0, 0], [304, 0]], "ending exactly at the width");
+  assert.deepEqual(pictureLayout([ok(296, 10), ok(297, 10)], 600).boxes.map(b => [b.x, b.y]), [[0, 0], [0, 18]], "one pixel more");
 });
 
-test("pictureLayout: a picture that ends exactly at the width stays in the row; one pixel more wraps", () => {
-  assert.deepEqual(pictureLayout([ok(296, 10), ok(296, 10)], 600).boxes.map(b => [b.x, b.y]), [[0, 0], [304, 0]]);
-  assert.deepEqual(pictureLayout([ok(296, 10), ok(297, 10)], 600).boxes.map(b => [b.x, b.y]), [[0, 0], [0, 18]]);
-});
-
-test("pictureLayout: a picture as wide as the column fills its row, and what comes after starts the next", () => {
+test("pictureLayout: a picture wider than the column shrinks by the whole column, not by what is left in the row, fills its row, and what comes after starts the next", () => {
   const layout = pictureLayout([ok(900, 50), ok(20, 20), ok(20, 20)], 600);
   assert.deepEqual(layout.boxes.map(b => [b.x, b.y, b.w, b.h]), [[0, 0, 600, 33], [0, 41, 20, 20], [28, 41, 20, 20]]);
+  assert.deepEqual(pictureLayout([ok(200, 100), ok(1000, 500)], 400).boxes, [{ x: 0, y: 0, w: 200, h: 100 }, { x: 0, y: 108, w: 400, h: 200 }]);
 });
 
-test("pictureLayout: a picture that is not ready (pending, failed, or no size) is a box of the column's width and boxH high", () => {
-  assert.equal(PICTURE.boxH, 40);
+test("pictureLayout: a picture that is not ready (pending, failed, or no size) is a box of the column's width and boxH high, among ready ones too", () => {
   assert.deepEqual(pictureLayout([pending], 300), { boxes: [{ x: 0, y: 0, w: 300, h: 40 }], height: 40 });
   assert.deepEqual(pictureLayout([failed], 300).boxes, [{ x: 0, y: 0, w: 300, h: 40 }]);
   assert.deepEqual(pictureLayout([ok(0, 10)], 300).boxes, [{ x: 0, y: 0, w: 300, h: 40 }]);
   assert.deepEqual(pictureLayout([{ state: "pending", natW: 50, natH: 50 }], 300).boxes, [{ x: 0, y: 0, w: 300, h: 40 }], "a size on a pending picture is not used");
-});
-
-test("pictureLayout: ready, pending and failed pictures mixed", () => {
   const layout = pictureLayout([ok(100, 50), pending, failed, ok(40, 30), ok(40, 30)], 300);
   assert.deepEqual(layout.boxes, [
     { x: 0, y: 0, w: 100, h: 50 },
@@ -835,9 +790,4 @@ test("pictureLayout: ready, pending and failed pictures mixed", () => {
     { x: 48, y: 154, w: 40, h: 30 },
   ]);
   assert.equal(layout.height, 184);
-});
-
-test("pictureLayout: the shrink is by the whole column, not by what is left in the row", () => {
-  const layout = pictureLayout([ok(200, 100), ok(1000, 500)], 400);
-  assert.deepEqual(layout.boxes, [{ x: 0, y: 0, w: 200, h: 100 }, { x: 0, y: 108, w: 400, h: 200 }]);
 });

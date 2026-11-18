@@ -210,6 +210,5 @@ export const Input = { new: state => makeElement("input", { state }) };
 export const Textarea = { new: state => makeElement("textarea", { state }) };
 
 export const TextView = {
-  html: (id, html) => makeElement("textview", { id: String(id), html }),
   markdown: (id, markdown) => makeElement("textview", { id: String(id), markdown }),
 };

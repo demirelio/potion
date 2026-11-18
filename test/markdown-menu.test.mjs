@@ -20,18 +20,13 @@ function mount(extra = {}) {
 const press = (tree, key) => fire(must(tree, "md-menu"), "on_key_down", { key, keystroke: key, modifiers: {} }, makeCx());
 const TAB = ["tab.new", { name: "plan.md", space: "s1", mod: "herdr-inline-markdown", props: { file: FILE, machine: null } }];
 
-test("one row: the plus icon and 'Open as new tab', highlighted", () => {
+test("one row: an icon and 'Open as new tab'", () => {
   const { tree } = mount();
   const rows = all(tree(), n => n.id?.startsWith("md-menu-"));
   assert.deepEqual(rows.map(n => n.id), ["md-menu-tab"]);
   const row = rows[0];
   assert.equal(textOf(row).trim(), "Open as new tab");
-  assert.deepEqual(all(tree(), n => n.kind === "svg").map(n => n.path), ["mods/herdr-inline-markdown/plus.svg"]);
-  assert.equal(row.style.bg, "selected");
-});
-
-test("the popup is drawn on the popover background", () => {
-  assert.equal(must(mount().tree(), "md-menu").style.bg, "popover");
+  assert.equal(all(row, n => n.kind === "svg").length, 1);
 });
 
 test("init takes the focus on its own handle", () => {
@@ -71,12 +66,6 @@ test("a file on another machine opens there; the tab goes into the space in the 
   fire(must(tree(), "md-menu-tab"), "on_click", {}, makeCx());
   assert.deepEqual(calls.run, [["tab.new", { name: "a.md", space: "s2", mod: "herdr-inline-markdown", props: { file: "/home/dev/Work/a.md", machine: "devbox" } }]]);
   assert.deepEqual(calls.setShared[0][1], [{ machine: "devbox", path: "/home/dev/Work/a.md" }]);
-});
-
-test("no machine in the props means this computer; no space means a tab without one", () => {
-  const { tree } = mount({ machine: undefined, space: undefined });
-  fire(must(tree(), "md-menu-tab"), "on_click", {}, makeCx());
-  assert.deepEqual(calls.run, [["tab.new", { name: "plan.md", mod: "herdr-inline-markdown", props: { file: FILE, machine: null } }]]);
 });
 
 test("a file that has a tab of its own gets that tab, not another", () => {

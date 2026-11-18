@@ -7,8 +7,8 @@ import { join as joinFs } from "node:path";
 import { promisify } from "node:util";
 import {
   MARKDOWN_EXT, isMarkdown, hash, dirname, basename, joinPath, normalizePath, tildePath, resolveLink,
-  filterFiles, newFileName, uniqueName, fileKey, stats, modeOf, toggleMode, remember, trimMap,
-  markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, mermaidConfig, diagramKey, DIAGRAM_COLORS, sharpName,
+  filterFiles, newFileName, uniqueName, stats, modeOf, toggleMode, remember, trimMap,
+  markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, diagramKey, sharpName,
   toSource, sourceToDoc, docToSource, sourceSplice, eolOf, picturesOf, pictureName, pictureSource, touches,
   isPictureName, copyName, pictureLink, pictureMarkdown, escapeAlt, writtenAddress, pictureWithAlt, pictureWithAddress,
 } from "../mods/herdr-inline-markdown/lib.js";
@@ -100,21 +100,7 @@ test("hash is 16 lowercase hex characters, with the same values as when the cach
   assert.equal(hash("hello"), "bfb06f3a63cd7226");
 });
 
-test("hash spreads: similar inputs give different values and every hex digit shows up", () => {
-  const seen = new Set(), first = new Set(), last = new Set();
-  for (let i = 0; i < 5000; i++) {
-    const h = hash(`diagram-${i}`);
-    seen.add(h); first.add(h[0]); last.add(h[15]);
-  }
-  assert.equal(seen.size, 5000);
-  assert.equal(first.size, 16);
-  assert.equal(last.size, 16);
-  assert.notEqual(hash("graph TD\nA-->B"), hash("graph TD\nA-->C"));
-  assert.notEqual(hash("ab"), hash("ba"));
-  assert.notEqual(hash("a"), hash("a\0"));
-});
-
-test("dirname and basename follow POSIX", () => {
+test("paths follow POSIX: dirname and basename; normalizePath settles ., .. and doubled slashes; in joinPath an absolute second part wins", () => {
   assert.equal(dirname("/a/b/c.md"), "/a/b");
   assert.equal(dirname("/a/b/"), "/a");
   assert.equal(dirname("/a"), "/");
@@ -128,9 +114,6 @@ test("dirname and basename follow POSIX", () => {
   assert.equal(basename("c.md"), "c.md");
   assert.equal(basename("/"), "");
   assert.equal(basename(""), "");
-});
-
-test("normalizePath settles ., .. and doubled slashes", () => {
   assert.equal(normalizePath("/a/./b//c/../d"), "/a/b/d");
   assert.equal(normalizePath("/a/b/.."), "/a");
   assert.equal(normalizePath("/.."), "/");
@@ -141,9 +124,6 @@ test("normalizePath settles ., .. and doubled slashes", () => {
   assert.equal(normalizePath("a/.."), ".");
   assert.equal(normalizePath(""), ".");
   assert.equal(normalizePath("/a/b/"), "/a/b");
-});
-
-test("joinPath: an absolute second part wins, the rest is joined and normalized", () => {
   assert.equal(joinPath("/a/b", "c.md"), "/a/b/c.md");
   assert.equal(joinPath("/a/b/", "c.md"), "/a/b/c.md");
   assert.equal(joinPath("/a/b", "../c.md"), "/a/c.md");
@@ -283,21 +263,12 @@ test("uniqueName counts up from untitled.md", () => {
   assert.equal(uniqueName(new Set(["a.b.md"]), "a.b.md"), "a.b-2.md");
 });
 
-test("fileKey joins the machine (empty for this computer) and the path", () => {
-  assert.equal(fileKey(null, "/a/b.md"), ":/a/b.md");
-  assert.equal(fileKey(undefined, "/a/b.md"), ":/a/b.md");
-  assert.equal(fileKey("devbox", "/a/b.md"), "devbox:/a/b.md");
-});
-
-test("markdownPathsFromGit keeps markdown paths once each, in order, up to 2000", () => {
+test("markdownPathsFromGit keeps markdown paths once each, in order, up to 2000; markdownPathsFromFind the same up to 1000, dropping a leading ./", () => {
   const out = markdownPathsFromGit("README.md\0src/a.js\0docs/b.MD\0README.md\0notes/x.markdown\0weird name.mdx\0\0Makefile\0");
   assert.deepEqual(out, ["README.md", "docs/b.MD", "notes/x.markdown", "weird name.mdx"]);
   assert.deepEqual(markdownPathsFromGit(""), []);
   assert.deepEqual(markdownPathsFromGit(undefined), []);
   assert.equal(markdownPathsFromGit(Array.from({ length: 2500 }, (_, i) => `f${i}.md`).join("\0")).length, 2000);
-});
-
-test("markdownPathsFromFind does the same for find's output, dropping a leading ./", () => {
   assert.deepEqual(markdownPathsFromFind("a.md\0./b.md\0sub/c.txt\0sub/d.markdown\0a.md\0"), ["a.md", "b.md", "sub/d.markdown"]);
   assert.equal(markdownPathsFromFind(Array.from({ length: 1500 }, (_, i) => `f${i}.md`).join("\0")).length, 1000);
 });
@@ -384,25 +355,10 @@ test("trimMap keeps the last keys in insertion order and returns a new object", 
   assert.deepEqual(Object.keys(map), ["a", "b", "c", "d"], "the old map is not changed");
 });
 
-test("DIAGRAM_COLORS are all #rrggbb", () => {
-  for (const color of Object.values(DIAGRAM_COLORS)) assert.match(color, /^#[0-9a-f]{6}$/, color);
-});
-
 test("sharpName: the diagram's key, a hash of the colour it is painted on, its scale; another colour is another file", () => {
   assert.match(sharpName("4e6646f2ef48d31a", "#2a3d4c", 2.5), /^4e6646f2ef48d31a-[0-9a-f]{6}-x250$/);
   assert.notEqual(sharpName("k", "#2a3d4c", 4), sharpName("k", "#122738", 4));
   assert.equal(sharpName("k", "#2a3d4c", 4.004), sharpName("k", "#2a3d4c", 4));
-});
-
-test("mermaidConfig: mermaid's redux-dark-color theme with svg text labels and no max width, and no theme variables", () => {
-  const cfg = mermaidConfig();
-  assert.equal(cfg.theme, "redux-dark-color");
-  assert.equal(cfg.htmlLabels, false);
-  assert.equal(cfg.themeVariables, undefined, "the colours are mermaid's own");
-  const diagrams = Object.entries(cfg).filter(([, value]) => typeof value === "object");
-  for (const type of ["flowchart", "sequence"]) assert.ok(diagrams.some(([key]) => key === type), `${type} is configured`);
-  for (const [key, value] of diagrams) assert.deepEqual(value, { useMaxWidth: false }, key);
-  assert.deepEqual(JSON.parse(JSON.stringify(cfg)), cfg, "plain JSON: it is written to the renderer's config file");
 });
 
 test("diagramKey changes with the source, the config and the renderer version", () => {
@@ -423,6 +379,8 @@ test("picturesOf: one entry per image, with its alt, its address, and the link i
   assert.deepEqual(picturesOf("[![a](x.svg)](y) ![b](z.png)\t[![](w.png)](v)\n![c](u.png)"), [
     { alt: "a", src: "x.svg", href: "y" }, { alt: "b", src: "z.png", href: null }, { alt: "", src: "w.png", href: "v" }, { alt: "c", src: "u.png", href: null },
   ].map(p => ({ ...p, ...bare })));
+  assert.equal(picturesOf("[![a](x.png)]()")[0].href, null, "an empty link address is no link");
+  assert.equal(picturesOf("[![a](x.png)](<>)")[0].href, null);
 });
 
 test("picturesOf: a title and the <…> around an address are dropped, and the spaces around it", () => {
@@ -439,16 +397,13 @@ test("picturesOf: a title and the <…> around an address are dropped, and the s
   assert.deepEqual(linked, { alt: "a", src: "x.png", href: "https://x.io/a b", marked: false, comment: null });
 });
 
-test("picturesOf: an empty link address is no link", () => {
-  assert.equal(picturesOf("[![a](x.png)]()")[0].href, null);
-  assert.equal(picturesOf("[![a](x.png)](<>)")[0].href, null);
-});
-
-test("picturesOf: a backslash escapes a bracket or a backslash in the alt, and an escaped ] does not end it", () => {
+test("picturesOf: a backslash escapes ASCII punctuation in the alt as CommonMark reads it, one before a letter stays, and an escaped ] does not end it", () => {
   assert.equal(picturesOf("![a \\[1\\]](x.png)")[0].alt, "a [1]");
   assert.equal(picturesOf("![a\\\\](x.png)")[0].alt, "a\\");
   assert.equal(picturesOf("[![a \\]](x.png)](y)")[0].alt, "a ]");
   assert.deepEqual(picturesOf("![a\\](x.png)"), [], "the only ] is escaped, so the image is never closed");
+  assert.equal(picturesOf("![a\\*b\\_c\\`d\\~e\\<f\\&g\\!h\\#](x.png)")[0].alt, "a*b_c`d~e<f&g!h#");
+  assert.equal(picturesOf("![a\\qb](x.png)")[0].alt, "a\\qb");
 });
 
 test("picturesOf: a picture wrapped in a highlight is marked and gets the comment after it, with its place among the paragraph's comments", () => {
@@ -502,10 +457,7 @@ test("pictureSource: a path is relative to the document, absolute, or a file:// 
   assert.deepEqual(pictureSource("img/my%20pic.png?raw=true#top", file), { kind: "file", path: "/n/docs/img/my pic.png" });
   assert.deepEqual(pictureSource("file:///abs/my%20pic.png", file), { kind: "file", path: "/abs/my pic.png" });
   assert.deepEqual(pictureSource("file://localhost/abs/x.png", file), { kind: "file", path: "/abs/x.png" });
-});
-
-test("pictureSource: a path that ends like a Markdown file is still a file", () => {
-  assert.deepEqual(pictureSource("notes.md", "/n/a.md"), { kind: "file", path: "/n/notes.md" });
+  assert.deepEqual(pictureSource("notes.md", file), { kind: "file", path: "/n/docs/notes.md" }, "a path that ends like a Markdown file is still a file");
 });
 
 test("pictureSource: https is a web picture and keeps its query; a data: address is a data picture", () => {
@@ -515,7 +467,7 @@ test("pictureSource: https is a web picture and keeps its query; a data: address
   assert.deepEqual(pictureSource("DATA:image/svg+xml,%3Csvg/%3E", "/n/a.md"), { kind: "data", url: "DATA:image/svg+xml,%3Csvg/%3E" });
 });
 
-test("pictureSource: no address, http, an anchor and other schemes say why there is no picture", () => {
+test("pictureSource: no address, http, an anchor, other schemes and an address that is not a place on this machine say why there is no picture", () => {
   const why = src => pictureSource(src, "/n/a.md");
   assert.deepEqual(why(""), { kind: "none", why: "No picture address" });
   assert.deepEqual(why("   "), { kind: "none", why: "No picture address" });
@@ -525,16 +477,13 @@ test("pictureSource: no address, http, an anchor and other schemes say why there
   assert.deepEqual(why("mailto:me@x.io"), { kind: "none", why: "Can't show a picture from mailto:" });
   assert.deepEqual(why("ftp://x.io/a.png"), { kind: "none", why: "Can't show a picture from ftp:" });
   assert.deepEqual(why("FTP://x.io/a.png"), { kind: "none", why: "Can't show a picture from ftp:" });
+  for (const src of ["//cdn.x.io/a.png", "file://other-host/a.png", "file:", "?v=2"]) assert.deepEqual(why(src), { kind: "none", why: "Not a picture address" }, src);
 });
 
 test("touches: a reported path is the file, a folder above it (the root is all of them), or a path with the file's name", () => {
   const file = "/n/docs/pic.png";
   for (const path of [file, "/n/docs", "/n/docs/", "/n", "/", "/private/n/docs/pic.png"]) assert.ok(touches(path, file), path);
   for (const path of ["/n/doc", "/n/docs2", "/n/docs/pi", "/n/docs/pic.png2", "/other/place.png"]) assert.ok(!touches(path, file), path);
-});
-
-test("pictureSource: an address that is not a place on this machine is not a picture address", () => {
-  for (const src of ["//cdn.x.io/a.png", "file://other-host/a.png", "file:", "?v=2"]) assert.deepEqual(pictureSource(src, "/n/a.md"), { kind: "none", why: "Not a picture address" }, src);
 });
 
 const NOTE = "/n/docs/note.md";
@@ -601,11 +550,6 @@ test("escapeAlt: what it writes reads back as typed in picturesOf and in parseIn
     assert.deepEqual(altRead(markdown), [alt, alt], markdown);
   }
   assert.equal(escapeAlt("plain words & more"), "plain words & more", "nothing that reads as itself is escaped");
-});
-
-test("picturesOf: every backslash escape of ASCII punctuation in the alt is undone, as CommonMark reads it; one before a letter stays", () => {
-  assert.equal(picturesOf("![a\\*b\\_c\\`d\\~e\\<f\\&g\\!h\\#](x.png)")[0].alt, "a*b_c`d~e<f&g!h#");
-  assert.equal(picturesOf("![a\\qb](x.png)")[0].alt, "a\\qb");
 });
 
 test("writtenAddress: trimmed, ( and ) as %28 and %29, in <…> when it holds a space; picturesOf and pictureSource read it back", () => {

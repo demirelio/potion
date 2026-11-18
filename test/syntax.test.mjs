@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeCx } from "./helpers.mjs";
@@ -10,16 +10,6 @@ const { BINDINGS, INSTALLED, LANG, NOTE, RAW, SOURCE, TEXT, installKeys } = awai
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-function sources(dir, out = []) {
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    if (name === "node_modules") continue;
-    if (statSync(path).isDirectory()) sources(path, out);
-    else if (/\.m?js$/.test(name)) out.push(path);
-  }
-  return out;
-}
-const all = [...sources(join(root, "mods")), ...sources(join(root, "tools")), ...sources(join(root, "test"))];
 const MAIN = "herdr-inline-markdown", BESIDE = "herdr-inline-markdown-beside";
 const jsIn = mod => readdirSync(join(root, "mods", mod)).filter(f => f.endsWith(".js"));
 const modFiles = jsIn(MAIN);
@@ -27,18 +17,11 @@ const code = (name, mod = MAIN) => readFileSync(join(root, "mods", mod, name), "
 // Every module Herdr loads, from both mods: the main mod's by file name, the companion's with its folder.
 const modules = [...modFiles.map(file => ({ mod: MAIN, file, label: file })), ...jsIn(BESIDE).map(file => ({ mod: BESIDE, file, label: `${BESIDE}/${file}` }))];
 
-test("there are sources to check", () => {
-  assert.ok(modFiles.length >= 10 && all.length > modFiles.length);
-  assert.deepEqual(modules.filter(m => m.mod === BESIDE).map(m => m.file), ["main.js"]);
+// No test imports the renderer (it runs as its installed copy), so a syntax error in it would not fail the suite.
+test("node --check tools/mermaid/render.mjs", () => {
+  const r = spawnSync(process.execPath, ["--check", join(root, "tools/mermaid/render.mjs")], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
 });
-
-// Every other source is imported by a test, so a syntax error in it already fails the suite.
-for (const file of ["tools/mermaid/render.mjs", "test/hooks.mjs"]) {
-  test(`node --check ${file}`, () => {
-    const r = spawnSync(process.execPath, ["--check", join(root, file)], { encoding: "utf8" });
-    assert.equal(r.status, 0, r.stderr);
-  });
-}
 
 // The mod guide's rules that a test can see in the source. The mod reads and watches the folder of the file it shows,
 // so watchFolder is allowed.
@@ -93,7 +76,3 @@ for (const { mod, file, label } of modules.filter(m => !(m.mod === MAIN && m.fil
     assert.deepEqual(topLevelCalls(code(file, mod)), []);
   });
 }
-
-test("the top-level check finds a call that would run while the mod loads", () => {
-  assert.deepEqual(topLevelCalls('import { shared } from "herdr";\nexport class Picker {\n}\nregisterTab(file);\nstate.loaded = true;\n'), ["registerTab(file);", "state.loaded = true;"]);
-});

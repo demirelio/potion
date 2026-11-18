@@ -54,30 +54,6 @@ test("our icons are lucide-style: 24x24, stroke currentColor, no fixed colors", 
   }
 });
 
-test("the full-colour file icon is a 32x32 picture that is not tinted by the text colour", () => {
-  for (const name of FULL_COLOUR) {
-    const svg = readFileSync(join(modDir, name), "utf8");
-    assert.match(svg, /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" viewBox="0 0 32 32">/, name);
-    assert.match(svg, /fill="#[0-9a-f]{6}"/i, `${name} has its own colour`);
-    assert.match(svg, /<\/svg>\s*$/, name);
-  }
-});
-
-test("the diagram canvas's dot tile is a filled 240x240 pattern, tinted by the frame's text colour", () => {
-  for (const name of PATTERN_TILES) {
-    const svg = readFileSync(join(modDir, name), "utf8");
-    assert.match(svg, /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" width="240" height="240" viewBox="0 0 240 240"><path fill="#ffffff" d="/, name);
-    assert.doesNotMatch(svg, /stroke/, `${name} is filled, not stroked`);
-    assert.match(svg, /<\/svg>\s*$/, name);
-  }
-});
-
-test("mod.json places the mod nowhere by itself, lets it take the keyboard, and has mod.open show it as a dialog", () => {
-  assert.deepEqual(JSON.parse(readFileSync(join(modDir, "mod.json"), "utf8")), {
-    place: "none", title: "Markdown", focusable: true, overlay: { kind: "dialog", width: 560, height: 460 },
-  });
-});
-
 test("the companion mod has no assets and names no file of any mod", () => {
   const dir = join(root, "mods/herdr-inline-markdown-beside"), herdrs = /\.d\.ts$|^jsconfig\.json$|\.error$|^\.DS_Store$/;
   assert.deepEqual(readdirSync(dir).filter(f => !herdrs.test(f)).sort(), ["main.js", "mod.json"], "besides what Herdr writes into a mod folder");

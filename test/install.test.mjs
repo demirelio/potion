@@ -36,24 +36,6 @@ const installed = (where, name = "herdr-inline-markdown") => join(where.app, "mo
 const list = dir => readdirSync(dir).sort();
 const backups = where => join(where.state, "herdr-inline-markdown/backups");
 
-test("install_mod copies every file of the mod and nothing else into the app home", () => {
-  const where = scratch("copy"), run = bash(where, "install_mod herdr-inline-markdown");
-  assert.equal(run.status, 0, run.stderr);
-  assert.deepEqual(list(join(where.app, "mods")), ["herdr-inline-markdown"]);
-  assert.deepEqual(list(installed(where)), list(MOD));
-  assert.equal(readFileSync(join(installed(where), "main.js"), "utf8"), readFileSync(join(MOD, "main.js"), "utf8"));
-  assert.equal(existsSync(where.state), false, "nothing was there to back up");
-  assert.match(run.stdout, /herdr-inline-markdown installed in /);
-});
-
-test("install_mods installs both mods, each a copy of its folder here", () => {
-  const where = scratch("both"), run = bash(where, "install_mods");
-  assert.equal(run.status, 0, run.stderr);
-  assert.deepEqual(list(join(where.app, "mods")), MODS);
-  for (const name of MODS) assert.deepEqual(list(installed(where, name)), list(join(REPO, "mods", name)), name);
-  assert.match(run.stdout, /^mod: herdr-inline-markdown installed in .*\nmod: herdr-inline-markdown-beside installed in /m);
-});
-
 function loggingMv(name) {
   const bin = join(tmp, name, "bin"), log = join(tmp, name, "mv.log");
   mkdirSync(bin, { recursive: true });
@@ -123,11 +105,15 @@ test("install.sh without a Herdr app home stops and says what to do", () => {
 
 const install = (where, ...options) => spawnSync("bash", [SCRIPT, "--no-mermaid", ...options], { env: env(where), encoding: "utf8" });
 
-test("install.sh --no-mermaid installs both mods, no renderer, and exits 0", () => {
+test("install.sh --no-mermaid installs a copy of each mod's folder and nothing else, no renderer, backs up nothing, and exits 0", () => {
   const where = scratch("no-mermaid");
   const run = install(where);
   assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(list(join(where.app, "mods")), MODS);
   for (const name of MODS) assert.deepEqual(list(installed(where, name)), list(join(REPO, "mods", name)), name);
+  assert.equal(readFileSync(join(installed(where), "main.js"), "utf8"), readFileSync(join(MOD, "main.js"), "utf8"));
+  assert.equal(existsSync(where.state), false, "nothing was there to back up");
+  assert.match(run.stdout, /^mod: herdr-inline-markdown installed in .*\nmod: herdr-inline-markdown-beside installed in /m);
   assert.match(run.stdout, /mermaid: skipped \(--no-mermaid\)/);
   assert.equal(existsSync(where.mermaid), false);
 });

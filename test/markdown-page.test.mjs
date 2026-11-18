@@ -7,7 +7,7 @@ import { makeCx, must } from "./helpers.mjs";
 
 const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
-const { CODE_HEAD, NOTES, RESIZE, lineX } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { CODE_HEAD, GRID, NOTES, RESIZE, lineX } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { BOX, CALIBRATED, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { gridOf } = await import("../mods/herdr-inline-markdown/grid.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
@@ -68,7 +68,7 @@ test("a table the grid draws is drawn in the cell style; the header's style is t
   const b = blocksOf("| a |\n|---|\n| b |\n")[0];
   assert.deepEqual(lookOf(b, true), { style: "cell", color: "foreground", look: "grid" });
   assert.deepEqual(lookOf(b).look, "boxed", "kept as source");
-  assert.deepEqual([STYLES.cell, STYLES.head], [{ size: 14, weight: 400, lh: 1.5 }, { size: 14, weight: 600, lh: 1.5 }]);
+  assert.deepEqual(STYLES.head, { ...STYLES.cell, weight: 600 });
   assert.ok(CALIBRATED.includes("cell") && CALIBRATED.includes("head"));
 });
 
@@ -98,19 +98,20 @@ test("a table drawn as a grid: its rows and cells, each cell's text by a TextVie
   assert.ok(all(el, n => Object.keys(n.handlers).length > 0).every(n => n.id), "every element with a handler has an id");
 });
 
-test("the grid's look: 1 px lines round it and between rows and columns, rounded 6 and clipped; the header on the surface at 600; cells padded 10 by 6 in the page font", () => {
-  const { el, d } = drawnGrid(), table = must(el, `md-table-${d.key}`), g = d.grid;
-  assert.deepEqual([table.style.w, table.style.border_1, table.style.border_color, table.style.rounded, table.style.overflow_hidden], [g.w, true, "border", 6, true]);
+test("the grid is drawn as its widths and row heights count it: as wide as the grid, a line round it, under each row but the last and right of each cell but the last, each cell in its padding; the header in the head style, the rows in the cell style, in the page font", () => {
+  const { el, d, owner } = drawnGrid(), table = must(el, `md-table-${d.key}`), g = d.grid;
+  assert.deepEqual([table.style.w, table.style.border_1], [g.w, true]);
   const [header, middle, last] = table.kids;
-  assert.deepEqual([header.style.bg, header.style.rounded_t, header.style.border_b, middle.style.bg, middle.style.border_b, last.style.border_b], ["surface", 5, 1, undefined, 1, undefined]);
-  const cells = middle.kids;
-  assert.deepEqual(cells.map(c => [c.style.w, c.style.px, c.style.py, c.style.border_r]), [[g.widths[0] + 1, 10, 6, 1], [g.widths[1] + 1, 10, 6, 1], [g.widths[2], 10, 6, undefined]]);
+  assert.deepEqual([header.style.border_b, middle.style.border_b, last.style.border_b], [GRID.line, GRID.line, undefined]);
+  const cell = (w, line) => [w, GRID.padX, GRID.padY, line];
+  assert.deepEqual(middle.kids.map(c => [c.style.w, c.style.px, c.style.py, c.style.border_r]), [cell(g.widths[0] + GRID.line, GRID.line), cell(g.widths[1] + GRID.line, GRID.line), cell(g.widths[2], undefined)]);
   const typeOf = (r, c) => {
     const view = all(must(table, `md-cell-${d.key}-${r}-${c}`), n => n.kind === "textview")[0], parent = all(table, n => n.kids.includes(view))[0];
-    return [parent.style.font_family, parent.style.text_size, parent.style.font_weight, parent.style.line_height, parent.style.text_color];
+    return [parent.style.font_family, parent.style.text_size, parent.style.font_weight, parent.style.line_height];
   };
-  assert.deepEqual(typeOf(0, 0), [".SystemUIFont", 14, 600, 1.5, "foreground"], "the header at 600");
-  assert.deepEqual(typeOf(1, 0), [".SystemUIFont", 14, 400, 1.5, "foreground"]);
+  const typed = st => [owner.fonts.sans, st.size, st.weight, st.lh];
+  assert.deepEqual(typeOf(0, 0), typed(STYLES.head), "the header");
+  assert.deepEqual(typeOf(1, 0), typed(STYLES.cell));
 });
 
 test("a centred column's text sits in a box as wide as the text, in the middle of its cell; a right one's at the right; left and none fill the cell", () => {

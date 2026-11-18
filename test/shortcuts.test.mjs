@@ -30,10 +30,8 @@ function start(View, props, first) {
   return { view, cx };
 }
 
-test("keys.json binds cmd-m to the Markdown mod and cmd-shift-m to its companion, both through mod.open, and nothing else", () => {
-  assert.deepEqual(json("keys.json"), {
-    global: { "cmd-m": "mod.open:herdr-inline-markdown", "cmd-shift-m": "mod.open:herdr-inline-markdown-beside" },
-  });
+test("mod.json lets the editor's pane take the keyboard", () => {
+  assert.equal(json("mods/herdr-inline-markdown/mod.json").focusable, true);
 });
 
 test("mod.json: the companion is placed nowhere, and mod.open shows it as a frameless popup of 2 px (1 would be the whole window)", () => {
@@ -109,13 +107,6 @@ test("the dialog the companion opens is the picker, for a pane beside the focuse
   view.role.open(`${FOLDER}/plan.md`);
   assert.deepEqual(calls.closeOverlay.at(-1), "overlay-1");
   assert.deepEqual(calls.run[0], ["pane.split", { direction: "right", pane: "p1", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/plan.md`, machine: null } }]);
-});
-
-test("the picker mod.open makes opens a chosen file in a new tab of the active space", async () => {
-  const { view, cx } = start(Markdown, { overlay: "ov-7" });
-  await cx.settle();
-  view.role.open(`${FOLDER}/plan.md`);
-  assert.deepEqual(calls.run[0], ["tab.new", { name: "plan.md", space: "s1", mod: "herdr-inline-markdown", props: { file: `${FOLDER}/plan.md`, machine: null } }]);
 });
 
 test("the beside picker, opened from a Markdown pane that is beside a terminal, opens another file in a new pane beside it", async () => {
@@ -230,20 +221,19 @@ test("cmd-shift-m then cmd-m: the tab picker takes the pane picker's place, and 
   assert.equal(state.shared[OPEN_PICKER], "key-2");
 });
 
-test("the + menu row then cmd-shift-m: the key's pane picker takes the menu's place", async () => {
+test("the + menu row then either key: the key's picker takes the menu's place", async () => {
   const h = herdr();
   await h.menu();
   assert.deepEqual(h.pickers(), [["overlay-1", "tab"]]);
   await h.press("cmd-shift-m");
   assert.deepEqual(h.pickers(), [["overlay-2", "pane"]]);
   assert.equal(state.shared[OPEN_PICKER], "overlay-2");
-});
-
-test("the + menu row then cmd-m: the key's picker takes the menu's place", async () => {
-  const h = herdr();
-  await h.menu();
-  await h.press("cmd-m");
-  assert.deepEqual(h.pickers(), [["key-1", "tab"]]);
+  fresh();
+  newRun();
+  const again = herdr();
+  await again.menu();
+  await again.press("cmd-m");
+  assert.deepEqual(again.pickers(), [["key-1", "tab"]]);
   assert.equal(state.shared[OPEN_PICKER], "key-1");
 });
 

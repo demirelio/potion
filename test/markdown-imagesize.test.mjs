@@ -57,10 +57,13 @@ test("bmp: little-endian signed width and height; a negative height is a top-dow
   assert.equal(sniffImage(bmp(0xffffffff, 10)), null, "a negative width");
 });
 
-test("svg: the width and height attributes, in numbers or px", () => {
+test("svg: the width and height attributes, in numbers or px, rounded to whole pixels and at least 1; a quoted > does not end the tag", () => {
   assert.deepEqual(sniffImage(text('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60"></svg>')), { type: "svg", ext: "svg", width: 120, height: 60 });
   assert.deepEqual(sniffImage(text("<svg width='100px' height=\"50.5px\"/>")), { type: "svg", ext: "svg", width: 100, height: 51 });
   assert.deepEqual(sniffImage(text('<svg\n  xmlns="x"\n  width = "7"\n  height="9">')), { type: "svg", ext: "svg", width: 7, height: 9 });
+  assert.deepEqual(sniffImage(text('<svg width="0.3" height="0.2">')), { type: "svg", ext: "svg", width: 1, height: 1 });
+  assert.deepEqual(sniffImage(text('<svg width="10.4" height="10.5">')), { type: "svg", ext: "svg", width: 10, height: 11 });
+  assert.deepEqual(sniffImage(text('<svg data-x="a>b" width="5" height="6">')), { type: "svg", ext: "svg", width: 5, height: 6 });
 });
 
 test("svg: a lone width or height takes the other from the viewBox's ratio; neither takes the viewBox's size", () => {
@@ -92,16 +95,7 @@ test("svg: only the first 64 KB are looked at, and a first tag that is not svg i
   assert.deepEqual(sniffImage(text(`<!--${"x".repeat(60000)}--><svg width="3" height="4">`)), { type: "svg", ext: "svg", width: 3, height: 4 });
 });
 
-test("svg: a quoted > in an attribute does not end the tag", () => {
-  assert.deepEqual(sniffImage(text('<svg data-x="a>b" width="5" height="6">')), { type: "svg", ext: "svg", width: 5, height: 6 });
-});
-
-test("sizes are rounded to whole pixels, at least 1", () => {
-  assert.deepEqual(sniffImage(text('<svg width="0.3" height="0.2">')), { type: "svg", ext: "svg", width: 1, height: 1 });
-  assert.deepEqual(sniffImage(text('<svg width="10.4" height="10.5">')), { type: "svg", ext: "svg", width: 10, height: 11 });
-});
-
-test("a zero size is no picture, in any format", () => {
+test("a zero size, or one that is not a finite number, is no picture, in any format", () => {
   assert.equal(sniffImage(png(0, 10)), null);
   assert.equal(sniffImage(png(10, 0)), null);
   assert.equal(sniffImage(gif(0, 5)), null);
@@ -110,9 +104,6 @@ test("a zero size is no picture, in any format", () => {
   assert.equal(sniffImage(vp8(0, 5)), null);
   assert.equal(sniffImage(text('<svg width="0" height="10">')), null);
   assert.equal(sniffImage(text('<svg width="10" height="0">')), null);
-});
-
-test("a size that is not a finite number is no picture", () => {
   assert.equal(sniffImage(text(`<svg width="${"9".repeat(400)}" height="5">`)), null);
 });
 

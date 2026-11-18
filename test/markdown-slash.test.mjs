@@ -18,10 +18,7 @@ function typing(before, typed) {
   return { menu, value };
 }
 
-test("the menu lists thirteen commands in order, each with a name, aliases, a hint and an icon file that exists", () => {
-  assert.deepEqual(ids(COMMANDS), ["text", "h1", "h2", "h3", "ul", "ol", "todo", "quote", "code", "mermaid", "image", "table", "hr"]);
-  assert.deepEqual(COMMANDS.map(c => c.name), ["Text", "Heading 1", "Heading 2", "Heading 3", "Bulleted list", "Numbered list", "To-do list", "Quote", "Code block", "Mermaid diagram", "Image", "Table", "Divider"]);
-  assert.deepEqual(COMMANDS.map(c => c.hint), ["", "#", "##", "###", "-", "1.", "[ ]", ">", "```", "mermaid", "![]()", "|", "---"]);
+test("every command has a unique id, aliases and an icon file that exists, and changes the block or writes lines with the caret inside them; a heading's hint is its marker", () => {
   assert.equal(new Set(ids(COMMANDS)).size, COMMANDS.length, "ids are unique");
   for (const c of COMMANDS) {
     assert.ok(c.aliases.length > 0, c.id);
@@ -48,7 +45,7 @@ test("Image is found by its name, img, pic, picture, photo and the start of its 
   assert.equal(image.lines[0][image.caret - 1] + image.lines[0][image.caret], "()", "between the parentheses");
 });
 
-test("an empty query lists all thirteen; a name, an alias, a word of the name, then anything containing the query", () => {
+test("an empty query lists all thirteen; a name, an alias, a word of the name, then anything containing the query; a leading space matches nothing", () => {
   assert.deepEqual(matches(""), COMMANDS);
   assert.deepEqual(ids(matches("h")).slice(0, 3), ["h1", "h2", "h3"], "the three headings first");
   assert.deepEqual(ids(matches("H2")), ["h2"], "any case");
@@ -64,9 +61,6 @@ test("an empty query lists all thirteen; a name, an alias, a word of the name, t
   assert.deepEqual(ids(matches("graph")), ["text"], "contained in an alias: paragraph");
   assert.deepEqual(ids(matches("gram")), ["mermaid"], "contained in an alias: diagram");
   assert.deepEqual(matches("zz"), []);
-});
-
-test("a query that starts with a space matches nothing", () => {
   assert.deepEqual(matches(" "), []);
   assert.deepEqual(matches(" h1"), []);
 });

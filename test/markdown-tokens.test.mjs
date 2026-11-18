@@ -88,15 +88,11 @@ test("an image shows a picture icon before its alt text; one with no alt text is
   assert.deepEqual(tokens("x ![](c.png)"), [["![](c.png)", "\u{200b}", "P:0"]]);
 });
 
-test("the word holding the caret is split into a token per letter, each keeping the marks next to it", () => {
+test("the word holding or touching the caret is split into a token per letter, each keeping the marks next to it; a caret one space away leaves it whole", () => {
   const value = "a **bold** b";
   assert.deepEqual(texts(value, caret(6)), ["**b", "o", "l", "d**"]);
   assert.deepEqual(tokens(value, caret(6)).map(t => t[1]), ["b", "o", "l", "d"]);
   assert.deepEqual(texts(value, caret(12)), ["**bold**"], "a caret on another word leaves it whole");
-});
-
-test("a word touching the caret at either edge is split too, and a caret one space away is not", () => {
-  const value = "a **bold** b";
   assert.deepEqual(texts(value, caret(2)), ["**b", "o", "l", "d**"]);
   assert.deepEqual(texts(value, caret(10)), ["**b", "o", "l", "d**"]);
   assert.deepEqual(texts(value, caret(11)), ["**bold**"]);

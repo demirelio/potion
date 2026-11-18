@@ -603,14 +603,11 @@ test("pictureBlock: a picture that failed is a box with one line: its alt text, 
   assert.equal(all(a, n => n.style.truncate === true).length, 1, "cut with an ellipsis, not wrapped");
 });
 
-test("pictureBlock: a picture with neither alt text nor an address is called Picture", () => {
-  const el = block([{ ...ERROR_ITEM, alt: "", src: "", error: "No picture address" }], [{ x: 0, y: 0, w: 300, h: 40 }]);
-  assert.equal(textOf(find(el, "pic-1-0")), "Picture: No picture address");
-});
-
-test("pictureBlock: a web address with no alt text is named by the last part of its path", () => {
+test("pictureBlock: a failed picture with no alt text is named by the last part of its address, else Picture", () => {
   const el = block([{ ...ERROR_ITEM, alt: "", src: "https://img.shields.io/badge/a-b.svg?style=flat", error: "Timed out" }], [{ x: 0, y: 0, w: 300, h: 40 }]);
   assert.equal(textOf(find(el, "pic-1-0")), "a-b.svg?style=flat: Timed out");
+  const nameless = block([{ ...ERROR_ITEM, alt: "", src: "", error: "No picture address" }], [{ x: 0, y: 0, w: 300, h: 40 }]);
+  assert.equal(textOf(find(nameless, "pic-1-0")), "Picture: No picture address");
 });
 
 test("pictureBlock: the picked picture has a 2 px accent ring a few px outside its box, over it; a loading or failed one too", () => {

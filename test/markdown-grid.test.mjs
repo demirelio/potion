@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parse, reparse } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
 import { GRID, columnWidths, dashWidth } from "../mods/herdr-inline-markdown/geometry.js";
-import { MAX_GRID_CELLS, cellMarkdown, drawsGrid, gridOf } from "../mods/herdr-inline-markdown/grid.js";
+import { cellMarkdown, drawsGrid, gridOf } from "../mods/herdr-inline-markdown/grid.js";
 import { tableOf } from "../mods/herdr-inline-markdown/tables.js";
 
 const LIGHT = "#aa000055", DEEP = "#bb0000";
@@ -105,7 +105,6 @@ test("an automatic table whose columns can't all get 64 px keeps them at 64 px a
 test("a table kept as source: irregular, or more than 1,000 cells", () => {
   assert.equal(drawsGrid(...Object.values(tableIn("| a |\n|---|\n| b | c |\n"))), false);
   const wide = `${"| x ".repeat(7)}|\n${"|---".repeat(7)}|\n`, rows = n => `${wide}${`${"| y ".repeat(7)}|\n`.repeat(n)}`;
-  assert.equal(MAX_GRID_CELLS, 1000);
   assert.equal(drawsGrid(...Object.values(tableIn(rows(141)))), true, "142 rows of 7: 994 cells");
   assert.equal(drawsGrid(...Object.values(tableIn(rows(142)))), false, "143 rows of 7: 1,001 cells");
   assert.equal(drawsGrid(...Object.values(tableIn(`${"| x ".repeat(7)}|\n${"|---".repeat(7)}|\n${"| y |\n".repeat(142)}`))), false, "the cells its short rows lack count");

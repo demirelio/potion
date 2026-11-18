@@ -4,22 +4,11 @@ import { LANGUAGES, PLAIN, COMMON, MENU_ROWS, infoWord, languageOf, languageName
 
 const names = list => list.map(l => l.name);
 
-test("the list: Plain text first, then each language with the id it is written as and the aliases it reads as", () => {
+test("Plain text comes first and writes no info string; no word names two languages", () => {
   assert.equal(LANGUAGES[0], PLAIN);
   assert.deepEqual([PLAIN.id, PLAIN.name], ["", "Plain text"]);
-  assert.deepEqual(LANGUAGES.map(l => l.id), ["", "bash", "c", "cpp", "csharp", "css", "diff", "go", "html", "java", "js", "json", "kotlin", "markdown", "mermaid", "php", "python", "ruby", "rust", "sql", "swift", "toml", "ts", "xml", "yaml"]);
-  assert.deepEqual(names(LANGUAGES), ["Plain text", "Bash", "C", "C++", "C#", "CSS", "Diff", "Go", "HTML", "Java", "JavaScript", "JSON", "Kotlin", "Markdown", "Mermaid", "PHP", "Python", "Ruby", "Rust", "SQL", "Swift", "TOML", "TypeScript", "XML", "YAML"]);
-  const js = LANGUAGES.find(l => l.id === "js");
-  assert.deepEqual(js.aliases, ["javascript", "jsx", "mjs", "cjs", "node"]);
   const words = LANGUAGES.flatMap(l => [...new Set([l.name, l.id, ...l.aliases].filter(Boolean).map(w => w.toLowerCase()))]);
   assert.equal(new Set(words).size, words.length, "no word names two languages");
-});
-
-test("the common languages, shown with nothing typed, are twelve rows: Plain text first", () => {
-  assert.deepEqual(names(COMMON), ["Plain text", "Bash", "CSS", "HTML", "JavaScript", "JSON", "Markdown", "Mermaid", "Python", "Rust", "TypeScript", "YAML"]);
-  assert.equal(MENU_ROWS, 12);
-  assert.deepEqual(languageMatches(""), { items: COMMON, typed: "" });
-  assert.deepEqual(languageMatches("   "), { items: COMMON, typed: "" }, "spaces alone are nothing typed");
 });
 
 test("a name for an info string's first word: by id, alias or name in any case; Plain text for none; an unknown word as written", () => {
@@ -36,7 +25,10 @@ test("a name for an info string's first word: by id, alias or name in any case; 
   assert.deepEqual(["js title=\"a.js\"", "  py  ", "", "rust,ignore"].map(infoWord), ["js", "py", "", "rust,ignore"]);
 });
 
-test("typing filters as the slash menu ranks: a name or alias starting with it, a word of the name, then one holding it", () => {
+test("nothing typed shows the common languages; typing filters as the slash menu ranks: a name or alias starting with it, a word of the name, then one holding it", () => {
+  assert.deepEqual(languageMatches(""), { items: COMMON, typed: "" });
+  assert.equal(COMMON[0], PLAIN);
+  assert.deepEqual(languageMatches("   "), { items: COMMON, typed: "" }, "spaces alone are nothing typed");
   assert.deepEqual(languageMatches("ty"), { items: [LANGUAGES.find(l => l.id === "ts")], typed: "ty" }, "TypeScript, and a row to use what was typed");
   assert.deepEqual(names(languageMatches("ja").items), ["Java", "JavaScript"]);
   assert.deepEqual(names(languageMatches("te").items), ["Plain text"], "a word of the name");

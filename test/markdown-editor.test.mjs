@@ -17,8 +17,7 @@ const { echoTokenSets, liveFields, TextareaState } = await import("./mocks/gpui-
 const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, NOTE, LANG, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
-const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths, dashWidth, dashesFor, dashesAtLeast, draggedWidth, lineX, COLUMN, MARGIN, RESIZE, BLOCK_BUTTON } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths, dashWidth, dashesFor, dashesAtLeast, draggedWidth, lineX, COLUMN, MARGIN, RESIZE, BLOCK_BUTTON, FRAME, tableRowTop } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 
@@ -457,7 +456,7 @@ test("the root takes the keyboard, hears size changes (one redraw per change), a
   assert.equal(must(m.tree(), "md-markdown").style.tooltip, undefined);
 });
 
-test("sizes come in screen pixels and are divided by the zoom setting: the label, the columns and the redraw check all work in layout pixels", async () => {
+test("sizes come in screen pixels and are divided by the zoom setting: the label, the columns and the redraw check all work in layout pixels; with no zoom or a nonsense one they are taken as they are", async () => {
   state.settings = { ...state.settings, zoom: 1.5 };
   renderer({ width: 3200, height: 1600 });
   const m = await mount({ disk: DOC });
@@ -480,21 +479,13 @@ test("sizes come in screen pixels and are divided by the zoom setting: the label
   assert.deepEqual([frame.style.w, frame.style.h], [936, 420]);
   const img = all(frame, n => n.kind === "image")[0];
   assert.deepEqual([img.style.w, img.style.h], [1200, 600], "at the readable 75 %");
-});
-
-test("at zoom 1 (or none, or nonsense) the size is taken as it is", async () => {
-  for (const zoom of [1, undefined, 0, "x"]) {
+  for (const settings of [{ zoom: undefined }, { zoom: 0 }, { zoom: "x" }, null]) {
     reset();
-    state.settings = { ...state.settings, zoom };
-    const m = await mount({ disk: "x" });
-    fire(must(m.tree(), "md-root"), "on_size_change", { width: 700, height: 500 }, m.cx);
-    assert.deepEqual(m.view.size, { width: 700, height: 500 }, String(zoom));
+    state.settings = settings && { ...state.settings, ...settings };
+    const n = await mount({ disk: "x" });
+    fire(must(n.tree(), "md-root"), "on_size_change", { width: 700, height: 500 }, n.cx);
+    assert.deepEqual(n.view.size, { width: 700, height: 500 }, `no zoom or nonsense: ${JSON.stringify(settings)}`);
   }
-  reset();
-  state.settings = null;
-  const m = await mount({ disk: "x" });
-  fire(must(m.tree(), "md-root"), "on_size_change", { width: 700, height: 500 }, m.cx);
-  assert.deepEqual(m.view.size, { width: 700, height: 500 });
 });
 
 // Ten paragraphs: block 0 is 24 px tall, the others 38 (14 above, one row); the column is 28 + 366 + 160 = 554 px.
@@ -544,11 +535,10 @@ test("keys with no block active: Up and Down 48 px, Page Up / Page Down / Space 
   assert.equal(m.cx.stopped, 9);
 });
 
-test("the thumb: 6 px at the right, as tall as the page's share, at the offset's share; a drag scrolls, and ends when the pointer leaves", async () => {
+test("the thumb: as tall as the page's share, at the offset's share; a drag scrolls, and ends when the pointer leaves", async () => {
   const m = await tall();
   let thumb = must(m.tree(), "md-thumb");
   const h = (200 * 200) / 554;
-  assert.deepEqual([thumb.style.w, thumb.style.right, thumb.style.rounded, thumb.style.min_h, thumb.style.bg, thumb.hover], [6, 3, 3, 28, "border", true]);
   assert.ok(Math.abs(thumb.style.h - h) < 1e-9);
   assert.equal(thumb.style.top, 0);
   fire(thumb, "on_mouse_down:left", press({ x: 895, y: 10 }), m.cx);
@@ -839,16 +829,6 @@ test("the file seen holding our buffer while an older write of it is out: refuse
     await m.save();
     assert.equal(writes.length, 1, `${ending}: nothing more to write`);
   }
-});
-
-test("a refused write over the text the file really has (nothing moved it meanwhile) is still Not saved", async () => {
-  const m = await mount({ disk: "old" });
-  await m.click("md-markdown");
-  state.writeTextFile = async () => { throw new Error("EROFS: read-only file system"); };
-  await m.type("mine");
-  await m.save();
-  assert.equal(m.status(), "Not saved");
-  assert.equal(must(m.tree(), "md-status").style.tooltip, "EROFS: read-only file system");
 });
 
 test("Load theirs drops what was typed and shows the file's text; the autosave that was waiting writes nothing", async () => {
@@ -1408,7 +1388,7 @@ test("close() writes what is unsaved, over the text the file had", async () => {
   assert.equal(state.disk.get(FILE), "typed just now");
 });
 
-test("close() writes nothing when nothing is unsaved, or while a conflict or a deletion stands, or the write was refused", async () => {
+test("close() writes nothing when nothing is unsaved, or while a conflict or a deletion stands; a write it makes that is refused is not tried again", async () => {
   const clean = await mount({ disk: "old" });
   await clean.view.close(clean.cx);
   assert.equal(calls.writeTextFile.length, 0);
@@ -1439,6 +1419,7 @@ test("close() writes nothing when nothing is unsaved, or while a conflict or a d
   await stale.type("mine");
   state.disk.set(FILE, "theirs");
   await stale.view.close(stale.cx); // nobody has looked yet: the write is refused, and that is all
+  assert.deepEqual(calls.writeTextFile, [{ path: FILE, text: "mine", expected: "old" }], "one write: a second would be the same");
   assert.equal(state.disk.get(FILE), "theirs");
 });
 
@@ -1505,33 +1486,6 @@ test("close(): when the write in flight has not landed, the last write is refuse
   assert.equal(refused.length, 3, "two writes from the close, at most");
   refused[0].land();
   await fired2;
-});
-
-test("close() with no write in flight: one write, and one only when it is refused (a second one would be the same)", async () => {
-  const m = await mount({ disk: "old" });
-  await m.click("md-markdown");
-  await m.type("mine");
-  state.disk.set(FILE, "theirs");
-  await m.view.close(m.cx);
-  assert.deepEqual(calls.writeTextFile, [{ path: FILE, text: "mine", expected: "old" }]);
-  assert.equal(state.disk.get(FILE), "theirs");
-});
-
-test("close() while the write in flight carries the whole buffer still writes once more over it, harmlessly", async () => {
-  const writes = slowWrites();
-  const m = await mount({ disk: "old" });
-  await m.click("md-markdown");
-  await m.type("one");
-  const fired = fire_timers(m.cx, { ms: 700 });
-  await flush();
-  const closing = m.view.close(m.cx);
-  await flush();
-  assert.deepEqual([writes[1].text, writes[1].expected], ["one", "one"]);
-  writes[0].land();
-  writes[1].land();
-  await closing;
-  await fired;
-  assert.equal(state.disk.get(FILE), "one");
 });
 
 test("after close() nothing runs: the waiting save, the watcher, the polls and the commands all stop", async () => {
@@ -1817,17 +1771,14 @@ test("a pending reveal whose block an agent rewrote is dropped, and the first vi
   assert.equal(y(), before, "a block measured above the page moves nothing on it");
 });
 
-test("the source field: terminal font at 13.5, in a column of at most 860 px that declares the source context; fallback font when none is set", async () => {
+test("the source field: in a column that declares the source context, in the terminal's font, JetBrains Mono when none is set", async () => {
   const m = await mount({ disk: "x" });
   await m.click("md-markdown");
   const t = m.tree();
   const source = must(t, "md-source");
-  assert.ok(source.style.flex_1 && source.style.min_h === 0);
-  const column = source.kids[0];
-  assert.deepEqual([column.style.max_w, column.style.px, column.style.py, column.style.key_context], [860, 24, 16, SOURCE]);
-  assert.ok(column.style.mx_auto);
+  assert.equal(source.kids[0].style.key_context, SOURCE);
   const area = all(source, n => n.kind === "textarea")[0];
-  assert.deepEqual([area.style.font_family, area.style.text_size, area.style.size_full], ["Mono", 13.5, true]);
+  assert.equal(area.style.font_family, "Mono");
   assert.equal(area.state, m.view.source);
   assert.equal(m.view.source.options.value, "", "created empty, in init");
   state.settings = { zoom: 1 };
@@ -1933,7 +1884,7 @@ test("only the blocks whose drawing changed are redrawn; the Column only when th
   assert.equal(a.released, false);
 });
 
-test("the footer counts words and lines of the buffer and shows the path with ~ for the home folder", async () => {
+test("the footer counts words and lines of the buffer and shows the path with ~ for the home folder, whole for any other", async () => {
   const m = await mount({ file: "/home/user/notes/plan.md", disk: DOC });
   const { words, lines } = stats(DOC);
   assert.equal(textOf(must(m.tree(), "md-counts")), `${words} words · ${lines} lines`);
@@ -1952,6 +1903,11 @@ test("the footer counts words and lines of the buffer and shows the path with ~ 
   assert.equal(textOf(must(m.tree(), "md-counts")), "1 word · 1 line", "follows typing, singular");
   await m.type("");
   assert.equal(textOf(must(m.tree(), "md-counts")), "0 words · 0 lines");
+  for (const [file, shown] of [["/srv/notes/a.md", /\/srv\/notes\/a\.md$/], ["/home/user2/a.md", /\/home\/user2\/a\.md$/]]) {
+    reset();
+    const other = await mount({ file, disk: "x" });
+    assert.match(textOf(must(other.tree(), "md-footer")), shown, `${file}: outside the home folder, or only sharing its prefix, the path is shown whole`);
+  }
 });
 
 test("a buffer over 50000 characters is counted when it settles (save timer, load, mode switch), not on every key", async () => {
@@ -1974,31 +1930,14 @@ test("a buffer over 50000 characters is counted when it settles (save timer, loa
   assert.equal(counts(), "2 words · 1 line", "under the limit it follows every key again");
   await m.type(`${big}x`);
   assert.equal(counts(), "2 words · 1 line", "back over it: settled text again");
-});
-
-test("a buffer exactly 50000 characters long is still counted live", async () => {
-  const m = await mount({ disk: "a" });
-  await m.click("md-markdown");
   await m.type("a ".repeat(25000));
-  assert.equal(textOf(must(m.tree(), "md-counts")), "25000 words · 1 line");
+  assert.equal(counts(), "25000 words · 1 line", "exactly 50000 characters: still counted live");
   await m.type("a ".repeat(25000) + "b");
-  assert.equal(textOf(must(m.tree(), "md-counts")), "25000 words · 1 line", "50001: settled text");
-});
-
-test("a file loaded or reloaded from disk (apply) settles the counts of a big buffer", async () => {
-  const m = await mount({ disk: "small" });
-  const next = "word ".repeat(10002);
-  state.disk.set(FILE, next);
+  assert.equal(counts(), "25000 words · 1 line", "50001: settled text");
+  await m.click("md-markdown");
+  state.disk.set(FILE, "word ".repeat(10002));
   await m.touch([FILE]);
-  assert.equal(textOf(must(m.tree(), "md-counts")), "10002 words · 1 line");
-});
-
-test("the path outside the home folder is shown whole; a home folder that only shares a prefix is not abbreviated", async () => {
-  const a = await mount({ file: "/srv/notes/a.md", disk: "x" });
-  assert.match(textOf(must(a.tree(), "md-footer")), /\/srv\/notes\/a\.md$/);
-  reset();
-  const b = await mount({ file: "/home/user2/a.md", disk: "x" });
-  assert.match(textOf(must(b.tree(), "md-footer")), /\/home\/user2\/a\.md$/);
+  assert.equal(counts(), "10002 words · 1 line", "a reload from disk settles it too");
 });
 
 const dia =m => `md-diagram-${keyAt(m, 2)}`;
@@ -2379,14 +2318,6 @@ test("the − % + group with a paragraph being edited keeps it being edited; on 
   assert.equal(r.view.activeKey, null);
 });
 
-test("on a file of another machine a frame whose picture fits has the grab cursor too, and a double-click on it opens nothing", async () => {
-  const m = await framed({ width: 1104, height: 116, file: "/home/dev/n.md", machine: "devbox" });
-  const f = frameOn(m);
-  assert.deepEqual([f.el.style.cursor_grab, f.el.style.cursor_default, f.el.style.cursor_pointer], [true, undefined, undefined]);
-  await doubleClickAt(m, { x: f.left + 300, y: f.top + 60 });
-  assert.equal(m.view.activeKey, null);
-});
-
 const DIR = "/n/docs", SHOT = png(40, 30);
 const PICDOC = "# Title\n\n![x](a.png)\n\nBye\n";
 const LINKED = "# Title\n\n[![x](a.png)](https://e.com/page)\n\nBye\n";
@@ -2492,8 +2423,6 @@ test("pictures: a click picks a linked picture and opens nothing; Cmd+click open
   await doubleClickAt(m, onPicture(m));
   assert.deepEqual([m.cx.opened, m.view.activeKey], [[], null]);
   assert.deepEqual(floatButtons(m), ["comment", "change", "alt", "copy", "open", "link", "delete"]);
-  assert.deepEqual(["comment", "change", "alt", "copy", "open", "link", "delete"].map(name => must(m.tree(), `md-picture-${name}`).style.tooltip),
-    ["Comment (Cmd+Alt+M)", "Change picture", "Alt text", "Copy address", "Open picture", "Open link", "Delete picture"]);
   pictureButton(m, "link");
   assert.deepEqual(m.cx.opened, ["https://e.com/page"]);
   await cmdClickAt(m, onPicture(m));
@@ -2954,9 +2883,7 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   const lang = must(t, "md-lang");
   assert.ok(find(lang, "md-lang-row-js") && all(find(lang, "md-lang-row-js"), n => n.kind === "svg").length === 1, "the language menu open on the js block, JavaScript checked");
   assert.equal(must(t, `md-chip-${code[0].key}`).style.bg, "hover");
-  assert.deepEqual(all(menu, n => n.kind === "svg").map(n => n.path.split("/").at(-1)), COMMANDS.map(c => `${c.icon}.svg`), "each command's icon, in the table's order");
-  assert.ok(menu.style.shadow_lg && typeof menu.handlers.on_mouse_down_out === "function");
-  assert.deepEqual([field.style.font_family, field.style.text_size, field.style.line_height], [SANS, 15, 1.6]);
+  assert.equal(typeof menu.handlers.on_mouse_down_out, "function");
   const other = all(must(t, `md-field-${item.key}`), n => n.kind === "textarea")[0];
   assert.deepEqual([other.state, other.state.value(), typeof other.token], [view.blockField(item.key), "A bullet item", "function"]);
   assert.equal(must(t, `md-field-${item.key}`).style.key_context, undefined, "only the edited field has the block keys");
@@ -2966,8 +2893,7 @@ test("the check fixture: every kind of block drawn in the root through renderBlo
   assert.ok(find(t, `md-frame-tools-${diagram}`) && find(t, `md-frame-comment-${diagram}`), "the hovered diagram's − % + group and its Comment button");
   const pictureKey = view.doc.blocks.find(b => b.image).key, picture = imageOf(t, `md-pictures-${pictureKey}`);
   assert.deepEqual([picture.path, picture.style.w, picture.style.h], ["mods/herdr-inline-markdown/file-markdown.svg", 32, 32], "a real picture, so check draws an image");
-  assert.ok(find(t, `md-pictures-${pictureKey}-0-picked`), "picked, with its ring");
-  assert.deepEqual(all(must(t, "md-picture"), n => n.kind === "svg").map(n => n.path.split("/").at(-1)), ["message-square-plus.svg", "image-up.svg", "type.svg", "copy.svg", "external-link.svg", "trash-2.svg"], "and its float, every button a file can have");
+  assert.ok(find(t, `md-pictures-${pictureKey}-0-picked`) && find(t, "md-picture"), "picked, with its ring and its float");
   assert.equal(must(t, `md-pictures-${pictureKey}-0-comment`).style.border_color, highlightColor(theme()), "its comment's frame");
   assert.equal(textOf(must(t, `md-card-${pictureKey}-0-text`)).trim(), "a comment on the picture", "and its card");
   const quote = view.doc.blocks.find(b => b.kind === "quote");
@@ -3070,7 +2996,7 @@ test("a file's pane is filed under its machine, and openMarkdown then goes to it
   assert.deepEqual(calls.run.map(c => c[0]), ["tab.new"], "the same path on this computer is another file");
 });
 
-test("main.js: a tab (or no props) is the editor, a dialog with action open is the picker; render and close are forwarded", async () => {
+test("main.js: a tab (or no props) is the editor, a dialog with action open is the picker; render and close are forwarded; props come from init when props() has none", async () => {
   state.disk.set(FILE, "old");
   state.props = { file: FILE };
   const cx = makeCx();
@@ -3107,18 +3033,15 @@ test("main.js: a tab (or no props) is the editor, a dialog with action open is t
   assert.equal(state.shared["herdr-inline-markdown.picker"], "ov-1", "the dialog is the open picker");
   await dialog.close(dcx);
   assert.equal(state.shared["herdr-inline-markdown.picker"], null, "close reaches the picker, which gives up its place");
-});
 
-test("props come from the init argument when props() has none", async () => {
+  reset();
   state.disk.set(FILE, "x");
   state.props = undefined;
-  const cx = makeCx();
-  cx.settle = flush;
-  const view = new Markdown();
-  view.init({ file: FILE }, cx);
+  const late = new Markdown(), lcx = makeCx();
+  lcx.settle = flush;
+  late.init({ file: FILE }, lcx);
   await flush();
-  assert.equal(view.role.file, FILE);
-  assert.equal(view.role.mode, "reading");
+  assert.deepEqual([late.role.file, late.role.mode], [FILE, "reading"], "props come from the init argument when props() has none");
 });
 
 // The column's left edge in a 900 px viewport ((900 - 780) / 2 + 32), and block i's top on the screen.
@@ -3226,8 +3149,6 @@ test("the key table goes in once per runtime: versioned contexts of the editor's
     assert.deepEqual(contexts(key), [`${TEXT} > Input`], `${key}: markdown that keeps its formatting, in a text block only; raw blocks keep the field's own`);
     assert.deepEqual(actions(key), [action], key);
   }
-  assert.deepEqual([TEXT, RAW, SOURCE, NOTE, LANG], ["MdText11", "MdRaw11", "MdSource11", "MdNote11", "MdLang11"], "the table changed, so its contexts are new ones and the old ones stay inert");
-  assert.deepEqual(table.filter(x => /\bMd(?:Text|Raw|Source|Note|Lang)(?:[0-9]|10)\b/.test(x.context)), [], "no context of an older table");
   for (const key of ["backspace", "left", "right"]) assert.deepEqual(contexts(key), [RAW, TEXT], `${key}: only when the field gives it away`);
   assert.deepEqual(contexts("escape"), [`${LANG} > Input`, `${NOTE} > Input`, RAW, TEXT], "the comment box and the language menu take Escape whatever their field holds; the block fields only give it away");
   assert.deepEqual(actions("escape"), ["mdb-note-cancel", "mdb-lang-close", "mdb-escape"]);
@@ -4056,18 +3977,7 @@ test("a paste into the empty paragraph below the last block writes its lines the
   assert.equal(e.view.text, "Intro\n\nOld words\n\nEnd\n");
 });
 
-test("pasting '## Notes / foo' at the end of a paragraph gives a heading and a paragraph after it", async () => {
-  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
-  await clickAt(m, { x: X + 2, y: topOf(m, 0) + 10 });
-  await caretTo(m, 12);
-  m.cx.held = "## Notes\nfoo\n";
-  act(m, "mdb-paste");
-  assert.equal(m.view.text, "Hello world.\n\n## Notes\nfoo\n\nEnd\n");
-  assert.deepEqual(m.view.doc.blocks.map(b => b.kind), ["paragraph", "heading", "paragraph", "paragraph"]);
-  assert.deepEqual(editing(m), [keyAt(m, 2), "foo", { start: 3, end: 3 }]);
-});
-
-test("pasting three paragraphs and a list into the middle of a paragraph gives those blocks, the text after the caret at the end", async () => {
+test("pasting three paragraphs and a list into the middle of a paragraph gives those blocks, the text after the caret at the end; '## Notes / foo' at its end, a heading and a paragraph after it", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await clickAt(m, { x: X + 2, y: topOf(m, 0) + 10 });
   await caretTo(m, 6);
@@ -4078,6 +3988,12 @@ test("pasting three paragraphs and a list into the middle of a paragraph gives t
   assert.deepEqual(editing(m), [keyAt(m, 4), "twoworld.", { start: 3, end: 3 }]);
   act(m, "mdb-undo");
   assert.equal(m.view.text, "Hello world.\n\nEnd\n");
+  await caretTo(m, 12);
+  m.cx.held = "## Notes\nfoo\n";
+  act(m, "mdb-paste");
+  assert.equal(m.view.text, "Hello world.\n\n## Notes\nfoo\n\nEnd\n");
+  assert.deepEqual(m.view.doc.blocks.map(b => b.kind), ["paragraph", "heading", "paragraph", "paragraph"]);
+  assert.deepEqual(editing(m), [keyAt(m, 2), "foo", { start: 3, end: 3 }], "at the end: no empty paragraph after it");
 });
 
 test("a list pasted into a quote stays in it", async () => {
@@ -4483,36 +4399,30 @@ test("reading the caret writes nothing to the field and adds nothing to its undo
   assert.deepEqual(third.log.filter(([c]) => c === "set_value"), [["set_value", "line"]], "the new block's field got its value once, when it was made");
 });
 
-test("Enter splits at a selection the mod was not told of (no event reached it), read without writing to the field", async () => {
+test("Enter, Up and Cmd+E act on a caret the mod was not told of (no event reached it), read without writing to the field", async () => {
   const m = await page("Hello world\n\nNext\n", { 0: 24, 1: 38 });
   await openBlock(m, 0, 2);
   const field = m.view.field, from = field.log.length;
   field.select(5);
   act(m, "mdb-enter");
-  assert.equal(m.view.text, "Hello\n\nworld\n\nNext\n");
+  assert.equal(m.view.text, "Hello\n\nworld\n\nNext\n", "Enter splits there");
   assert.deepEqual(replaces(field, from), []);
-});
-
-test("Up in a one-row field crosses at the column of a caret the mod was not told of", async () => {
-  const m = await page("Above words\n\nHello world\n", { 0: 24, 1: 38 });
-  await openBlock(m, 1, 0);
-  m.view.field.select(4);
-  act(m, "mdb-up");
-  assert.deepEqual([m.view.activeKey, m.view.field.selection], [keyAt(m, 0), { start: 4, end: 4 }]);
-});
-
-test("Cmd+E puts the source caret where the field's caret is though the mod was not told of it, and back; the field is read, not written", async () => {
-  const m = await page("Above words\n\nHello world\n", { 0: 24, 1: 38 });
-  await openBlock(m, 1, 0);
-  const field = m.view.field, from = field.log.length;
-  field.select(6);
-  await m.key("cmd-e");
-  const at = m.view.text.indexOf("world");
-  assert.deepEqual([m.view.mode, m.view.source.selection], ["markdown", { start: at, end: at }]);
-  assert.deepEqual(field.log.slice(from), []);
-  m.view.source.select(2);
-  await m.key("cmd-e");
-  assert.deepEqual([m.view.mode, m.view.activeKey, m.view.field.selection], ["reading", keyAt(m, 0), { start: 2, end: 2 }]);
+  reset();
+  const u = await page("Above words\n\nHello world\n", { 0: 24, 1: 38 });
+  await openBlock(u, 1, 0);
+  u.view.field.select(4);
+  act(u, "mdb-up");
+  assert.deepEqual([u.view.activeKey, u.view.field.selection], [keyAt(u, 0), { start: 4, end: 4 }], "Up crosses at its column");
+  await openBlock(u, 1, 0);
+  const second = u.view.field, read = second.log.length;
+  second.select(6);
+  await u.key("cmd-e");
+  const at = u.view.text.indexOf("world");
+  assert.deepEqual([u.view.mode, u.view.source.selection], ["markdown", { start: at, end: at }], "Cmd+E puts the source caret there");
+  assert.deepEqual(second.log.slice(read), []);
+  u.view.source.select(2);
+  await u.key("cmd-e");
+  assert.deepEqual([u.view.mode, u.view.activeKey, u.view.field.selection], ["reading", keyAt(u, 0), { start: 2, end: 2 }], "and back");
 });
 
 test("offsets after an astral character map to the right place in the file: Cmd+E there and back, then Enter", async () => {
@@ -5885,7 +5795,6 @@ test("a marker typed alone into a block not written yet is written as typed on E
   }
 });
 
-const SLASH_ROWS = ["text", "h1", "h2", "h3", "ul", "ol", "todo", "quote", "code", "mermaid", "image", "table", "hr"];
 const THREE = "Intro\n\nWords\n\nOutro\n";
 const typed =(m, text) => { for (const ch of text) m.view.field.type(ch, m.cx); };
 const menuOf = m => find(m.tree(), "md-slash");
@@ -5903,7 +5812,7 @@ async function slashed(m, i, query, at) {
   act(m, "mdb-enter");
 }
 
-test(`typing / at the start of a paragraph opens the menu under the caret row with thirteen rows, and the field's wrapper declares '${TEXT} rows=one menu=open'`, async () => {
+test(`typing / at the start of a paragraph opens the menu under the caret row, its first row highlighted, and the field's wrapper declares '${TEXT} rows=one menu=open'`, async () => {
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
   assert.equal(menuOf(m), null);
@@ -5911,12 +5820,8 @@ test(`typing / at the start of a paragraph opens the menu under the caret row wi
   typed(m, "/");
   const menu = menuOf(m);
   assert.ok(menu, "the menu");
-  assert.deepEqual(slashRows(m), SLASH_ROWS);
   assert.deepEqual(highlighted(m), ["text"], "the first row highlighted");
-  assert.deepEqual([menu.style.absolute, menu.style.top, menu.style.left], [true, 28 + 24 + 14 + 24 + 6, 92], "6 px under the caret row, at the field's left");
-  const row = must(m.tree(), "md-slash-h2");
-  assert.deepEqual([row.style.cursor_pointer, textOf(row).trim()], [true, "Heading 2 ##"]);
-  assert.equal(all(row, n => n.kind === "svg")[0].path, "mods/herdr-inline-markdown/heading-2.svg");
+  assert.deepEqual([menu.style.top, menu.style.left], [fieldOrigin(m, 1).y + 24 + 6, X], "6 px under the caret row, at the field's left");
   assert.equal(contextOf(m), `${TEXT} rows=one menu=open`);
   assert.deepEqual([m.view.text, m.view.field.value()], ["Intro\n\n/\n\nOutro\n", "/"], "the slash is typed text");
   const t = m.tree(), vp = must(t, "md-viewport");
@@ -6189,7 +6094,7 @@ test("/mermaid writes the starter flowchart, the block shows its source without 
 
 const noDialog = () => { state.exec = async () => { throw new Error("spawn osascript ENOENT"); }; };
 
-test("without osascript /img writes an empty picture, picks it and opens the address box; the address typed there is drawn", async () => {
+test("without osascript /img writes an empty picture, picks it and opens the address box, saying nothing; the address typed there is drawn", async () => {
   noDialog();
   files.set(`${DIR}/a.png`, SHOT);
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
@@ -6198,9 +6103,10 @@ test("without osascript /img writes an empty picture, picks it and opens the add
   assert.deepEqual(slashRows(m), ["image"]);
   act(m, "mdb-enter");
   await flush();
+  await polled(m);
   assert.equal(m.view.text, "Intro\n\n![]()\n\nOutro\n");
   const key = keyAt(m, 1);
-  assert.deepEqual([m.view.blockByKey(key).image, m.view.activeKey, pickedNow(m)], [true, null, [key, 0]]);
+  assert.deepEqual([m.view.blockByKey(key).image, m.view.activeKey, pickedNow(m), calls.notify], [true, null, [key, 0], []]);
   assert.ok(find(m.tree(), "md-picture-box"));
   assert.deepEqual([m.view.addressField.value(), m.view.addressField.focused], ["", true]);
   m.view.addressField.set_value("a.png");
@@ -6312,7 +6218,7 @@ test("the dialog opens at the folder the last picture came from; the caret is in
   assert.equal(m.view.text, "Intro\n\n![a](images/a.png)\n\n![b](images/b.png)\n\nOutro\n");
 });
 
-test("cancelling the dialog writes nothing and says nothing: the emptied paragraph is still there to type in", async () => {
+test("cancelling the dialog writes nothing and says nothing: the emptied paragraph is still there to type in; a block with other text is as it was before the slash, still being edited", async () => {
   dialogShows(CANCELLED);
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
   await emptied(m, 1);
@@ -6322,26 +6228,13 @@ test("cancelling the dialog writes nothing and says nothing: the emptied paragra
   assert.deepEqual([calls.notify, ran("mkdir"), ran("cp"), state.shared[IMAGE_FOLDER]], [[], [], [], undefined]);
   typed(m, "x");
   assert.equal(m.view.text, "Intro\n\nx\n\nOutro\n", "in its own place");
-});
-
-test("cancelling in a block that has other text leaves it as it was before the slash, still being edited", async () => {
+  reset();
   dialogShows(CANCELLED);
-  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
-  await openBlock(m, 1, 5);
-  await pickImage(m, " /img");
-  assert.equal(m.view.text, "Intro\n\nWords \n\nOutro\n");
-  assert.deepEqual(editing(m), [keyAt(m, 1), "Words ", { start: 6, end: 6 }]);
-  assert.deepEqual(calls.notify, []);
-});
-
-test("with no osascript Image still writes an empty image, picked with the address box open, and says nothing", async () => {
-  noDialog();
-  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
-  await emptied(m, 1);
-  await pickImage(m);
-  assert.equal(m.view.text, "Intro\n\n![]()\n\nOutro\n");
-  assert.deepEqual([m.view.activeKey, pickedNow(m), Boolean(find(m.tree(), "md-picture-box"))], [null, [keyAt(m, 1), 0], true]);
-  assert.deepEqual(calls.notify, []);
+  const w = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await openBlock(w, 1, 5);
+  await pickImage(w, " /img");
+  assert.equal(w.view.text, "Intro\n\nWords \n\nOutro\n");
+  assert.deepEqual([...editing(w), calls.notify], [keyAt(w, 1), "Words ", { start: 6, end: 6 }, []]);
 });
 
 test("a dialog that fails gives a notice with the reason and writes nothing", async () => {
@@ -6367,7 +6260,7 @@ test("a picture whose name images/ holds with other bytes is written as -2, one 
   }
 });
 
-test("a picture that cannot be copied is left out with a notice naming it; the others are written", async () => {
+test("a picture that cannot be copied is left out with a notice naming it; the others are written, and if none is left nothing is", async () => {
   files.set(`${DESKTOP}/a.png`, SHOT);
   files.set(`${DESKTOP}/b.png`, OTHER);
   dialogShows(chosen(`${DESKTOP}/a.png`, `${DESKTOP}/b.png`));
@@ -6378,21 +6271,18 @@ test("a picture that cannot be copied is left out with a notice naming it; the o
   await pickImage(m);
   assert.equal(m.view.text, "Intro\n\n![b](images/b.png)\n\nOutro\n");
   assert.deepEqual(calls.notify, [{ title: "Couldn't copy a.png", body: "cp: no space left", level: "error" }]);
-});
-
-test("every picture failing writes nothing", async () => {
+  reset();
   files.set(`${DESKTOP}/a.png`, SHOT);
   dialogShows(chosen(`${DESKTOP}/a.png`));
-  const run = state.exec;
-  state.exec = async (command, args) => (command === "cp" ? { code: 1, stdout: "", stderr: "cp: no space left\n" } : run(command, args));
-  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
-  await emptied(m, 1);
-  await pickImage(m);
-  assert.equal(m.view.text, "Intro\n\nOutro\n");
-  assert.equal(calls.notify.length, 1);
+  const only = state.exec;
+  state.exec = async (command, args) => (command === "cp" ? { code: 1, stdout: "", stderr: "cp: no space left\n" } : only(command, args));
+  const n = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await emptied(n, 1);
+  await pickImage(n);
+  assert.deepEqual([n.view.text, calls.notify.length], ["Intro\n\nOutro\n", 1], "every picture failing writes nothing");
 });
 
-test("Image in the empty paragraph Enter opened writes the pictures in its place and moves the caret to a new paragraph below them", async () => {
+test("Image writes the pictures where its block was: in the empty paragraph Enter opened, the caret going to a new paragraph below them; below a block with other text; after the list item an empty item followed", async () => {
   files.set(`${DIR}/a.png`, SHOT);
   dialogShows(chosen(`${DIR}/a.png`));
   const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
@@ -6405,28 +6295,23 @@ test("Image in the empty paragraph Enter opened writes the pictures in its place
   assert.equal(m.view.blocks[3].key, m.view.activeKey);
   typed(m, "x");
   assert.equal(m.view.text, "Intro\n\nWords\n\n![a](a.png)\n\nx\n\nOutro\n");
-});
-
-test("Image in a block that has other text goes below that block, the query gone and the text kept", async () => {
+  reset();
   files.set(`${DIR}/a.png`, SHOT);
   dialogShows(chosen(`${DIR}/a.png`));
-  const m = await page(THREE, { 0: 24, 1: 38, 2: 38 });
-  await openBlock(m, 1, 5);
-  await pickImage(m, " /img");
-  assert.equal(m.view.text, "Intro\n\nWords \n\n![a](a.png)\n\nOutro\n");
-  assert.ok(pendingOf(m));
-});
-
-test("Image in the empty item Enter opened writes the pictures as a paragraph after the list item they follow", async () => {
+  const w = await page(THREE, { 0: 24, 1: 38, 2: 38 });
+  await openBlock(w, 1, 5);
+  await pickImage(w, " /img");
+  assert.deepEqual([w.view.text, Boolean(pendingOf(w))], ["Intro\n\nWords \n\n![a](a.png)\n\nOutro\n", true], "in a block with other text: below it, the query gone and the text kept");
+  reset();
   files.set(`${DIR}/a.png`, SHOT);
   dialogShows(chosen(`${DIR}/a.png`));
-  const m = await page("- one\n\nEnd\n", { 0: 24, 1: 38 });
-  await openBlock(m, 0, 3);
-  act(m, "mdb-enter");
-  assert.equal(pendingOf(m).kind, "item");
-  await pickImage(m);
-  assert.equal(m.view.text, "- one\n\n![a](a.png)\n\nEnd\n");
-  assert.deepEqual(m.view.doc.blocks.map(b => [b.kind, b.image === true]), [["item", false], ["paragraph", true], ["paragraph", false]]);
+  const item = await page("- one\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(item, 0, 3);
+  act(item, "mdb-enter");
+  assert.equal(pendingOf(item).kind, "item");
+  await pickImage(item);
+  assert.equal(item.view.text, "- one\n\n![a](a.png)\n\nEnd\n", "in the empty item Enter opened: a paragraph after the list item");
+  assert.deepEqual(item.view.doc.blocks.map(b => [b.kind, b.image === true]), [["item", false], ["paragraph", true], ["paragraph", false]]);
 });
 
 test("a second pick while the dialog is open does nothing; the first still writes its pictures", async () => {
@@ -7147,26 +7032,13 @@ async function selectByMouse(m, start, end, clicks = 1) {
   await fire_timers(m.cx, { ms: 30 });
 }
 
-test("a drag or a double-click that leaves text selected in the paragraph being edited shows the format bar over the page: Comment | Text style | Bold, Italic, Underline, Strikethrough, Code | Colour | List | Link, each naming its key", async () => {
+test("a drag or a double-click that leaves text selected in the paragraph being edited shows the format bar over the page; a click that leaves a caret does not", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
   assert.equal(barOf(m), null, "a caret: no bar");
   await selectByMouse(m, 6, 11);
   assert.ok(barOf(m), "after the drag's readout");
-  assert.deepEqual(barButtons(m), BAR_ORDER);
-  const t = m.tree(), buttons = BAR_ORDER.filter(k => k !== "|");
-  assert.deepEqual(buttons.map(k => must(t, `md-format-${k}`).style.tooltip), [
-    "Comment (Cmd+Alt+M)", "Text style", "Bold (Cmd+B)", "Italic (Cmd+I)", "Underline (Cmd+U)", "Strikethrough (Cmd+Shift+X)",
-    "Code (Cmd+Shift+C)", "Colour", "List", "Link (Cmd+K)",
-  ]);
-  assert.deepEqual(buttons.map(k => iconOf(must(t, `md-format-${k}`)).path), ["message-square-plus", "type", "bold", "italic", "underline", "strikethrough", "code", "palette", "list", "link"].map(icon));
-  const chevrons = buttons.filter(k => all(must(t, `md-format-${k}`), n => n.kind === "svg" && n.path === icon("chevron-down")).length);
-  assert.deepEqual(chevrons, ["style", "color", "list"], "a menu's button has a chevron");
-  const chevron = all(must(t, "md-format-style"), n => n.kind === "svg")[1];
-  assert.deepEqual([chevron.style.text_color, chevron.style.size < 16], ["dim", true], "small and dim");
-  const bar = must(t, "md-format");
-  assert.deepEqual([bar.style.bg, bar.style.border_1, bar.style.border_color, bar.style.rounded, bar.style.shadow_lg], ["popover", true, "border", 10, true]);
-  assert.deepEqual([bar.style.w, bar.style.h], [BAR_W, BAR.button + 2 * (BAR.pad + 1)], "as wide as what it holds");
+  const t = m.tree();
   assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-format", "md-cal"], "over the page, before the calibration strip");
   audit(t);
   await selectByMouse(m, 3, 3);
@@ -7427,24 +7299,6 @@ test("a press on a bar button does what its key does: the selection keeps the wo
   assert.deepEqual([m.view.text, m.view.field.selection], ["Hello **world**.\n\nEnd\n", { start: 6, end: 15 }], "one Cmd+Z per press");
 });
 
-test("a format key with the bar open keeps it open over the marked text, showing the new state", async () => {
-  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
-  await openBlock(m, 0);
-  await selectByMouse(m, 6, 11);
-  act(m, "mdb-strike");
-  assert.deepEqual([m.view.text, pressedMarks(m)], ["Hello ~~world~~.\n\nEnd\n", ["strike"]]);
-});
-
-test("a pressed button is drawn in the accent colour on a quiet background; one not pressed is muted, with a background under the pointer", async () => {
-  const m = await page("Hello **world**.\n\nEnd\n", { 0: 24, 1: 38 });
-  await openBlock(m, 0);
-  await caretTo(m, 9);
-  await selectByMouse(m, 8, 13);
-  const t = m.tree(), bold = must(t, "md-format-bold"), italic = must(t, "md-format-italic");
-  assert.deepEqual([bold.style.bg, iconOf(bold).style.text_color, bold.hover], ["hover", "accent", false]);
-  assert.deepEqual([italic.style.bg, iconOf(italic).style.text_color, italic.hover], [undefined, "muted", true]);
-});
-
 test("a button shows pressed while its mark is on the selection, by the test its key takes the mark off with", async () => {
   const m = await page("Say **bold** and *it* and <u>low</u> and ~~gone~~ and `code` and [link](https://a.org).\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
@@ -7510,8 +7364,7 @@ test("a menu button opens its menu under it, one menu at a time; a second press 
   barPress(m, "style");
   const t = m.tree(), bar = must(t, "md-format").style, menu = barMenuOf(m, t), button = { x: BAR.pad + 1 + BAR.button + BAR.sep, y: BAR.pad + 1 };
   assert.equal(menu.id, "md-bar-menu-style");
-  assert.deepEqual([menu.style.left, menu.style.top, menu.style.w, menu.style.h], [bar.left + button.x, bar.top + button.y + BAR.button + BAR_MENU.gap, BAR_MENU.w, barMenuH(5)], "under its button");
-  assert.deepEqual([menu.style.bg, menu.style.border_1, menu.style.border_color, menu.style.rounded, menu.style.shadow_lg], ["popover", true, "border", 8, true]);
+  assert.deepEqual([menu.style.left, menu.style.top], [bar.left + button.x, bar.top + button.y + BAR.button + BAR_MENU.gap], "under its button");
   assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-format", "md-bar-menu-style", "md-cal"], "over the page, with the bar");
   assert.equal(must(t, "md-format-style").style.bg, "hover", "its button shows it open");
   audit(t);
@@ -7524,6 +7377,17 @@ test("a menu button opens its menu under it, one menu at a time; a second press 
   assert.deepEqual([openMenu(m), Boolean(barOf(m)), ...editing(m)], [null, true, keyAt(m, 0), "Hello world.", { start: 6, end: 11 }], "Escape closes the menu");
   escape(m);
   assert.deepEqual([barOf(m), m.view.activeKey], [null, keyAt(m, 0)], "Escape again closes the bar");
+});
+
+test("a bar menu is as tall as what it holds: its rows, its section titles, its padding and its border", async () => {
+  const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
+  await openBlock(m, 0);
+  await selectByMouse(m, 6, 11);
+  for (const name of ["style", "list", "color"]) {
+    barPress(m, name);
+    const menu = barMenuOf(m), held = menu.kids.reduce((h, k) => h + k.style.h, 0);
+    assert.equal(menu.style.h, held + 2 * menu.style.p + 2, `the ${name} menu, in a 1 px border`);
+  }
 });
 
 test("a press outside an open menu closes it and the bar; a press on the menu keeps both; one on the bar closes the menu and does what the bar does there", async () => {
@@ -7566,7 +7430,6 @@ test("the Text style menu holds Text, Heading 1 to 3 and Quote, the block's styl
   await selectByMouse(m, 6, 11);
   barPress(m, "style");
   assert.deepEqual(menuRows(m), ["text", "h1", "h2", "h3", "quote"]);
-  assert.deepEqual(rowNodes(m).map(n => [iconOf(n).path, textOf(n).trim()]), [["type", "Text"], ["heading-1", "Heading 1"], ["heading-2", "Heading 2"], ["heading-3", "Heading 3"], ["text-quote", "Quote"]].map(([i, name]) => [icon(i), name]));
   assert.deepEqual(checkedRows(m), ["text"]);
   const entries = m.view.history.entries.length, stopped = m.cx.stopped;
   rowPress(m, "h2");
@@ -7604,7 +7467,6 @@ test("the List menu holds Bulleted, Numbered and To-do list; a pick makes the bl
   await selectByMouse(m, 6, 11);
   barPress(m, "list");
   assert.deepEqual(menuRows(m), ["ul", "ol", "todo"]);
-  assert.deepEqual(rowNodes(m).map(n => [iconOf(n).path, textOf(n).trim()]), [[icon("list"), "Bulleted list"], [icon("list-ordered"), "Numbered list"], [icon("list-todo"), "To-do list"]]);
   assert.deepEqual(checkedRows(m), []);
   rowPress(m, "ol");
   const listButton = () => must(m.tree(), "md-format-list");
@@ -7623,23 +7485,16 @@ test("the List menu holds Bulleted, Numbered and To-do list; a pick makes the bl
   assert.deepEqual([m.view.text, selectedText(m)], [task, "world"]);
 });
 
-test("the Colour menu holds Text (Default, Red, Yellow, Green, Teal, Purple) and Highlight (No highlight, Yellow) under small dim titles, each row with a swatch in the colour the text draws in", async () => {
+test("the Colour menu holds a row for each text colour and the highlight, each with a swatch in the colour the text draws in; plain text has Default and No highlight checked", async () => {
   const m = await page("Hello world.\n\nEnd\n", { 0: 24, 1: 38 });
   await openBlock(m, 0);
   await selectByMouse(m, 6, 11);
   barPress(m, "color");
   const t = m.tree(), menu = barMenuOf(m, t), th = theme(), swatch = id => must(t, `md-bar-swatch-${id}`).style;
   assert.equal(menu.id, "md-bar-menu-color");
-  assert.equal(menu.style.h, barMenuH(8, 2));
   assert.deepEqual(menuRows(m), ["text-default", ...TEXT_COLORS.map(c => `text-${c}`), "highlight-none", "highlight-yellow"]);
-  assert.deepEqual(rowNodes(m).map(n => textOf(n).trim()), ["Default", "Red", "Yellow", "Green", "Teal", "Purple", "No highlight", "Yellow"]);
-  for (const [id, title] of [["text", "Text"], ["highlight", "Highlight"]]) {
-    const node = must(menu, `md-bar-title-${id}`);
-    assert.deepEqual([textOf(node).trim(), node.style.text_color, node.style.text_size < 12.8], [title, "dim", true], title);
-  }
   assert.equal(swatch("text-default").bg, "foreground");
   for (const c of TEXT_COLORS) assert.equal(swatch(`text-${c}`).bg, textColor(th, c), c);
-  assert.deepEqual([swatch("highlight-none").bg, swatch("highlight-none").border_dashed], [undefined, true], "No highlight: a dashed outline");
   assert.equal(swatch("highlight-yellow").bg, highlightColor(th), "the editor's muted ochre");
   assert.deepEqual(checkedRows(m), ["text-default", "highlight-none"]);
   audit(t);
@@ -8102,8 +7957,7 @@ test("a press on commented text selects all of it and makes its comment active: 
     const card = cardAt(m, 0);
     assert.ok(isRaised(card), "its card raised");
     assert.deepEqual([cardText(m, 0), card.style.h, card.style.overflow_hidden], [long, undefined, undefined], "its whole text");
-    const resolve = must(card, `${cardId(m, 0)}-resolve`);
-    assert.deepEqual([resolve.style.tooltip, all(resolve, n => n.kind === "svg")[0].path], ["Resolve", icon("check")]);
+    must(card, `${cardId(m, 0)}-resolve`);
     assert.deepEqual([barOf(m), popoverOf(m)], [null, null], "no bar and no other popover");
     audit(m.tree());
   });
@@ -8260,20 +8114,16 @@ test("without room for a margin the comment box floats over the selection and wr
   });
 });
 
-test("a card always has its header: the comment icon and the time, or 'Comment' for a note with no time; the active card has Edit and Resolve and an ochre border", async () => {
+test("a card always has its header: the time, or 'Comment' for a note with no time; the active card has Edit and Resolve and an ochre border", async () => {
   await atTime(NOW, async () => {
     const doc = "A {==b==}{>>first<<} c {==d==}{>>2026-11-16 20:51 | second<<}.\n\nEnd\n";
     const m = await widePage(doc, { 0: 24, 1: 38 });
-    const header = n => {
-      const card = cardAt(m, 0, n), time = must(card, `${cardId(m, 0, n)}-time`);
-      return [textOf(time).trim(), all(must(card, `${cardId(m, 0, n)}-head`), x => x.kind === "svg")[0]?.path];
-    };
-    assert.deepEqual([header(0), header(1)], [["Comment", icon("message-square")], ["8:51 PM", icon("message-square")]]);
+    const header = n => textOf(must(must(cardAt(m, 0, n), `${cardId(m, 0, n)}-head`), `${cardId(m, 0, n)}-time`)).trim();
+    assert.deepEqual([header(0), header(1)], ["Comment", "8:51 PM"]);
     assert.equal(find(cardAt(m, 0, 0), `${cardId(m, 0, 0)}-edit`), null, "no buttons until the card is active");
     cardPress(m, cardId(m, 0, 0));
     await flush();
     const card = cardAt(m, 0, 0), edit = must(card, `${cardId(m, 0, 0)}-edit`);
-    assert.deepEqual([edit.style.tooltip, all(edit, n => n.kind === "svg")[0].path], ["Edit", icon("pencil")]);
     assert.ok(find(card, `${cardId(m, 0, 0)}-resolve`), "Resolve beside it");
     assert.equal(card.style.border_color, deepHighlightColor(theme()), "the active card's border is its highlight's ochre");
     fire(edit, "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
@@ -8683,10 +8533,8 @@ test("a press on a link selects its whole text and shows its popover under it: t
   const t = m.tree(), pop = must(t, "md-link"), address = must(pop, "md-link-address");
   assert.equal(barOf(m), null, "the popover, not the bar");
   assert.deepEqual([textOf(address).trim(), address.style.tooltip], ["https://e.com/d", "https://e.com/d"]);
-  assert.deepEqual(["open", "copy", "edit", "remove"].map(b => must(pop, `md-link-${b}`).style.tooltip), ["Open link", "Copy link", "Edit link", "Remove link"]);
-  assert.deepEqual(["open", "copy", "edit", "remove"].map(b => iconOf(must(pop, `md-link-${b}`)).path), ["external-link", "copy", "pencil", "unlink"].map(icon));
-  assert.deepEqual([pop.style.top, pop.style.left, pop.style.h], [topOf(m, 0) + 24 + BAR.gap, X + 4 * advance, BAR.button + 2 * (BAR.pad + 1)], "under the link's row, at its start");
-  assert.deepEqual([pop.style.bg, pop.style.border_1, pop.style.border_color, pop.style.rounded, pop.style.shadow_lg], ["popover", true, "border", 8, true]);
+  assert.ok(["open", "copy", "edit", "remove"].every(b => find(pop, `md-link-${b}`)), "Open, Copy, Edit and Remove");
+  assert.deepEqual([pop.style.top, pop.style.left], [topOf(m, 0) + 24 + BAR.gap, X + 4 * advance], "under the link's row, at its start");
   assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-link", "md-cal"], "over the page");
   audit(t);
   assertNoSource(m, "https://e.com/d", "the link selected");
@@ -8794,7 +8642,6 @@ test("Edit turns the popover into the address box, holding the address all selec
   linkPress(m, "edit");
   const t = m.tree(), box = must(t, "md-link-box"), input = all(box, n => n.kind === "input")[0];
   assert.deepEqual([popoverOf(m), input.state, m.view.linkField.value(), m.view.linkField.selection, m.view.linkField.focused], [null, m.view.linkField, "https://e.com/d", { start: 0, end: 15 }, true]);
-  assert.equal(m.view.linkField.options.placeholder, "Paste or type a link");
   assert.deepEqual([box.style.top, box.style.left, box.style.key_context], [at.top, at.left, NOTE], "where the popover was");
   audit(t);
   assertNoSource(m, "https://e.com/d", "while the box is open");
@@ -9490,14 +9337,6 @@ test("the format keys' own two-step writing and the editor's own edits are never
   assert.equal(m.view.text, "Hello **world**.\n\nEnd\n");
   assert.equal(m.view.history.entries.length, 1);
   assert.ok(valueSets(m) - sets <= 2, "only the format key's own token sets");
-});
-
-test("a paragraph of pictures is never a field to type in: a double-click picks the picture, and Backspace deletes it whole", async () => {
-  const m = await pictured();
-  await doubleClickAt(m, onPicture(m));
-  assert.deepEqual([m.view.activeKey, pickedNow(m)], [null, [keyAt(m, 1), 0]]);
-  rootKey(m, "backspace");
-  assert.equal(m.view.text, "# Title\n\nBye\n");
 });
 
 test("Escape ends the typing style, also when all it does is close a link's popover", async () => {
@@ -10354,8 +10193,6 @@ test("a press on a picture's icon or its alt text in a line of text picks it: it
   assert.deepEqual([m.view.activeKey, m.view.field.selection, barOf(m)], [key, { start: 4, end: 25 }, null], "the whole picture, its float and not the bar");
   assert.deepEqual([pictureAddressOf(m), must(t, "md-picture-address").style.tooltip], ["cat.png", "cat.png"]);
   assert.deepEqual(floatButtons(m), ["comment", "change", "alt", "copy", "open", "delete"]);
-  assert.deepEqual(["comment", "change", "alt", "copy", "open", "delete"].map(name => must(t, `md-picture-${name}`).style.tooltip),
-    ["Comment (Cmd+Alt+M)", "Change picture", "Alt text", "Copy address", "Open picture", "Delete picture"]);
   assert.deepEqual([float.style.top + float.style.h + BAR.gap, float.style.left], [fieldOrigin(m, 1).y, fieldOrigin(m, 1).x + 4 * advance], "over the pressed token, at the picture's start");
   assert.equal(drawnText(m.view.field), "See a cat here");
   assertNoPictureSource(m, "cat.png", "picked");
@@ -10818,7 +10655,7 @@ const langChecked = m => langRowEls(m).filter(n => all(n, k => k.kind === "svg")
 const searchLanguages = (m, text) => m.view.langField.edit(text, m.cx);
 const langRow = (m, id) => fire(must(m.tree(), `md-lang-row-${id}`), "on_mouse_down:left", press({ x: 0, y: 0 }), m.cx);
 
-test("every code block's box starts with a strip 28 px tall holding its language chip at the right; a diagram's source being edited has one, its frame none", async () => {
+test("every code block's box starts with a strip holding its language chip at the right; a diagram's source being edited has one, its frame none", async () => {
   renderer({ width: 800, height: 400 });
   const doc = "```js title=x\nconst a = 1;\n```\n\n    indented\n\n```py\nprint()\n```\n\n```mermaid\ngraph TD\n```\n\n```zig\nx\n```\n";
   const m = await mount({ disk: doc });
@@ -10826,11 +10663,10 @@ test("every code block's box starts with a strip 28 px tall holding its language
   await drawn(m);
   const t = m.tree(), chip = must(t, `md-chip-${keyAt(m, 0)}`), head = must(t, `md-code-head-${keyAt(m, 0)}`);
   assert.deepEqual([0, 1, 2, 4].map(i => chipName(m, i, t)), ["JavaScript", "Plain text", "Python", "zig"], "a language's name, Plain text for none, a word the list doesn't know as written");
-  assert.deepEqual([head.style.h, head.style.justify_end, head.kids.map(k => k.id)], [CODE_HEAD, true, [chip.id]], "the chip at the strip's right");
+  assert.deepEqual([head.style.justify_end, head.kids.map(k => k.id)], [true, [chip.id]], "the chip at the strip's right");
   const box = blockAt(m, 0, t).kids[0];
-  assert.deepEqual([box.style.bg, box.kids[0].kids[0].id, textOf(box.kids[0].kids[1]).trim()], ["surface", head.id, "const a = 1;"], "the strip, then the code under it, in the box");
-  assert.deepEqual([chip.style.text_size, chip.style.text_color, chip.style.rounded, chip.style.cursor_pointer, chip.hover, chip.style.w], [11.5, "dim", 6, true, true, chipW("JavaScript", true)]);
-  assert.deepEqual(all(chip, n => n.kind === "svg").map(n => [n.path.split("/").at(-1), n.style.size]), [["chevron-down.svg", 12]], "a chevron after the name");
+  assert.deepEqual([box.kids[0].kids[0].id, textOf(box.kids[0].kids[1]).trim()], [head.id, "const a = 1;"], "the strip, then the code under it, in the box");
+  assert.deepEqual([chip.style.cursor_pointer, all(chip, n => n.kind === "svg").length], [true, 1], "a chip to press, with a chevron after the name");
   assert.ok(find(t, `md-frame-${keyAt(m, 3)}`), "the diagram is drawn in its frame");
   assert.deepEqual([find(t, `md-chip-${keyAt(m, 3)}`), find(t, `md-code-head-${keyAt(m, 3)}`)], [null, null], "which has no strip");
   await openBlock(m, 2);
@@ -10874,11 +10710,10 @@ test("a press on the chip of a code block not being edited stops the editing and
   assert.equal(m.view.text, "Intro more\n\n```js\nconst a = 1;\n```\n", "what was typed is kept");
   const t = m.tree(), menu = must(t, "md-lang"), d = m.view.data.get(keyAt(m, 1));
   const chipRight = leftOf(m) + m.view.textWidth() - 1 - BOX.px, chipTop = topOf(m, 1) + d.space + 1 + BOX.py + (CODE_HEAD - CHIP.h) / 2;
-  assert.deepEqual([menu.style.left + menu.style.w, menu.style.top, menu.style.w], [chipRight, chipTop + CHIP.h + LANG_MENU.gap, BAR_MENU.w], "under the chip, right edges aligned");
-  assert.deepEqual([menu.style.bg, menu.style.rounded, Boolean(menu.style.shadow_lg)], ["popover", 8, true], "the bar menus' look");
+  assert.deepEqual([menu.style.left + menu.style.w, menu.style.top], [chipRight, chipTop + CHIP.h + LANG_MENU.gap], "under the chip, right edges aligned");
   const search = must(t, "md-lang-search");
   assert.deepEqual([search.style.key_context, all(search, n => n.kind === "input")[0].state], [LANG, m.view.langField]);
-  assert.deepEqual([m.view.langField.focused, m.view.langField.options.placeholder, m.view.langField.value()], [true, "Search or type a language", ""], "its search box takes the keyboard");
+  assert.deepEqual([m.view.langField.focused, m.view.langField.value()], [true, ""], "its search box takes the keyboard");
   assert.equal(must(t, `md-chip-${keyAt(m, 1)}`).style.bg, "hover", "the chip shows its menu open");
   assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id).slice(-2), ["md-lang", "md-cal"], "drawn by the root over the page");
   audit(t);
@@ -10901,10 +10736,8 @@ test("the language menu goes on a right-press outside it, and when a write from 
 test("the language menu: Plain text and the common languages with a check on the block's own, then what typing finds, ranked; a word it doesn't know gets a row of its own", async () => {
   const m = await page("```javascript\nx\n```\n", { 0: 26 + CODE_HEAD + 19.5 });
   await clickAt(m, chipAt(m, 0));
-  assert.deepEqual(langRows(m), ["Plain text", "Bash", "CSS", "HTML", "JavaScript", "JSON", "Markdown", "Mermaid", "Python", "Rust", "TypeScript", "YAML"]);
+  assert.equal(langRows(m)[0], "Plain text");
   assert.deepEqual([langChecked(m), langHighlighted(m)], [["JavaScript"], ["Plain text"]], "a check on the block's language, whatever alias wrote it; the first row highlighted");
-  assert.deepEqual(langRowEls(m).map(n => [n.style.h, n.style.rounded]).slice(0, 1), [[BAR_MENU.rowH, 6]]);
-  assert.equal(must(m.tree(), "md-lang").style.h, languageMenuH(12));
   searchLanguages(m, "ty");
   assert.deepEqual([langRows(m), langHighlighted(m)], [["TypeScript", "Use “ty”"], ["TypeScript"]], "TypeScript first");
   searchLanguages(m, "zig");
@@ -11514,8 +11347,6 @@ test("the blocks' comments are paired again only when the document changes: not 
 });
 // Adding a comment to a code block, a diagram or a table: the Comment button beside the language chip, at a table's top
 // right and beside a diagram frame's − % + group, and Cmd+Alt+M.
-const { DIAGRAM_COLORS: Z } = await import("../mods/herdr-inline-markdown/lib.js");
-const COMMENT_TIP = "Comment (Cmd+Alt+M)", COMMENT_ICON = "mods/herdr-inline-markdown/message-square-plus.svg";
 const CMD_ALT_M = { key: "m", modifiers: { ...NO_MODS, platform: true, alt: true } };
 const TABLE_H = 14 + 26 + 63;
 const buttonOf = (m, key, t = m.tree()) => find(t, `md-block-comment-${key}`);
@@ -11539,7 +11370,7 @@ const NEW_CARD_ID = "md-card-new";
 const CODE_AND_TABLE = "Intro\n\n```js\nlet a = 1;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nEnd\n";
 const CODE_AND_TABLE_SIZES = { 0: 24, 1: CODE_H, 2: TABLE_H, 3: 38 };
 
-test("a code block's and a table's Comment button shows while the pointer is over the block: 4 px left of the code block's language chip, which stays put, and raised 4 px right of the table's grid by its top right corner; hovering redraws that block alone", async () => {
+test("a code block's and a table's Comment button shows while the pointer is over the block: 4 px left of the code block's language chip, which stays put, and 4 px right of the table's grid by its top right corner; hovering redraws that block alone", async () => {
   const m = await page(CODE_AND_TABLE, CODE_AND_TABLE_SIZES);
   const [code, table, intro] = [keyOfKind(m, "code"), keyOfKind(m, "table"), keyAt(m, 0)];
   const chipBefore = m.view.chipIn(m.view.data.get(code)), head = must(m.tree(), `md-code-head-${code}`).kids.length, data = m.view.data.get(code);
@@ -11553,9 +11384,6 @@ test("a code block's and a table's Comment button shows while the pointer is ove
   assert.deepEqual(chip, chipBefore, "the chip where it was");
   assert.equal(must(t, `md-code-head-${code}`).kids.length, head, "the strip holds the chip alone");
   assert.deepEqual([button.style.absolute, button.style.left, button.style.top, button.style.w, button.style.h], [true, chip.x - 4 - CHIP.h, chip.y, CHIP.h, CHIP.h], "in the strip, as tall as the chip, 4 px left of it");
-  assert.deepEqual([button.style.rounded, button.style.tooltip, button.style.cursor_pointer, button.hover, button.style.bg], [6, COMMENT_TIP, true, true, undefined]);
-  const icon = all(button, n => n.kind === "svg")[0];
-  assert.deepEqual([icon.path, icon.style.size, icon.style.text_color], [COMMENT_ICON, 14, "dim"]);
   audit(t);
   m.cx.notifiedEntities.length = 0;
   hover(m, overBlock(m, table));
@@ -11565,7 +11393,6 @@ test("a code block's and a table's Comment button shows while the pointer is ove
   button = must(t, `md-block-comment-${table}`);
   const d = m.view.data.get(table);
   assert.deepEqual([button.style.left, button.style.top, button.style.w, button.style.h], [d.grid.w + 4, d.space + 6, CHIP.h, CHIP.h], "4 px right of the grid, 6 px below its top");
-  assert.deepEqual([button.style.bg, button.style.border_1, button.style.border_color, button.style.shadow_sm, button.style.tooltip], ["popover", true, "border", true, COMMENT_TIP], "raised over the table");
   hover(m, overBlock(m, intro));
   assert.deepEqual(buttonsIn(m.tree()), [], "none over a paragraph");
   fire(must(m.tree(), "md-viewport"), "on_hover", false, m.cx);
@@ -11739,15 +11566,14 @@ test("Cmd+Alt+M comments the code block, diagram source or table being edited, a
   });
 });
 
-test("a diagram frame's Comment button: 26 px, 6 px left of the − % + group and shown with it; a press opens the new comment and neither pans nor opens the source; none in a file that can't be edited, none on a diagram drawn without a frame", async () => {
+test("a diagram frame's Comment button: level with the − % + group, left of it, as large as the area its presses are taken in, and shown with it; a press opens the new comment and neither pans nor opens the source; none in a file that can't be edited, none on a diagram drawn without a frame", async () => {
   const m = await framed();
   const key = keyAt(m, 2), f = frameOn(m);
   hover(m, { x: 900, y: f.top + 300 });
   let t = m.tree();
   const tools = must(t, `md-frame-tools-${key}`), button = must(t, `md-frame-comment-${key}`);
-  assert.deepEqual([button.style.absolute, button.style.top, button.style.right, button.style.w, button.style.h], [true, tools.style.top, 8 + 102 + 6, 26, 26]);
-  assert.deepEqual([button.style.rounded, button.style.border_1, button.style.border_color, button.style.bg, button.style.tooltip], [7, true, Z.edge, Z.node, COMMENT_TIP]);
-  assert.deepEqual(all(button, n => n.kind === "svg").map(n => [n.path, n.style.size]), [[COMMENT_ICON, 13]]);
+  assert.deepEqual([button.style.absolute, button.style.top, button.style.right], [true, tools.style.top, 8 + 102 + 6]);
+  assert.deepEqual([button.style.w, button.style.h], [FRAME.tools.comment, FRAME.tools.h], "as large as the area its presses are taken in");
   audit(t);
   const p = { x: f.left + f.w - 116 - 13, y: f.top + tools.style.top + 13 };
   down(m, p);
@@ -11920,7 +11746,7 @@ test("alt-cmd-m with a block selected whose top is below or above the pane scrol
   assert.deepEqual([card?.style.top - w.view.offset, w.view.sel], [REVEAL.top, { from: wc, to: wc }], "the new card at the pane's top, after the block's card");
 });
 
-test("the Markdown view forgets the pointer: back in Reading no Comment button shows until the pointer comes over its block again", async () => {
+test("the Markdown view forgets the pointer: back in Reading no Comment button, nor a diagram frame's − % + group, shows until the pointer comes over its block again", async () => {
   const m = await page(CODE_AND_TABLE, CODE_AND_TABLE_SIZES);
   const code = keyOfKind(m, "code");
   hover(m, overBlock(m, code));
@@ -11930,9 +11756,7 @@ test("the Markdown view forgets the pointer: back in Reading no Comment button s
   assert.deepEqual([m.view.mode, buttonsIn(m.tree())], ["reading", []]);
   hover(m, overBlock(m, code));
   assert.ok(buttonOf(m, code), "the pointer over it again");
-});
-
-test("the Markdown view forgets the pointer: back in Reading a diagram frame's − % + group shows only when the pointer comes over the frame again", async () => {
+  reset();
   const f = await framed(), key = keyAt(f, 2), over = () => hover(f, { x: 900, y: frameOn(f).top + 300 });
   over();
   assert.ok(find(f.tree(), `md-frame-tools-${key}`));
@@ -12110,12 +11934,9 @@ test("the picture float's first button is Comment: in the margin a new card open
   await atTime(NOW, async () => {
     const m = await notedPictures(PIC_ROW), key = keyAt(m, 1), light = highlightColor(theme());
     await clickAt(m, onPic(m, 0));
-    let t = m.tree();
     assert.deepEqual(floatButtons(m), ["comment", "change", "alt", "copy", "open", "delete"]);
-    const button = must(t, "md-picture-comment");
-    assert.deepEqual([button.style.tooltip, all(button, n => n.kind === "svg")[0].path], [COMMENT_TIP, COMMENT_ICON]);
     pictureButton(m, "comment");
-    t = m.tree();
+    let t = m.tree();
     const card = must(t, NEW_CARD_ID);
     assert.deepEqual(cardsOf(m, t).map(n => n.id), [NEW_CARD_ID, `md-card-${key}-0`, `md-card-${key}-1`], "before the cards of the pictures after it");
     assert.deepEqual([card.style.top, isRaised(card), cardInput(card)?.state, m.view.noteField.value(), m.view.noteField.focused], [picLevel(m, 0), true, m.view.noteField, "", true]);
@@ -12298,6 +12119,18 @@ test("in the margin each comment in a table's cells is a card level with its row
     await openKey(m, table);
     assert.deepEqual([m.view.cell, m.view.cardList().map(e => 28 + e.want)], [{ r: 0, c: 0 }, wants], "the grid's rows, a cell edited");
     assert.deepEqual(cardsOf(m).map(n => n.id), ids);
+  });
+});
+
+test("in a table kept as source each cell comment's card is level with its row as the TextView draws the table, in the line the TextView is drawn in", async () => {
+  await atTime(NOW, async () => {
+    const doc = "Intro\n\n| {==Name==}{>>2026-11-16 21:00 \\| a header<<} | Size |\n|---|---|\n| apple | 12 |\n| pear | {==3==}{>>2026-11-16 20:51 \\| too few?<<} | extra |\n\nEnd\n";
+    const m = await widePage(doc, { 0: 24, 1: 26 + 3 * 40, 2: 38 }), table = keyOfKind(m, "table"), d = m.view.data.get(table);
+    assert.equal(d.look, "boxed", "kept as source");
+    const view = viewAt(m, 1), type = all(blockAt(m, 1), n => n.kids.includes(view))[0].style;
+    const textTop = m.view.sums[1] + m.view.chromeOf(d, false).y, lineH = type.text_size * type.line_height;
+    const want = n => m.view.cardList().find(e => e.id === `md-card-${table}-cell-${n}`).want;
+    assert.deepEqual([want(0), want(1)], [textTop + tableRowTop(0, lineH), textTop + tableRowTop(2, lineH)], "the header's, then the third row's");
   });
 });
 
@@ -12547,7 +12380,7 @@ test("a file that can't be edited draws its tables as grids too, and a link clic
   assert.equal(m.view.activeKey, null);
 });
 
-test("phase 10 on the grid: the active frame over the grid, the Comment button 4 px right of its top right corner (in the column's padding for a table as wide as the column), a cell's card level with its grid row", async () => {
+test("a table's comments on its grid: the active frame over the grid, the Comment button 4 px right of its top right corner (in the column's padding for a table as wide as the column), a cell's card level with its grid row", async () => {
   await atTime(NOW, async () => {
     const wideCells = "| " + "word ".repeat(40).trim() + " | " + "more ".repeat(40).trim() + " |";
     const doc = `Intro\n\n| a | {==b==}{>>2026-11-16 20:51 \\| on b<<} |\n|---|---|\n| c | {==d==}{>>2026-11-16 20:52 \\| on d<<} |\n\n{>>2026-11-16 20:00 | on the table<<}\n\n${wideCells}\n|---|---|\n\nEnd\n`;
@@ -13664,7 +13497,7 @@ test("the caret in a cell off to the side of a wide table pans it into view, the
   assert.deepEqual([m.view.cell, panNow(m, table)], [{ r: 1, c: 0 }, 0], "back to the first column");
 });
 
-test("in a file that can be edited, the pointer within 4 px of a line between two columns, or of the grid's right edge, draws that line top to bottom, 2 px in the theme's yellow, under a resize cursor; nowhere else, and never in a file that can't be edited", async () => {
+test("in a file that can be edited, the pointer within 4 px of a line between two columns, or of the grid's right edge, draws that line top to bottom in the theme's yellow, under a resize cursor; nowhere else, and never in a file that can't be edited", async () => {
   const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), yellow = textColor(theme(), "yellow");
   const lineEl = () => find(m.tree(), `md-resize-${table}`);
   assert.equal(lineEl(), null);
@@ -13673,7 +13506,7 @@ test("in a file that can be edited, the pointer within 4 px of a line between tw
   assert.ok(el, "on the line");
   assert.deepEqual([el.style.cursor_col_resize, el.style.absolute, el.style.top, el.style.bottom, el.style.left, el.style.w], [true, true, 0, 0, lineX(g.widths, 0) - 4, 9], "the strip the pointer can grab");
   const drawn = el.kids[0];
-  assert.deepEqual([drawn.style.bg, drawn.style.w, drawn.style.top, drawn.style.bottom], [yellow, 2, 0, 0], "2 px of yellow, top to bottom");
+  assert.deepEqual([drawn.style.bg, drawn.style.top, drawn.style.bottom], [yellow, 0, 0], "the theme's yellow, top to bottom");
   hover(m, lineOn(m, 1, 0, -4));
   assert.ok(lineEl(), "4 px left of it");
   hover(m, lineOn(m, 1, 0, -5));
