@@ -59,7 +59,6 @@ export const isRaw = kind => RAW_KINDS.has(kind);
 // A block key holds no colon, so a cell's field id never names a block.
 export const cellId = (key, r, c) => `${key}:${r}:${c}`;
 
-// `grid`: table b is drawn as a grid of cells, not as its source.
 export function lookOf(b, grid = false) {
   if (grid) return { style: "cell", color: "foreground", look: "grid" };
   if (b.kind === "heading") return { style: `h${b.level}`, color: "foreground", look: "text" };
@@ -135,6 +134,8 @@ export class Block extends View {
 
 const type = (el, st, color, font) => el.font_family(font).text_size(st.size).font_weight(st.weight).line_height(st.lh).text_color(color);
 
+const markdownView = (owner, id, text) => TextView.markdown(id, text).selectable(true).on_link_click((url, cx) => owner.link(url, cx));
+
 const monoLines = (text, st, color, font) => type(v_flex().w_full(), st, color, font).children(text.split("\n").map(l => div().child(l || " ")));
 
 const codeBox = (t, inner) => div().w_full().relative().bg(t.surface).border_1().border_color(t.border).rounded(8).px(BOX.px).py(BOX.py).child(inner);
@@ -161,13 +162,12 @@ function rendered(owner, d, t) {
   if (d.look === "text") {
     return type(div().w_full().min_h(d.row).pb(d.padRendered), st, color, sans)
       .when(d.checked, el => el.line_through())
-      .child(TextView.markdown(`md-tv-${d.key}-${d.gen}`, d.text).selectable(true).on_link_click((url, cx) => owner.link(url, cx)));
+      .child(markdownView(owner, `md-tv-${d.key}-${d.gen}`, d.text));
   }
   if (d.look === "lines") return monoLines(d.text, st, color, mono);
   if (d.look === "code") return strippedCodeBox(d, t, monoLines(d.text, st, color, mono));
   if (d.look === "boxed") {
-    return codeBox(t, type(div().w_full().min_h(d.row), STYLES.cell, color, sans)
-      .child(TextView.markdown(`md-tv-${d.key}-${d.gen}`, d.text).selectable(true).on_link_click((url, cx) => owner.link(url, cx))));
+    return codeBox(t, type(div().w_full().min_h(d.row), STYLES.cell, color, sans).child(markdownView(owner, `md-tv-${d.key}-${d.gen}`, d.text)));
   }
   if (d.look === "front") return frontBox(t, monoLines(d.text, st, color, mono));
   if (d.look === "grid") return tableGrid(owner, d, t);
@@ -186,11 +186,8 @@ function rendered(owner, d, t) {
 
 const frontBox = (t, inner) => div().w_full().rounded(8).bg(t.surface).border_1().border_color(t.border).px(FRONT_BOX.px).py(FRONT_BOX.py).child(inner);
 
-// A table as its grid (block data d's `grid`, grid.js gridOf): the header row on the surface, each row reporting its
-// height, each cell's text drawn by a field of its own near the page (owner.cellField), else by a TextView. Gpui clips
-// to the box, not to its rounded corners, so the header rounds its own top corners inside the 1 px line. A grid wider
-// than its room is clipped to it and panned, a shade at each edge with more of it that way. The line's strip lies
-// outside the clip, so that the grid's right edge can be grabbed from beyond it.
+// Gpui clips to the box, not to its rounded corners, so the header rounds its own top corners inside the 1 px line. The
+// resize line's strip lies outside the clip, so that the grid's right edge can be grabbed from beyond it.
 function tableGrid(owner, d, t) {
   const g = d.grid, last = g.texts.length - 1, looks = [{ ...d, style: "head" }, d];
   const pan = owner.panOf(d), line = owner.lineOf(d), shown = owner.gridShownW(d), more = g.w - owner.gridRoom(d) - pan;
@@ -199,7 +196,7 @@ function tableGrid(owner, d, t) {
     .children(g.texts.map((cells, r) => h_flex().id(`md-row-${d.key}-${r}`).w_full().items_stretch()
       .when(r === 0, el => el.bg(t.surface).rounded_t(GRID.radius - GRID.line))
       .when(r < last, el => el.border_b(GRID.line).border_color(t.border))
-      .on_size_change((size, cx) => owner.rowSized(d.key, r, size, cx))
+      .on_size_change(size => owner.rowSized(d.key, r, size))
       .children(cells.map((text, c) => gridCell(owner, d, t, r, c, text, looks[r === 0 ? 0 : 1])))));
   return div().id(`md-table-box-${d.key}`).w(shown).flex_none().relative()
     .child(div().id(`md-table-clip-${d.key}`).w_full().overflow_hidden().child(grid))
@@ -208,7 +205,7 @@ function tableGrid(owner, d, t) {
     .when(line >= 0, el => el.child(resizeLine(d.key, lineX(g.widths, line) - pan, t)));
 }
 
-const SHADE =["#00000026", "#00000018", "#0000000e", "#00000006"], SHADE_STEP = 3;
+const SHADE = ["#00000026", "#00000018", "#0000000e", "#00000006"], SHADE_STEP = 3;
 
 function edgeShade(key, side) {
   const strips = SHADE.map(color => div().w(SHADE_STEP).flex_none().bg(color));
@@ -227,8 +224,7 @@ function resizeLine(key, x, t) {
 function gridCell(owner, d, t, r, c, text, look) {
   const g = d.grid, lined = c < g.widths.length - 1, align = g.aligns[c], box = g.boxes[r][c], st = r === 0 ? STYLES.head : STYLES.cell;
   const state = owner.cellField(d.key, r, c);
-  const view = state ? cellField(owner, d, t, r, c, state, st, look)
-    : TextView.markdown(`md-tv-${d.key}-${r}-${c}-${d.gen}`, text).selectable(true).on_link_click((url, cx) => owner.link(url, cx));
+  const view = state ? cellField(owner, d, t, r, c, state, st, look) : markdownView(owner, `md-tv-${d.key}-${r}-${c}-${d.gen}`, text);
   const inner = type(div(), st, t[d.color], owner.fonts.sans).min_h(g.rowPx[r === 0 ? 0 : 1]).child(view);
   return h_flex().id(`md-cell-${d.key}-${r}-${c}`).w(g.widths[c] + (lined ? GRID.line : 0)).flex_none().items_start().px(GRID.padX).py(GRID.padY)
     .when(lined, el => el.border_r(GRID.line).border_color(t.border))
@@ -269,7 +265,6 @@ function piece(owner, d, t, p) {
     .child(p.text);
 }
 
-// One inline token of a field: its pieces in a row as tall as the field's.
 function tokenView(owner, d, t, ctx) {
   return h_flex().flex_none().h(ctx.line_height).items_center()
     .when(ctx.selected, el => el.bg(t.selection))

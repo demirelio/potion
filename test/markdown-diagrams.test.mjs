@@ -120,15 +120,11 @@ test("the key follows source and renderer version, and stays the same when the t
   again.d.get(SRC, again.cx);
   await flush();
   assert.equal(again.d.get(SRC, again.cx).key, keyFor(SRC, "mmdc-other+1"), "a new renderer draws everything again");
-  const t = theme(), config = d.config;
-  d.sync({ ...t, background: "#000000" });
-  const dark = d.config;
-  assert.deepEqual(dark, config, "the config is mermaid's own theme, whatever the Herdr theme");
-  assert.equal(dark.name, configName());
-  d.sync({ ...t, background: "#000000" });
-  assert.equal(d.config, dark, "the same colors keep the same config object");
-  state.theme = { ...t, background: "#000000" };
+  const config = d.config;
+  assert.equal(config.name, configName());
+  state.theme = { ...theme(), background: "#000000" };
   assert.equal(d.get("graph TD\nA-->B", cx).key, a, "a theme switch keeps the diagram's key, so its picture is not drawn again");
+  assert.equal(d.config, config, "the config is mermaid's own theme, whatever the Herdr theme");
   assert.equal(renders().length, 1);
 });
 

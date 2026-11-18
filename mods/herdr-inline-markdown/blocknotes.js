@@ -3,7 +3,7 @@
 // paragraph, and the splices that add, edit and resolve those comments; those of a comment on a picture of a paragraph
 // of pictures, written around the picture; and those that edit and resolve a comment in a table's cell. No imports
 // from herdr or gpui-*.
-import { field, fieldToDoc, insertAfter, picturesIn, remove, removeRange } from "./blocks.js";
+import { cutItem, field, fieldToDoc, insertAfter, picturesIn, remove, removeRange } from "./blocks.js";
 import { addComment, cellComments, commentsIn, editCellComment, editComment, pointComment } from "./comments.js";
 
 const OWNER_KINDS = new Set(["code", "mermaid", "table"]);
@@ -100,13 +100,17 @@ export function addBlockNote(doc, b, note, when) {
   return { start: eol, end: eol, insert: doc.eol + p.contPrefix + written, caret: eol };
 }
 
+// The document splice that writes comment c's new note, from `next`, field f's value once the note was swapped.
+function noteSplice(f, c, next) {
+  const start = fieldToDoc(f, c.noteAt), end = fieldToDoc(f, c.noteAt + c.note.length);
+  return { start, end, insert: next.value.slice(c.noteAt, c.noteAt + c.note.length + next.value.length - f.value.length), caret: start };
+}
+
 // Owner b's comment `index` with its text swapped for `note`, its time kept; null when nothing would change.
 export function editBlockNote(doc, b, index, note) {
   const p = notesAfter(doc, b), found = p && notesField(doc, p), c = found?.points[index];
   const next = c ? editComment(found.f.value, c, note) : null;
-  if (!next) return null;
-  const start = fieldToDoc(found.f, c.noteAt), end = fieldToDoc(found.f, c.noteAt + c.note.length);
-  return { start, end, insert: next.value.slice(c.noteAt, c.noteAt + c.note.length + next.value.length - found.f.value.length), caret: start };
+  return next ? noteSplice(found.f, c, next) : null;
 }
 
 // The last comment goes with its paragraph and the blank line before it; a file that ended without a line break after
@@ -118,21 +122,14 @@ function removeNotes(doc, b, p) {
   return { start, end: p.end, insert: "", caret: start };
 }
 
-// Owner b's comment `index` taken out: with the spaces after it, or before it when last on its line, when its line
-// holds another; with its line when alone on one; with the paragraph when it is the last. Null when there is none.
+// Owner b's comment `index` taken out as cutItem takes it, or with the paragraph when it is the last. Null when there
+// is none.
 export function resolveBlockNote(doc, b, index) {
-  const p = notesAfter(doc, b), found = p && notesField(doc, p), c = found?.points[index];
-  if (!c) return null;
+  const p = notesAfter(doc, b), found = p && notesField(doc, p);
+  if (!found?.points[index]) return null;
   if (found.points.length === 1) return removeNotes(doc, b, p);
-  const lines = p.lines.map(L => ({ start: p.start + L.start, body: p.start + L.body, eol: p.start + L.eol }));
-  const at = x => fieldToDoc(found.f, x), lineOf = x => lines.findIndex((l, k) => k === lines.length - 1 || x < lines[k + 1].start);
-  const k = lineOf(at(c.start)), row = found.points.filter(x => lineOf(at(x.start)) === k), j = row.indexOf(c);
-  let s;
-  if (row.length > 1) s = j < row.length - 1 ? { start: at(c.start), end: at(row[j + 1].start) } : { start: at(row[j - 1].end), end: at(c.end) };
-  else if (k === 0) s = { start: lines[0].body, end: lines[1].body };
-  else if (k < lines.length - 1) s = { start: lines[k].start, end: lines[k + 1].start };
-  else s = { start: lines[k - 1].eol, end: lines[k].eol };
-  return { ...s, insert: "", caret: s.start };
+  const at = x => fieldToDoc(found.f, x);
+  return cutItem(p, found.points.map(c => ({ start: at(c.start), end: at(c.end) })), index);
 }
 
 // Picture i of paragraph of pictures b given comment `note`, stamped with `when`: its image, a linked one's whole,
@@ -172,9 +169,7 @@ function cellNoteOf(doc, b, index) {
 // would change.
 export function editCellNote(doc, b, index, note) {
   const found = cellNoteOf(doc, b, index), next = found && editCellComment(found.f.value, found.c, note);
-  if (!next) return null;
-  const { f, c } = found, start = fieldToDoc(f, c.noteAt), end = fieldToDoc(f, c.noteAt + c.note.length);
-  return { start, end, insert: next.value.slice(c.noteAt, c.noteAt + c.note.length + next.value.length - f.value.length), caret: start };
+  return next ? noteSplice(found.f, found.c, next) : null;
 }
 
 // Table b's cell comment `index` taken off: its marks and note go, the cell's text stays (a point comment alone leaves

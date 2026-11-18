@@ -4,7 +4,8 @@
 import { spaces, panes, focused, machines, shared, setShared, run } from "herdr";
 import { basename, fileKey, remember } from "./lib.js";
 
-const MOD = "herdr-inline-markdown", PANES = "herdr-inline-markdown.panes", RECENT = "herdr-inline-markdown.recent", RECENT_MAX = 30;
+export const MOD = "herdr-inline-markdown", PANES = "herdr-inline-markdown.panes", RECENT = "herdr-inline-markdown.recent";
+const RECENT_MAX = 30;
 
 // place "pane" focuses the pane already showing the file in that tab, else splits right of `pane` (default: the focused
 // one, else the tab's first); with no pane to open beside it falls through to a tab. place "tab" selects the file's own

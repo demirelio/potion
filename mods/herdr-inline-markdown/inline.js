@@ -55,7 +55,7 @@ const OPENS = 1, CLOSES = 2, NONE = -1, UNSET = -2;
 // allocate memory the runtime then has to collect.
 const FIRST_CAPACITY = 32;
 
-function doubled(array) {
+export function doubled(array) {
   const bigger = new array.constructor(array.length * 2);
   bigger.set(array);
   return bigger;

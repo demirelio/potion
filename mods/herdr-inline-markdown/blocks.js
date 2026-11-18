@@ -1486,12 +1486,12 @@ const lastOfSubtree = (bl, i) => {
   while (j + 1 < bl.length && isDescendant(bl, j + 1, i)) j++;
   return j;
 };
-export function prevSibling(doc, b) {
+function prevSibling(doc, b) {
   const bl = doc.blocks;
   for (let j = b.index - 1; j >= 0 && j !== b.parent; j--) if (bl[j].parent === b.parent) return bl[j];
   return null;
 }
-export function nextSibling(doc, b) {
+function nextSibling(doc, b) {
   const bl = doc.blocks, j = lastOfSubtree(bl, b.index) + 1;
   return j < bl.length && bl[j].parent === b.parent ? bl[j] : null;
 }
@@ -1678,21 +1678,26 @@ export function picturesIn(doc, b) {
   return pictureSpans(f.value).map(p => ({ start: at(p.start), end: at(p.end), from: at(p.from), to: at(p.to), note: p.note, noteAt: at(p.noteAt) }));
 }
 
-// Picture i of image paragraph b goes: with the spaces after it when another follows on its line, else the spaces
-// before it; with its whole line when it stands alone on one; with the paragraph when it is the only one.
-export function removePicture(doc, b, i) {
-  const all = picturesIn(doc, b), p = all[i];
-  if (!p) return null;
-  if (all.length === 1) return remove(doc, b);
+// Item i of `items` (document ranges { start, end } in order, inside block b) goes: with the
+// spaces after it when another follows on its line, else the spaces before it; with its whole line when it stands
+// alone on one.
+export function cutItem(b, items, i) {
   const lines = b.lines.map((_, k) => absLine(b, k)), lineOf = x => lines.findIndex(l => x < l.next || l === lines.at(-1));
-  const k = lineOf(p.start), row = all.filter(q => lineOf(q.start) === k), j = row.indexOf(p);
+  const item = items[i], k = lineOf(item.start), row = items.filter(q => lineOf(q.start) === k), j = row.indexOf(item);
   let s;
-  if (row.length > 1) s = j < row.length - 1 ? { start: p.start, end: row[j + 1].start } : { start: row[j - 1].end, end: p.end };
+  if (row.length > 1) s = j < row.length - 1 ? { start: item.start, end: row[j + 1].start } : { start: row[j - 1].end, end: item.end };
   // The first line keeps its own start, which a lazy next line may lack.
   else if (k === 0) s = { start: lines[0].body, end: lines[1].body };
   else if (k < lines.length - 1) s = { start: lines[k].start, end: lines[k + 1].start };
   else s = { start: lines[k - 1].eol, end: lines[k].eol };
   return { ...s, insert: "", caret: s.start };
+}
+
+// Picture i of image paragraph b goes as cutItem takes it, or with the paragraph when it is the only one.
+export function removePicture(doc, b, i) {
+  const all = picturesIn(doc, b);
+  if (!all[i]) return null;
+  return all.length === 1 ? remove(doc, b) : cutItem(b, all, i);
 }
 
 export function removeRange(doc, first, last0) {

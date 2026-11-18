@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import {
   MARKDOWN_EXT, isMarkdown, hash, dirname, basename, joinPath, normalizePath, tildePath, resolveLink,
   filterFiles, newFileName, uniqueName, fileKey, stats, modeOf, toggleMode, remember, trimMap,
-  markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, isLight, mix, mermaidConfig, diagramKey, DIAGRAM_COLORS, sharpName,
+  markdownPathsFromGit, markdownPathsFromFind, FIND_SCRIPT, mermaidConfig, diagramKey, DIAGRAM_COLORS, sharpName,
   toSource, sourceToDoc, docToSource, sourceSplice, eolOf, picturesOf, pictureName, pictureSource, touches,
   isPictureName, copyName, pictureLink, pictureMarkdown, escapeAlt, writtenAddress, pictureWithAlt, pictureWithAddress,
 } from "../mods/herdr-inline-markdown/lib.js";
@@ -382,36 +382,6 @@ test("trimMap keeps the last keys in insertion order and returns a new object", 
   assert.deepEqual(trimMap(map, 0), {});
   assert.deepEqual(trimMap(undefined, 3), {});
   assert.deepEqual(Object.keys(map), ["a", "b", "c", "d"], "the old map is not changed");
-});
-
-test("isLight reads #rgb, #rrggbb and #rrggbbaa; anything else is dark", () => {
-  assert.ok(isLight("#fff"));
-  assert.ok(isLight("#FFFFFF"));
-  assert.ok(isLight("#ffffff00"), "the alpha is ignored");
-  assert.ok(isLight("#f5f5f5"));
-  assert.ok(isLight("#ffc600"), "yellow is light");
-  assert.ok(!isLight("#000"));
-  assert.ok(!isLight("#122738"));
-  assert.ok(!isLight("#0050a4"));
-  assert.ok(!isLight("transparent"));
-  assert.ok(!isLight("white"));
-  assert.ok(!isLight("rgb(255,255,255)"));
-  assert.ok(!isLight("#ggg"));
-  assert.ok(!isLight("#12345"));
-  assert.ok(!isLight(undefined));
-});
-
-test("mix moves the first color toward the second and gives #rrggbb", () => {
-  assert.equal(mix("#000000", "#ffffff", 0), "#000000");
-  assert.equal(mix("#000000", "#ffffff", 1), "#ffffff");
-  assert.equal(mix("#000000", "#ffffff", 0.5), "#808080");
-  assert.equal(mix("#ff0000", "#0000ff", 0.25), "#bf0040");
-  assert.equal(mix("#fff", "#000", 0.5), "#808080", "short hex");
-  assert.equal(mix("#ffffff80", "#000000ff", 0), "#ffffff", "the alpha is dropped");
-  assert.equal(mix("#000000", "#ffffff", -3), "#000000", "t is held between 0 and 1");
-  assert.equal(mix("#000000", "#ffffff", 7), "#ffffff");
-  assert.equal(mix("red", "#ffffff", 0.5), "red", "not hex: the first as it is");
-  assert.equal(mix("#112233", "blue", 0.5), "#112233");
 });
 
 test("DIAGRAM_COLORS are all #rrggbb", () => {

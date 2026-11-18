@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   pressToField, snapToWord, tableCells, nextCell, wrapRows, wrapPlace, lineOffsets, isOneRow, columnX, maxOffset, clampOffset, prefixSums, blockAt,
-  estimateHeight, caretY, revealOffset, anchorOffset, anchorBlock, revealAt, pageStep, COLUMN,
+  estimateHeight, revealOffset, anchorBlock, revealAt, pageStep, COLUMN,
   FRAME, columnLeft, frameBox, topDown, clampView, overflows, startView, zoomAround, zoomStep, canZoom, toolsTop, frameTool,
   sharpScale, startsGesture, decideAxis, passThrough, MENU, menuH, menuPlace, slashX, BAR, barLayout, barPlace, BAR_MENU, barMenuH,
   barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
@@ -299,7 +299,6 @@ test("viewport arithmetic: column x, prefix sums, hit-test, clamps", () => {
   assert.equal(clampOffset(900, 1000, 400), 600);
   assert.equal(clampOffset(-3, 1000, 400), 0);
   assert.equal(estimateHeight(3, 24, 14), 86);
-  assert.equal(caretY({ blockTop: 100, padTop: 14, chromeTop: 12, rowPx: 20, row: 2 }), 166);
   assert.equal(pageStep(500), 460);
 });
 
@@ -316,8 +315,6 @@ test("anchoring keeps the anchor block's screen y when heights above it change",
   const before = prefixSums([100, 100, 100, 1000]), after = prefixSums([100, 400, 100, 1000]);
   const anchor = anchorBlock({ sums: before, offset: 250, viewportH: 300 });
   assert.equal(anchor, 2);
-  const offset = anchorOffset({ offset: 250, before: before[anchor], after: after[anchor], contentH: after.at(-1), viewportH: 300 });
-  assert.equal(after[anchor] - offset, before[anchor] - 250);
   assert.equal(anchorBlock({ sums: before, offset: 250, viewportH: 300, active: 3, caretY: 320 }), 3, "the active block when its caret is on screen");
   assert.equal(revealAt({ top: 1000, rowY: 40, fraction: 1 / 3, viewportH: 600, contentH: 4000 }), 840);
 });

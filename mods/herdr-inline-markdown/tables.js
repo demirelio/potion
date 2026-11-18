@@ -27,8 +27,7 @@ function trimmedCell(text, start, end) {
   return { start: s, end: e };
 }
 
-// The code points of text[from, to).
-function codePoints(text, from, to) {
+export function codePoints(text, from = 0, to = text.length) {
   let n = 0;
   for (let i = from; i < to; i++) {
     const c = text.charCodeAt(i);
@@ -117,10 +116,8 @@ function keptOf(doc, b) {
 // rows: the header first, the delimiter row left out; each { line (an index into b.lines), cells, lead, trail (a pipe at
 // either end) }. A cell is { start, end }, the document offsets of its text without the spaces around it (an empty
 // one has start === end inside its slot); a row with fewer cells than the header has null for each it lacks.
-// columns: the header's cell count; aligns[c]: "left", "center", "right" or null, from the delimiter row; dashes[c]:
-// the dashes of its delimiter cell; aligned:
-// every line has its pipes at the same columns (code points from the line's body); irregular: a row holds more cells
-// than the header, which GFM drops.
+// aligned: every line has its pipes at the same columns (code points from the line's body); irregular: a row holds
+// more cells than the header, which GFM drops.
 export function tableOf(doc, b) {
   const k = keptOf(doc, b);
   if (k.at !== b.start) {
@@ -130,13 +127,12 @@ export function tableOf(doc, b) {
   return k.table;
 }
 
-// The header's cell count of table b, read without parting the table.
+// The header's cell count, read without parting the table.
 export function columnsOf(doc, b) {
   const L = b.lines[0];
   return cellCount(doc.text.slice(b.start + L.body, b.start + L.eol));
 }
 
-// Whether a row of table b holds more cells than its header (GFM drops the extra ones), wherever the table moved.
 export const isIrregular = (doc, b) => keptOf(doc, b).table.irregular;
 
 export function cellText(doc, t, r, c) {
@@ -217,21 +213,10 @@ export function writeDashes(doc, b, dashes) {
   return line === text.slice(body, eol) ? null : { start: body, end: eol, insert: line };
 }
 
-// -> the splice that writes `next` as the text of cell (r, c) of table t (tableOf(doc, b)), the table keeping its shape:
-// line breaks become spaces, a pipe not escaped yet is escaped, a text ending in an odd run of backslashes gets a space
-// before a pipe right after it, an empty cell's text goes between its pipes with a space each side, a cell the row lacks is added
-// after the empty cells before it (the row keeping or lacking its closing pipe), and the first cell of a row with no
-// leading pipe never opens a block. A row's first or last cell emptied where the row has no pipe at that end gets one:
-// without it the row would have a cell fewer. Nothing outside the cell's slot changes.
-export function cellEdit(doc, b, t, r, c, next) {
-  const row = t.rows[r], { start, end, insert } = writeCell(doc.text, row, b.start + b.lines[row.line].eol, c, next);
-  return { start, end, insert };
-}
-
-// cellEdit's splice for cell c of `row` (rowAt's, or a tableOf row) on a line ending at `eol`, with `value`, the cell's
-// text as written (what a field editing it holds), and `from`, where that starts in the text after the splice. A blank
-// `next` empties the cell: `value` is then the blank as typed, which the file holds only between two pipes (a cell at
-// a row's end with no pipe there gets one instead), and `from` the cell's place.
+// -> the splice { start, end, insert } that writes `next` as cell c of `row` (rowAt's or a tableOf row) on a line ending
+// at `eol`, only the cell's slot changing, with `value`, the cell's text as a field editing it holds it, and `from`,
+// where that starts after the splice. The first cell of a row with no leading pipe never opens a block; a first or last
+// cell emptied where the row has no pipe at that end gets one, or the row would lose the cell.
 export function writeCell(text, row, eol, c, next) {
   const own = ownCells(row), w = cellWritten(next), blank = !w.trim();
   const at = (start, end, insert, from, value = w) => ({ start, end, insert, value, from });

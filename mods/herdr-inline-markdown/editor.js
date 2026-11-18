@@ -68,7 +68,6 @@ const FIELDS_MADE_WITHIN = 1, FIELDS_KEPT_WITHIN = 3;
 // get theirs over several passes.
 const CELLS_A_PASS = 240;
 const CELL_ID = /^(.*):(\d+):(\d+)$/;
-// The table cell a field id (page.js cellId) names: { key, r, c }; null for a block's key, which holds no colon.
 function cellOfId(id) {
   const m = CELL_ID.exec(id ?? "");
   return m ? { key: m[1], r: Number(m[2]), c: Number(m[3]) } : null;
@@ -131,7 +130,6 @@ const COMMENT_REFUSED = {
   paragraphs: "A comment stays within one paragraph",
 };
 const NOTE_CLIP = 80;
-// The comment field grows with its text up to this many rows.
 const NOTE_ROWS = 12;
 const BLOCK_NOTES_MEMO = "block-notes", PICTURE_NOTES_MEMO = "picture-notes";
 const COUNT_CHIP_GAP = 4;
@@ -140,17 +138,15 @@ const TABLE_INSET = 1 + BOX.py, CELL_LINE_H = STYLES.cell.size * STYLES.cell.lh;
 const holdsComments = b => isText(b) || b.kind === "table";
 const shownText = markdown => parseInline(markdown).chars.map(c => c.text).join("").trim();
 const noted = text => commentsIn(text).filter(c => c.note !== null);
-// The comments of a paragraph of pictures (picturesOf's `list`) in the order they are written, each with the index of
-// its picture and what names that picture.
 const pictureNotesOf = list => list.flatMap((p, picture) => (p.comment ? [{ kind: "comment", note: p.comment.note, picture, name: pictureName(p) }] : []));
 // Herdr writes Cmd+Alt+M `alt-cmd-m`: it is told by its key and modifiers.
 const isCommentKey = ({ key, modifiers: m = {} }) => key === "m" && Boolean(m.platform && m.alt) && !m.control && !m.shift;
-// The cards of field value `value`'s comments: each comment with where its card is level with, its time and text, and
-// the look of its card when not active.
-const cardsOf = value => noted(value).map((c, index) => {
-  const { when, text } = readNote(c.note);
-  return { c, index, at: c.kind === "point" ? c.start : c.from, when, text, look: cardLook({ text, header: true }) };
-});
+// A note's time and text, and the look of its card when not active.
+const cardNote = note => {
+  const { when, text } = readNote(note);
+  return { when, text, look: cardLook({ text, header: true }) };
+};
+const cardsOf = value => noted(value).map((c, index) => ({ c, index, at: c.kind === "point" ? c.start : c.from, ...cardNote(c.note) }));
 const clip = (text, n) => {
   const chars = [...text];
   return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text;
@@ -173,8 +169,6 @@ const NEW_CARD = "md-card-new", FLOAT_CARD = "md-card-float";
 const CARD_SLACK = 200;
 // Look letters (tokens.js) of the text a comment is being written on, and of the active comment's.
 const TINT_NEW = "h", TINT_ACTIVE = "d";
-// What of field value `value` the comment starting at `at` tints in look `letter`: its marked text, a point comment's
-// marker; null when no comment starts there.
 function tintIn(value, at, letter) {
   const c = noted(value).find(x => x.start === at);
   if (!c) return null;
@@ -201,20 +195,17 @@ const PICTURE_BUTTONS = [
 const PICTURE_CHANGED = "The picture changed meanwhile, so it wasn't replaced";
 const NO_PICTURE_FILE = "This picture has no file to open";
 const NO_ADDRESS = "No address";
-// A picture's float for the address `src` and `buttons`: a rule after the address and before each button set apart.
 const pictureFloatSize = (src, buttons) => {
   const shown = clipMiddle(src, LINK_POP.addressChars) || NO_ADDRESS;
   return popoverSize([...shown].length, buttons.length, 1 + buttons.filter(b => b.apart).length);
 };
 const LANG_ACTIONS = new Set(["mdb-lang-pick", "mdb-lang-close", "mdb-lang-up", "mdb-lang-down"]);
 const CHIP_CHARS = 24;
-// The language menu's rows for what was typed: languages, then a row ({ typed }) writing a word the list doesn't know.
 const languageRows = query => {
   const { items, typed } = languageMatches(query);
   return typed ? [...items, { typed }] : items;
 };
-// A code block's box starts with the language strip, a diagram's only while its source is being edited.
-const stripped = (b, active) => b.kind === "code" || (b.kind === "mermaid" && active);
+const hasStrip = (b, editingSource) => b.kind === "code" || (b.kind === "mermaid" && editingSource);
 const NO_STRIP = { strip: false, chip: "", chipW: 0, chipLive: false, chipOpen: false };
 const codeStartIn = (doc, b) => fieldToDoc(fieldOf(doc, b), 0);
 const inBox = (box, x, y) => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h;
@@ -277,7 +268,6 @@ const mapCaret = (d, p) => {
   const q = mapPos(d, p);
   return q < 0 ? d.at + d.inserted.length : q;
 };
-// A field's selection { start, end } in UTF-16 offsets, start first; null when the field cannot say.
 function caretOf(state) {
   try {
     const { start, end } = state.selected_range();
@@ -286,7 +276,6 @@ function caretOf(state) {
 }
 const docRange = (f, r) => ({ start: fieldToDoc(f, r.start), end: fieldToDoc(f, r.end) });
 const asRange = caret => (typeof caret === "number" ? { start: caret, end: caret } : caret ?? { start: 0, end: 0 });
-// The next cell (dir > 0) or the previous one in table t's reading order, row by row; null past either end.
 function cellBeside(t, { r, c }, dir) {
   const k = r * t.columns + c + dir;
   return k < 0 || k >= t.rows.length * t.columns ? null : { r: Math.floor(k / t.columns), c: k % t.columns };
@@ -346,7 +335,6 @@ function docSplice(f, edits) {
 }
 
 const byKey = (doc, key) => doc.blocks.find(b => b.key === key) ?? null;
-// The link whose markup holds offset x of a field value, among parseInline's spans.
 const linkAt = (spans, x) => spans.find(sp => sp.kind === "link" && sp.start <= x && x < sp.end) ?? null;
 // The block whose span or gap holds document offset `at` (the first block for the lead).
 function holdingIn(doc, at) {
@@ -364,7 +352,6 @@ const topIn = (doc, b) => {
   return x;
 };
 const listOf = b => (b.task ? "task" : b.ordered ? "ordered" : "bullet");
-// The slash.js command a text block's style is, or null: a heading deeper than the menu's, or no block.
 function styleId(b) {
   if (b?.kind === "item") return LIST_COMMANDS[listOf(b)];
   if (b?.kind === "heading") return b.level <= 3 ? `h${b.level}` : null;
@@ -389,7 +376,6 @@ const beforeKey = (key, kind) => (doc, text) => {
   const b = byKey(doc, key);
   return b && (ownerOf(doc, b) ? insertAfter(doc, b, kind, text) : insertBefore(doc, b, kind, text));
 };
-// Where picked pictures go, written as a pending block is: a `base` and its `steps`.
 const AT_END = { base: atEnd, steps: [] };
 const belowBlock = key => ({ base: afterKey(key, "paragraph"), steps: [] });
 const placeOf = pending => ({ base: pending.base, steps: pending.steps });
@@ -438,8 +424,6 @@ function endsInTwoBlankLines(value) {
   return BLANK_LINE.test(value.slice(last + 1)) && BLANK_LINE.test(value.slice(prev + 1, last));
 }
 const TAB_WIDTH = 4, SMALLEST_SPACE_INDENT = 2;
-// What one Tab indents the code `value` by: a tab when more of its indented lines start with one than with a space,
-// else its smallest space indent of two or more, else a tab's width of spaces.
 function indentUnit(value) {
   let tabs = 0, spaces = 0, fewest = Infinity;
   for (const line of value.split("\n")) {
@@ -463,7 +447,6 @@ function linesTouched(value, r) {
   return starts;
 }
 const emptyLineAt = (value, at) => at === value.length || value[at] === "\n";
-// A leading tab, else up to one indent unit of leading spaces.
 function outdentWidth(value, at, unit) {
   if (value[at] === "\t") return 1;
   const most = unit === "\t" ? TAB_WIDTH : unit.length;
@@ -561,32 +544,23 @@ export class Editor {
     // block key -> the pictures of an image paragraph: { content, list (picturesOf), notes (pictureNotesOf), items (list
     // with what Images answered), layout }
     this.pictures = new Map();
-    // Diagram frames: `frames` the view ({ z, x, y }) of each frame panned or zoomed (none: its starting view), `pan` a
-    // press on a frame ({ key, from, x0, y0, moved }), `hoverTop` where the hovered frame's − % + group sits, `gesture`
-    // the wheel gesture going on, `zoomed` the frames zoomed since the zoom last rested. `hoverBox` is the code block or
-    // table under the pointer, which shows its Comment button.
+    // `frames`: the view ({ z, x, y }) of each diagram frame panned or zoomed; `zoomed` the frames zoomed since the zoom
+    // last rested. `hoverBox` is the code block or table under the pointer, which shows its Comment button.
     this.frames = new Map(); this.pan = null; this.hoverFrame = null; this.hoverTop = null; this.gesture = null;
     this.zoomed = new Set(); this.settleTimer = null; this.hoverBox = null;
-    // Grid tables: `tablePans` how far each one wider than its room is panned sideways; `hoverLine` the column ({ key,
-    // column }) whose line the pointer is on, which a press drags (`resize`: the column, where the press was, the grid
-    // and pan it began with, the dashes and grid it is at, whether it moved).
+    // `hoverLine`: the table column ({ key, column }) whose line the pointer is on, which a press drags (`resize`).
     this.tablePans = new Map(); this.hoverLine = null; this.resize = null;
 
-    // Every text block near the viewport is drawn by a field of its own (`blockFields`: key -> { state, and what its
-    // value and tokens were made from }; `fieldKeys` the other way), edited or not, so a press lands in it natively and
-    // nothing moves. A block with no field of its own (code, a table, one not written yet) is edited in `loose`.
-    // The edited block: `field` is its text state (`loose` while none is edited), `f` its field map, `seen` the
-    // field's value as last seen or set, `opened` its value when the block was opened, `known` the caret as last read
-    // or set (what a key-up's caret is compared with, and where typing went in when its change alone cannot tell),
-    // `act` the activation number, `stale` that text was typed since `doc`. `shiftField` is the block whose field a
-    // Shift+press went into, which selects blocks instead; `cmdPress` ({ key, opened }) a Cmd+press in a block's field,
-    // which may open a link instead. `fieldGen` counts the times blocks got or lost a field of their own.
+    // Every text block near the viewport is drawn by a field of its own (`blockFields`, and `fieldKeys` the other way),
+    // edited or not, so a press lands in it natively and nothing moves; a block with none (code, a table, one not
+    // written yet) is edited in `loose`. The edited block: `f` its field map, `seen` the field's value as last seen or
+    // set, `opened` its value when it was opened, `known` the caret as last read or set (where typing went in when its
+    // change alone cannot tell), `act` the activation number, `stale` that text was typed since `doc`.
     this.blockFields = new Map(); this.fieldKeys = new Map(); this.defs = null; this.fieldGen = 0;
-    // The cells of a grid table's rows near the viewport are drawn by fields of their own too (`cellFields`: table key ->
-    // { cells: `r:c` -> { state, and what its value and tokens were made from }, gen: a new number whenever its fields
-    // come or go, content / defs / deep / dirty: what they were last filled from }; `cellKeys` each state's { key, r, c }).
-    // While the edited block is such a table, `cell` ({ r, c }) names the edited cell, whose field is `field`, and the
-    // table's column widths stay `heldWidths` ({ key, widths }).
+    // The cells of grid tables near the viewport have fields of their own too (`cellFields`: table key -> { cells: `r:c`
+    // -> its record { state, src, value, defs, tint, rich, checked }, gen: a new number whenever its fields come or go };
+    // `cellKeys` each field's { key, r, c }). While a cell
+    // is edited (`cell`), its table's column widths stay `heldWidths`.
     this.cellFields = new Map(); this.cellKeys = new Map(); this.cell = null; this.heldWidths = null; this.cellGen = 0;
     this.loose = this.newField();
     this.field = this.loose;
@@ -598,58 +572,45 @@ export class Editor {
     // and typing an action took in before its event). An unowed change that leaves the value as it was is forward
     // Delete at the end of the field.
     this.owed = new Map();
-    // Inline tokens of the active field: `rich` the layout of its value (tokens.js), kept with what it was made from;
-    // `pieces` what each token draws; `tokensHeld` while the editor's own edits run; `tokensOff` when the field took none;
-    // `echoes`, per field state, the numbers of the token sets made in the last ECHO_MS, oldest first.
-    // `tinted` what tintNow last gave, with what it was worked out from.
+    // `rich`: the active field's token layout (tokens.js); `tokensOff` that the field took no tokens; `echoes`, per field
+    // state, the token sets made in the last ECHO_MS, oldest first.
     this.rich = null; this.tinted = null; this.pieces = new Map(); this.tokensHeld = false; this.tokensOff = false;
     this.echoes = new Map(); this.tokenSets = 0;
     // The typing style: the formatting text typed next at one caret gets ({ act, value, at, format }), set by a format
     // key at a caret outside a word and by the key typed or deleted before; null while none.
     this.typingStyle = null;
-    // Floats: `pressed` the last press in a field (its window x, which a token click lacks, the field's window origin,
-    // the press in the field) and `released` where it ended; `pin` where a press or a drag put the floats of a range,
-    // while the field draws it there; `wraps` the wrap estimates last asked for.
+    // `pressed`: the last press in a field, with its window x, which a token click lacks; `pin` where a press or a drag
+    // put the floats of a range, while the field draws it there.
     this.pressed = null; this.released = null; this.pin = null; this.wraps = new Map();
-    // `sel` names the selected blocks' two ends by key, `selKeys` the blocks it covers, `gens` each block's TextView
-    // generation, raised to drop the TextView's own text selection when the block is selected.
+    // `sel`: the selected blocks' two ends by key. `gens`: each block's TextView generation, raised to drop the
+    // TextView's own text selection when the block is selected.
     this.sel = null; this.selKeys = new Set(); this.gens = new Map();
     this.slash = null; this.bar = null; this.barMenu = null;
-    // Comments: `card` names the block whose comments are listed, `note` the comment the box is writing (`noteField`)
-    // for one activation, `highlight` the colour Reading marks them in and `deep` the active one's, `notesFor` the
-    // count of each block of a doc. In the margin layout (`margin`, geometry.js marginLayout) they are cards: `cards`
-    // their places as last worked out, `cardMemo` what each commented block's cards are read from, `raised` the
-    // measured height of the active card.
+    // `note`: the comment the box (`noteField`) writes; `highlight` the colour Reading marks comments in and `deep` the
+    // active one's. In the margin layout (`margin`) comments are cards: `cards` their places as last worked out,
+    // `raised` the measured height of the active card.
     this.card = null; this.note = null; this.highlight = highlightColor(theme()); this.deep = deepHighlightColor(theme()); this.notesFor = null;
     this.margin = null; this.cards = null; this.cardMemo = new Map(); this.raised = null;
-    // A code block's, diagram's or table's comments, those on the pictures of a paragraph of pictures and those in a
-    // table's cells: `pairing` which block owns which comments paragraph in `doc` (blocknotes.js), `cellMemo` each
-    // table's cell comments as its cards show them, `blockNote` the active one of them ({ key: the block's, index,
-    // editing, cell: whether it is in a cell }), `blockAdd` the one being written for one activation ({ key: the
-    // block's, act, caret: the block's own when it is the edited one, picture: the index of the picture it goes on or
-    // -1 }).
+    // The comments of code blocks, diagrams, tables, pictures and table cells: `pairing` which block owns which comments
+    // paragraph (blocknotes.js), `blockNote` the active one, `blockAdd` the one being written.
     this.pairing = null; this.cellMemo = new Map(); this.blockNote = null; this.blockAdd = null;
-    // Tables drawn as grids: `grids` each table's memo for grid.js gridOf, `rowHeights` its rows' measured heights.
     this.grids = new Map(); this.rowHeights = new Map();
     this.noteField = TextareaState.new({ placeholder: "Add a comment…" });
     this.noteField.set_auto_grow(1, NOTE_ROWS);
     this.noteField.on("submit", (_e, cx) => this.submitNote(cx));
-    // Links: `element` the element a press picked (its popover shows while the selection stays in it), `pressedOn` the
-    // one that was picked when the press began, `linkBox` what the address box (`linkField`) is open for.
+    // `element`: the link, comment or picture a press picked, whose float shows while the selection stays in it.
     this.element = null; this.pressedOn = null; this.linkBox = null;
     this.linkField = InputState.new({ placeholder: "Paste or type a link" });
     this.linkField.on("submit", (_e, cx) => this.applyLinkBox(cx));
-    // Pictures: `picked` the one a click picked in a paragraph of pictures ({ key, index, copied, box }), shown by its
-    // float while no block is edited; `box` names the field open in the float's place, the alt text's or the address's.
-    // A picture in a line of text is an element; `imageBox` is what the alt text's or address's field is open for there.
+    // `picked`: the picture picked in a paragraph of pictures; `imageBox` the box open for a picture in a line of text.
     // Herdr's input takes its placeholder only when it is made, so each box has a field of its own.
     this.picked = null; this.imageBox = null;
     this.altField = InputState.new({ placeholder: "Describe the picture" });
     this.altField.on("submit", (_e, cx) => this.savePictureBox(cx));
     this.addressField = InputState.new({ placeholder: "Paste a picture address or path" });
     this.addressField.on("submit", (_e, cx) => this.savePictureBox(cx));
-    // The language menu a code block's chip opened ({ key, act, caret, query, items, index, first }), for one activation:
-    // `caret` is the edited block's selection when the menu opened over it, which gets the keyboard back after it.
+    // The language menu a code block's chip opened: its `caret` is the edited block's selection when the menu opened
+    // over it, which gets the keyboard back after it.
     this.lang = null;
     this.langField = InputState.new({ placeholder: "Search or type a language" });
     this.langField.on("change", (_e, cx) => this.languagesTyped(cx));
@@ -771,7 +732,6 @@ export class Editor {
     });
   }
 
-  // -> the blocks of `text`, parsed a slice at a time, or null when the tab closed meanwhile.
   async parseInSlices(text, cx) {
     let until = 0;
     const steps = parseInSteps(text, {}, () => Date.now() >= until);
@@ -845,27 +805,23 @@ export class Editor {
   // `rec`: history.record's meta plus the `splice` that made `text` when known; false when the history already has the
   // change (undo or redo moved its entry, or history.amend folded it into the last one). edited() takes `rec` too.
   setText(text, cx, rec) {
-    this.track(text, rec);
-    this.text = text;
-    if (text.length <= BIG) this.settled = text;
-    this.scheduleSave(cx);
+    this.store(text, cx, rec);
     if (this.mode === "reading") this.refresh(cx);
     cx.notify();
   }
 
   // Typing in a block's field edits the buffer; nothing is parsed until the block is committed.
   edited(text, cx, rec) {
-    this.track(text, rec);
-    this.text = text;
-    if (text.length <= BIG) this.settled = text;
+    this.store(text, cx, rec);
     this.stale = true;
-    this.scheduleSave(cx);
     cx.notify();
   }
 
-  track(text, rec) {
-    if (rec === false || text === this.text) return;
-    this.history.record(this.text, rec?.splice ?? spliceOf(diff(this.text, text)), rec ?? {});
+  store(text, cx, rec) {
+    if (rec !== false && text !== this.text) this.history.record(this.text, rec?.splice ?? spliceOf(diff(this.text, text)), rec ?? {});
+    this.text = text;
+    if (text.length <= BIG) this.settled = text;
+    this.scheduleSave(cx);
   }
 
   change(s, cx, meta = {}) {
@@ -1166,8 +1122,7 @@ export class Editor {
     cx.notify();
   }
 
-  // The source caret goes where the edited block's caret was, else to the start of the top block. The page is not
-  // drawn in Markdown, so the pointer is unknown.
+  // The page is not drawn in Markdown, so the pointer is unknown.
   toMarkdown(cx) {
     this.setSel(null, cx);
     this.unpick(cx);
@@ -1346,7 +1301,6 @@ export class Editor {
     if (/^mailto:/i.test(url)) this.openWithSystem(url, "Can't open this link", cx);
   }
 
-  // `target` (a file, a mail address) in the app the computer opens it with; `failed` is the notice when it can't.
   openWithSystem(target, failed, cx) {
     cx.spawn(async () => {
       try {
@@ -1406,7 +1360,7 @@ export class Editor {
     }
     this.stale = false;
     const p = place ?? (held && d ? this.mapped(held, d) : null);
-    if (p && this.activeKey && !this.pending) this.refind(p, cx);
+    if (p && this.activeKey && !this.pending) this.refind(p);
     this.rebuild(cx, anchor);
     return d;
   }
@@ -1430,7 +1384,6 @@ export class Editor {
     this.setText(applySplice(this.text, g), cx, false);
   }
 
-  // The edited block's place in the text as document offsets: its start, its field's start, the caret.
   held() {
     const b = this.blockByKey(this.activeKey), f = this.f;
     if (!b || !f) return null;
@@ -1449,42 +1402,42 @@ export class Editor {
   // After a re-parse the block at document offset `at` is the edited one if it is of `kind` (any when null), starts at
   // `from` or later and is no paragraph of pictures, nor another block's comments. Its field is set only when its value
   // differs: the caret goes to `caretDoc`, else follows its text.
-  refind({ at, kind, caretDoc, from = -Infinity }, cx) {
+  refind({ at, kind, caretDoc, from = -Infinity }) {
     const b = this.holding(at);
     if (!b || b.start > at || (kind && b.kind !== kind) || b.start < from || b.image || this.hiddenNotes(b.key) || !this.editable()) return this.drop();
-    if (this.cell) return this.refindCell(b, at, caretDoc, cx);
+    if (this.cell) return this.refindCell(b, at, caretDoc);
     const f = fieldOf(this.doc, b), value = withInnerLine(b, f.value);
     this.activeKey = b.key; this.f = f;
     this.adoptField(b);
-    if (value === this.seen) return;
-    const c = caretDoc !== null && caretDoc !== undefined ? docToField(f, caretDoc) : mapCaret(diff(this.seen, value), caretOf(this.field)?.end ?? 0);
-    const n = clamp(c, 0, value.length);
-    this.slash = null; this.bar = null; this.note = null;
-    if (!this.setField(value, { start: n, end: n })) return this.drop();
-    this.retoken();
-    this.rows = this.rowsFlag();
-    this.revealNext = true;
-    this.wake();
+    if (this.retake(value, caretDoc)) this.rows = this.rowsFlag();
   }
 
-  // The edited cell after a re-parse: the one of grid table b holding document offset `at`, its field the one being
-  // edited, as it was, with the blanks typed at its text's ends. A table the re-parse leaves kept as source stops the
-  // editing: the grid of the pass before still names it one.
-  refindCell(b, at, caretDoc, cx) {
+  // A table the re-parse leaves kept as source stops the editing: the grid of the pass before still names it one.
+  refindCell(b, at, caretDoc) {
     if (b.kind !== "table" || !drawsGrid(this.doc, b)) return this.drop();
     const { r, c } = this.cellAtDoc(b, at, at, this.cell.c), f = this.cellMap(b, r, c, this.seen);
     this.activeKey = b.key; this.f = f; this.cell = { r, c };
     this.adoptCell(b.key, r, c);
-    if (f.value === this.seen) return;
-    const n = clamp(caretDoc !== null && caretDoc !== undefined ? docToField(f, caretDoc) : mapCaret(diff(this.seen, f.value), caretOf(this.field)?.end ?? 0), 0, f.value.length);
+    this.retake(f.value, caretDoc);
+  }
+
+  // The edited field takes `value` where a re-parse changed it, the caret at `caretDoc` or following its text.
+  // -> whether it did.
+  retake(value, caretDoc) {
+    if (value === this.seen) return false;
+    const c = caretDoc !== null && caretDoc !== undefined ? docToField(this.f, caretDoc) : mapCaret(diff(this.seen, value), caretOf(this.field)?.end ?? 0);
+    const n = clamp(c, 0, value.length);
     this.slash = null; this.bar = null; this.note = null;
-    if (!this.setField(f.value, { start: n, end: n })) return this.drop();
+    if (!this.setField(value, { start: n, end: n })) {
+      this.drop();
+      return false;
+    }
     this.retoken();
     this.revealNext = true;
     this.wake();
+    return true;
   }
 
-  // The field being edited draws cell (r, c) of table `key`, which a re-parse may have moved it to.
   adoptCell(key, r, c) {
     const was = this.cellKeys.get(this.field);
     if (was && was.key === key && was.r === r && was.c === c) return;
@@ -1578,7 +1531,7 @@ export class Editor {
   windowFor(prev) {
     const n = this.blocks.length, s = this.sums, margin = this.inline ? INLINE_MARGIN : WINDOW_MARGIN;
     if (!this.file || s.length !== n + 1 || (!this.inline && n <= MOUNT_ALL)) return null;
-    const top = this.offset - COLUMN.padTop, bottom = top + (this.viewport ? this.viewH() : UNSIZED_VIEW_H);
+    const top = this.offset - COLUMN.padTop, bottom = top + this.paneH();
     const holds = prev && prev.order === this.order && (prev.from === 0 || s[prev.from] <= top - margin / 2) && (prev.to === n || s[prev.to] >= bottom + margin / 2);
     const from = holds ? prev.from : blockAt(s, top - margin), to = holds ? prev.to : blockAt(s, bottom + margin) + 1;
     const a = this.at.get(this.activeKey) ?? -1, extra = a >= 0 && (a < from || a >= to) ? a : -1;
@@ -1672,7 +1625,6 @@ export class Editor {
     return hidden.size ? blocks.filter(b => !hidden.has(b.key) || b.key === this.activeKey) : blocks;
   }
 
-  // Which block owns which comments paragraph, paired once for each document.
   notesNow() {
     if (this.pairing?.doc !== this.doc) this.pairing = pairNotes(this.doc, this.pairing);
     return this.pairing;
@@ -1723,7 +1675,6 @@ export class Editor {
     this.fieldKeys.set(state, key);
   }
 
-  // -> the field block `key` owned, now nobody's, or null.
   disown(key) {
     const kept = this.blockFields.get(key);
     if (!kept) return null;
@@ -1751,7 +1702,6 @@ export class Editor {
     this.cellKeys.set(state, { key, r, c });
   }
 
-  // -> the field cell (r, c) of table `key` owned, now nobody's, or null.
   disownCell(key, r, c) {
     const table = this.cellFields.get(key), kept = table?.cells.get(`${r}:${c}`);
     if (!kept) return null;
@@ -1772,36 +1722,30 @@ export class Editor {
     }
   }
 
-  // The field cell (r, c) of grid table b is edited in: its own, made now when its row is far from the page.
   cellFieldFor(b, r, c) {
     if (!this.cellField(b.key, r, c)) this.ownCell(b.key, r, c, this.newField());
     return this.cellField(b.key, r, c);
   }
 
-  // A press is under way in the cell's field, or it is the edited one.
   cellInUse(key, r, c) {
     const id = cellId(key, r, c);
     return id === this.editedId() || this.fieldInUse(id);
   }
 
-  // What names the edited field: the edited block's key, or its cell's id while a cell is edited.
   editedId() {
     return this.cell && this.activeKey ? cellId(this.activeKey, this.cell.r, this.cell.c) : this.activeKey;
   }
 
-  // The field a field id names: a block's own, or a cell's.
   stateOf(id) {
     const cell = cellOfId(id);
     return cell ? this.cellField(cell.key, cell.r, cell.c) : this.blockField(id);
   }
 
-  // The field id of a field state: its block's key or its cell's id; undefined for none.
   idOf(state) {
     const cell = this.cellKeys.get(state);
     return cell ? cellId(cell.key, cell.r, cell.c) : this.fieldKeys.get(state);
   }
 
-  // Grid table b's grid data while it is drawn as a grid, else null.
   gridOf(b) {
     return b?.kind === "table" ? this.data.get(b.key)?.grid ?? null : null;
   }
@@ -1865,7 +1809,6 @@ export class Editor {
     return { start: w.start, end: w.end, insert: w.insert, caret: w.from + fieldCaret, fieldCaret };
   }
 
-  // The field block b is edited in: its own, made now when it has none yet, or `loose`.
   fieldFor(b) {
     if (!this.ownsField(b)) return this.loose;
     if (!this.blockFields.has(b.key)) this.own(b.key, this.newField());
@@ -1948,11 +1891,10 @@ export class Editor {
     return left;
   }
 
-  // The rows of grid table data d (page index i) within `screens` screens above or below the viewport.
   rowsNear(i, d, screens) {
     const near = new Set();
     if (this.sums.length !== this.blocks.length + 1) return near;
-    const screen = this.viewport ? this.viewH() : UNSIZED_VIEW_H, top = this.offset - COLUMN.padTop;
+    const screen = this.paneH(), top = this.offset - COLUMN.padTop;
     const from = top - screens * screen, to = top + (1 + screens) * screen, heights = this.gridHeights(d);
     let y = this.sums[i] + d.space + GRID.line;
     for (let r = 0; r < heights.length && y < to; r++) {
@@ -1991,11 +1933,10 @@ export class Editor {
     try { state.set_value({ text: source, tokens }); } catch { this.guard(() => state.set_value(source)); }
   }
 
-  // The keys of the mounted blocks within `screens` screens above or below the viewport.
   nearKeys(mounted, screens) {
     const n = this.blocks.length, s = this.sums;
     if (s.length !== n + 1) return [...mounted];
-    const screen = this.viewport ? this.viewH() : UNSIZED_VIEW_H, top = this.offset - COLUMN.padTop;
+    const screen = this.paneH(), top = this.offset - COLUMN.padTop;
     const keys = [];
     for (let i = Math.max(0, blockAt(s, top - screens * screen)); i < n && s[i] < top + (1 + screens) * screen; i++) {
       if (mounted.has(this.blocks[i].key)) keys.push(this.blocks[i].key);
@@ -2076,16 +2017,13 @@ export class Editor {
     };
   }
 
-  // A text block shows its comments' count where notesPlace puts it, unless they show as cards in the margin; the edited
-  // one counts what its field holds. A code block, diagram or table shows its comments paragraph's count level with its
-  // top (a table's with the comments in its cells), left of a code block's language chip where the chip would be under
-  // it; a paragraph of pictures its pictures' comments' count level with its top.
+  // The count shows only while no margin shows the comments as cards. The edited block counts what its field holds.
   notesData(b, look, space, cal, width) {
     const owned = this.shownNotes(b.key), pictures = look.look === "picture", table = b.kind === "table", own = owned ? owned.points.length : 0;
     const notes = this.margin ? 0 : table ? own + this.cellNotesOf(b).cards.length : owned ? own : pictures ? this.pictureNotes(b).length
       : look.look === "text" ? noted(b.key === this.activeKey ? this.seen : b.content).length : 0;
     if (!notes) return { notes: 0, notesX: 0, notesY: 0 };
-    const viewW = this.viewport?.width ?? this.size?.width ?? 900, at = notesPlace({ viewW, textW: width, space, rowH: owned || table || pictures ? NOTES.h : cal.row });
+    const viewW = this.paneW(), at = notesPlace({ viewW, textW: width, space, rowH: owned || table || pictures ? NOTES.h : cal.row });
     const chip = owned ? this.chipData(b) : NO_STRIP, beside = chip.chipW ? this.chipIn({ space, chipW: chip.chipW }) : null;
     if (beside && at.x + NOTES.w > beside.x) return { notes, notesX: beside.x - COUNT_CHIP_GAP - NOTES.w, notesY: beside.y + (CHIP.h - NOTES.h) / 2 };
     return { notes, notesX: at.x, notesY: at.y };
@@ -2094,7 +2032,7 @@ export class Editor {
   // The strip a code block's box starts with, and its language chip: the language's name (an unknown word as written,
   // Plain text for none; on a file that can't be edited, no chip for none), and whether it opens the menu.
   chipData(b) {
-    if (!stripped(b, b.key === this.activeKey)) return NO_STRIP;
+    if (!hasStrip(b, b.key === this.activeKey)) return NO_STRIP;
     const live = !this.file || this.editable(), word = infoWord(b.info), chip = word || live ? clip(languageName(word), CHIP_CHARS) : "";
     const open = Boolean(chip) && this.lang?.key === b.key && this.lang.act === this.act;
     return { strip: true, chip, chipW: chip ? chipW(chip, live) : 0, chipLive: live, chipOpen: open };
@@ -2110,17 +2048,12 @@ export class Editor {
     return !this.file || this.editable();
   }
 
-  // A code block's or table's Comment button shows while the pointer is over the block, and on the code block, table or
-  // diagram source being edited.
   blockButtonShown(d) {
     if (!(d.strip || d.kind === "table") || d.key === this.pending?.key || !this.showsEdits()) return false;
     return d.key === this.activeKey || d.key === this.hoverBox;
   }
 
-  // Block data d's Comment button while it shows, else null, x from the text column's left and y from the block's top
-  // (page.js draws it less a centred grid's shift): left of a code block's language
-  // chip, by the top right corner of a table's grid (gridButtonX), inside the box of a table kept as source at its top
-  // right, or left of the block's comment count where it would cover that.
+  // x from the text column's left and y from the block's top (page.js draws it less a centred grid's shift).
   blockButtonIn(d) {
     if (!this.blockButtonShown(d)) return null;
     const B = BLOCK_BUTTON, chip = d.chipW ? this.chipIn(d) : null;
@@ -2145,8 +2078,8 @@ export class Editor {
     return this.blockAdd?.key === b.key && this.blockAddOpen() ? FRAMED.adding : "";
   }
 
-  // What table b's grid draws (grid.js gridOf) in a column `width` px wide, the same object while that stays the same;
-  // null for a table kept as source. The widths held while the caret is in the table stay.
+  // grid.js gridOf's answer for table b laid out `width` px wide, the same object while the table, its definitions and
+  // the calibration stay the same; null for a table kept as source.
   gridNow(b, width) {
     let kept = this.grids.get(b.key);
     if (!kept) this.grids.set(b.key, (kept = {}));
@@ -2155,7 +2088,6 @@ export class Editor {
     return gridOf(kept, this.doc, b, opts);
   }
 
-  // Table b's active cell comment as its grid deepens it: its cell and where it starts in the cell's text; else null.
   cellDeep(b) {
     const n = this.blockNote;
     if (!n?.cell || n.key !== b.key) return null;
@@ -2163,7 +2095,6 @@ export class Editor {
     return card ? { row: card.row, column: card.column, at: card.c.start - card.cell.start, color: this.deep } : null;
   }
 
-  // The heights of table data d's grid rows: as measured, else as estimated.
   gridHeights(d) {
     const measured = this.rowHeights.get(d.key);
     return measured ? d.grid.heights.map((h, r) => measured[r] ?? h) : d.grid.heights;
@@ -2179,7 +2110,6 @@ export class Editor {
     this.wake();
   }
 
-  // The px grid table data d may show from its left edge (`gridLeft`); a grid wider than that pans sideways in it.
   gridRoom(d) {
     return d.room;
   }
@@ -2192,7 +2122,6 @@ export class Editor {
     return Math.min(d.grid.w, this.gridRoom(d));
   }
 
-  // How far table data d's grid is panned: 0 while it fits its room, and never past showing its right edge.
   panOf(d) {
     return d?.grid ? clamp(this.tablePans.get(d.key) ?? 0, 0, Math.max(0, d.grid.w - this.gridRoom(d))) : 0;
   }
@@ -2237,7 +2166,6 @@ export class Editor {
     return kept?.content === b.content ? kept.notes : pictureNotesOf(picturesOf(b.content));
   }
 
-  // The picture that comment `index` of paragraph of pictures `key` is on, else -1.
   notePicture(key, index) {
     const b = this.blockByKey(key);
     return b?.image ? this.pictureNotes(b)[index]?.picture ?? -1 : -1;
@@ -2247,8 +2175,6 @@ export class Editor {
     return this.blockNote?.key === key && this.notePicture(key, this.blockNote.index) === index;
   }
 
-  // The pictures of block `key` laid out in a column `width` px wide: { items, boxes, height }, which the page draws and
-  // a click is tested against.
   pictureOf(key, width) {
     const kept = this.pictures.get(key);
     if (!kept) return { items: [], boxes: [], height: 0 };
@@ -2269,17 +2195,14 @@ export class Editor {
     return { pictureSig, pictureW, pictureH: height, picked, pictureFrames: this.pictureFrames(b, items) };
   }
 
-  // One PICTURE_FRAME letter a picture of paragraph of pictures b: in the highlight colour a highlighted picture's
-  // frame, or one whose comment is being written; in the deeper one the active comment's picture's.
   pictureFrames(b, items) {
     const a = this.blockAdd?.key === b.key ? this.blockAddNow() : null, n = this.blockNote?.key === b.key ? this.blockNoteNow() : null;
     const adding = a ? a.picture : -1, active = n ? this.notePicture(b.key, n.index) : -1;
     return items.map((p, i) => (i === active ? PICTURE_FRAME.deep : i === adding || p.marked ? PICTURE_FRAME.light : PICTURE_FRAME.none)).join("");
   }
 
-  // The index of the picture whose box holds the point (x, y) in the paragraph's content box, else -1.
   pictureAt(d, x, y) {
-    return this.pictureOf(d.key, d.pictureW).boxes.findIndex(box => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h);
+    return this.pictureOf(d.key, d.pictureW).boxes.findIndex(box => inBox(box, x, y));
   }
 
   // The frame of a diagram block: the picture that is ready, else the last one dimmed, sized for the viewport. A
@@ -2289,7 +2212,7 @@ export class Editor {
     const g = b.key === this.activeKey ? null : d?.state === "ok" ? d : d?.state !== "missing" ? last : null;
     const natW = g ? g.width / g.scale : 0, natH = g ? g.height / g.scale : 0;
     if (!(natW > 0 && natH > 0)) return NO_FRAME;
-    const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
+    const viewW = this.paneW(), viewH = this.paneH();
     const blockLeft = columnLeft(viewW, this.margin) + b.depth * INDENT, blockW = Math.max(120, width - b.depth * INDENT);
     const box = frameBox({ viewW, viewH, blockLeft, blockW, natW, natH });
     const start = startView(box, { w: natW, h: natH }, box.z0, topDown(b.source));
@@ -2308,7 +2231,6 @@ export class Editor {
     return v_flex().id("md-column").w_full().children(this.mountedItems(k => this.entities.get(k)));
   }
 
-  // A diagram was drawn or a picture loaded: the page draws again, when Reading is the view.
   assetsChanged(cx) {
     if (this.closed || this.mode !== "reading" || !this.doc) return;
     this.rebuild(cx, this.anchor());
@@ -2378,7 +2300,7 @@ export class Editor {
     const box = active ? (d.kind === "frontmatter" ? FRONT_BOX : isRaw(d.kind) ? BOX : null)
       : d.look === "front" ? FRONT_BOX : d.look === "code" || d.look === "boxed" ? BOX : null;
     if (box) { x += box.px + 1; w -= 2 * (box.px + 1); y += box.py + 1; below = box.py + 1; }
-    if (stripped(d, active)) y += CODE_HEAD;
+    if (hasStrip(d, active)) y += CODE_HEAD;
     return { x, y, w: Math.max(1, w), below };
   }
 
@@ -2626,10 +2548,7 @@ export class Editor {
   }
 
   // A press beside the edited block's field would take the keyboard from it: it is given back at once, and again on the
-  // mouse-up if the root took it anyway. `beside` is that block's key, `key` the block pressed, from which a drag
-  // selects blocks. A press anywhere but on the picked picture lets it go, one anywhere but on the chip whose language
-  // menu is open closes the menu, and any press on the page ends a block's active comment and closes a new one, drawn
-  // or scrolled out of sight.
+  // mouse-up if the root took it anyway. A drag from the block pressed (`press.key`) selects blocks.
   viewportDown(e, cx) {
     this.closeSlash(cx);
     this.closeBar(cx);
@@ -2649,14 +2568,10 @@ export class Editor {
     this.fieldHeld = null;
     this.dragFrom = windowPoint(e);
     if (p && e.modifiers?.shift) { this.press = null; return this.shiftTo(hit?.block, cx); }
-    this.press = p ? { ...p, beside: null, key: hit?.block?.key ?? null, on: hit?.on ?? null } : null;
+    this.press = p ? { ...p, key: hit?.block?.key ?? null } : null;
     const v = hit?.on === "frame" && this.dragFrom ? this.viewOf(hit.block.key) : null;
     if (v) this.pan = { key: hit.block.key, from: this.dragFrom, x0: v.x, y0: v.y, moved: false };
-    if (!this.press || !this.activeKey) return;
-    if (hit?.block && hit.block.key === this.activeKey) {
-      this.press.beside = this.activeKey;
-      this.field.focus();
-    }
+    if (this.press && this.activeKey && hit?.block?.key === this.activeKey) this.field.focus();
   }
 
   // A drag that stayed in a block not being edited, code say, selected its rendered text, for a Cmd+C where the press
@@ -2690,8 +2605,7 @@ export class Editor {
   }
 
   // A frame fills much of the pane, so a single click on it (a tap, a click to focus the window) opens nothing: a
-  // double-click opens the diagram's source. The − % + group works on files that cannot be edited too. `cmd`: a
-  // Cmd+click.
+  // double-click opens the diagram's source. The − % + group works on files that cannot be edited too.
   clickAt(p, cx, count = 1, cmd = false) {
     const hit = this.hit(p);
     if (!hit) return;
@@ -2771,11 +2685,27 @@ export class Editor {
     this.updateHover(cx);
   }
 
+  // Viewport point p's y in the column of blocks, whose first block's top is 0.
+  columnY(p) {
+    return p.y + this.offset - COLUMN.padTop;
+  }
+
+  // Viewport point p's x from the text column's left edge.
+  columnXOf(p) {
+    return columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin);
+  }
+
+  // The page index of the block at column y; -1 above or below the blocks, or before they are laid out.
+  blockIndexAt(y) {
+    const n = this.blocks.length;
+    return n && this.sums.length === n + 1 && y >= 0 && y < this.sums[n] ? blockAt(this.sums, y) : -1;
+  }
+
   // The frame of the diagram block at viewport point p: { block, i, d, fx, fy }, the point in frame coordinates.
   frameAt(p) {
-    const blocks = this.blocks, n = blocks.length, y = p.y + this.offset - COLUMN.padTop;
-    if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n]) return null;
-    const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
+    const y = this.columnY(p), i = this.blockIndexAt(y);
+    if (i < 0) return null;
+    const b = this.blocks[i], d = this.data.get(b.key);
     if (!d?.frameW) return null;
     const fx = p.x - d.frameLeft, fy = y - (this.sums[i + 1] - d.frameH);
     return fx >= 0 && fx < d.frameW && fy >= 0 ? { block: b, i, d, fx, fy } : null;
@@ -2830,22 +2760,18 @@ export class Editor {
   // Viewport point p over a table's grid: the table's key, its data d and room, and p from the grid's top and from the
   // left of the part it shows in; else null.
   gridPoint(p) {
-    const blocks = this.blocks, n = blocks.length, y = p.y + this.offset - COLUMN.padTop;
-    if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n]) return null;
-    const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key), gy = y - this.sums[i] - (d?.space ?? 0);
+    const y = this.columnY(p), i = this.blockIndexAt(y);
+    if (i < 0) return null;
+    const b = this.blocks[i], d = this.data.get(b.key), gy = y - this.sums[i] - (d?.space ?? 0);
     if (!d?.grid || gy < 0) return null;
-    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin) - d.gridLeft;
-    return { key: b.key, d, room: this.gridRoom(d), x, y: gy };
+    return { key: b.key, d, room: this.gridRoom(d), x: this.columnXOf(p) - d.gridLeft, y: gy };
   }
 
-  // The table wider than its room whose shown part holds viewport point p, as gridPoint gives it; else null.
   wideGridAt(p) {
     const at = this.gridPoint(p);
     return at && at.d.grid.w > at.room && at.x >= 0 && at.x < at.room ? at : null;
   }
 
-  // The column ({ key, column }) of a table in a file that can be edited whose line, shown, is within RESIZE.grab px of
-  // viewport point p; else null.
   lineAt(p) {
     const at = this.editable() ? this.gridPoint(p) : null;
     if (!at) return null;
@@ -2853,7 +2779,6 @@ export class Editor {
     return column >= 0 && x >= 0 && x < at.room ? { key: at.key, column } : null;
   }
 
-  // The column of table data d whose line is drawn to be dragged, -1 for none.
   lineOf(d) {
     const line = this.hoverLine;
     return line?.key === d.key ? line.column : -1;
@@ -2906,7 +2831,6 @@ export class Editor {
     this.updateHover(cx);
   }
 
-  // Escape during a drag: the widths and the pan it began with.
   cancelResize(cx) {
     const r = this.resize;
     this.resize = null;
@@ -2941,11 +2865,11 @@ export class Editor {
   // The code block or table whose box holds viewport point p, a diagram's source being edited counting as code, and a
   // grid with its Comment button beside it; null where no Comment button would show.
   boxAt(p) {
-    const blocks = this.blocks, n = blocks.length, y = p.y + this.offset - COLUMN.padTop;
-    if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n] || !this.showsEdits()) return null;
-    const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
+    const y = this.columnY(p), i = this.showsEdits() ? this.blockIndexAt(y) : -1;
+    if (i < 0) return null;
+    const b = this.blocks[i], d = this.data.get(b.key);
     if (!d || !(d.strip || d.kind === "table") || y < this.sums[i] + d.space) return null;
-    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin), left = d.grid ? d.gridLeft : b.depth * INDENT;
+    const x = this.columnXOf(p), left = d.grid ? d.gridLeft : b.depth * INDENT;
     const right = d.grid ? Math.max(left + this.gridShownW(d), this.gridButtonX(d) + BLOCK_BUTTON.size) : this.textWidth();
     return x >= left && x < right ? b.key : null;
   }
@@ -3038,10 +2962,9 @@ export class Editor {
 
   // The block level with viewport point p beside the text column, within the tables' reach: a drag from a cell goes on.
   besideColumn(p) {
-    const n = this.blocks.length, y = p.y + this.offset - COLUMN.padTop, x = columnX(p.x, this.paneW(), this.margin), span = this.tableSpan();
-    const beside = (x < 0 && x >= span.left) || (x >= this.textWidth() && x < span.right);
-    if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n] || !beside) return null;
-    return this.blocks[blockAt(this.sums, y)];
+    const x = columnX(p.x, this.paneW(), this.margin), span = this.tableSpan();
+    const beside = (x < 0 && x >= span.left) || (x >= this.textWidth() && x < span.right), i = beside ? this.blockIndexAt(this.columnY(p)) : -1;
+    return i < 0 ? null : this.blocks[i];
   }
 
   select(from, to, cx) {
@@ -3142,7 +3065,7 @@ export class Editor {
   hit(p) {
     const blocks = this.blocks, n = blocks.length;
     if (this.sums.length !== n + 1) return null;
-    const y = p.y + this.offset - COLUMN.padTop, x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin);
+    const y = this.columnY(p), x = this.columnXOf(p);
     const counted = this.countAt(x, y);
     if (counted) return { block: counted, on: "notes" };
     const f = this.frameAt(p);
@@ -3166,26 +3089,24 @@ export class Editor {
 
   // Whether column point (x, y) beside the text column is on what shows of a grid or its right line's grab zone.
   onGridOut(x, y) {
-    const n = this.blocks.length;
-    if (!n || y < 0 || y >= this.sums[n]) return false;
-    const i = blockAt(this.sums, y), d = this.data.get(this.blocks[i].key);
+    const i = this.blockIndexAt(y), d = i < 0 ? null : this.data.get(this.blocks[i].key);
     return Boolean(d?.grid) && y >= this.sums[i] + d.space && x >= d.gridLeft && x < d.gridLeft + this.gridShownW(d) + RESIZE.grab;
   }
 
   // The block whose Comment button holds column point (x, y); a grid's may lie outside the text column.
   buttonAt(x, y) {
-    const n = this.blocks.length;
-    if (!n || y < 0 || y >= this.sums[n]) return null;
-    const i = blockAt(this.sums, y), b = this.blocks[i], box = this.blockButtonIn(this.data.get(b.key));
+    const i = this.blockIndexAt(y);
+    if (i < 0) return null;
+    const b = this.blocks[i], box = this.blockButtonIn(this.data.get(b.key));
     return box && inBox(box, x, y - this.sums[i]) ? b : null;
   }
 
   // The block whose comment count holds column point (x, y), which may lie right of the text column.
   countAt(x, y) {
-    const n = this.blocks.length;
-    if (!n || y < 0 || y >= this.sums[n]) return null;
-    const i = blockAt(this.sums, y), b = this.blocks[i], d = this.data.get(b.key), by = y - this.sums[i];
-    return d?.notes && x >= d.notesX && x < d.notesX + NOTES.w && by >= d.notesY && by < d.notesY + NOTES.h ? b : null;
+    const i = this.blockIndexAt(y);
+    if (i < 0) return null;
+    const b = this.blocks[i], d = this.data.get(b.key);
+    return d?.notes && inBox({ x: d.notesX, y: d.notesY, w: NOTES.w, h: NOTES.h }, x, y - this.sums[i]) ? b : null;
   }
 
   tick(b, cx) {
@@ -3202,13 +3123,10 @@ export class Editor {
     return Boolean(this.file) && this.loaded && !this.error && !this.remote && !this.locked && !this.closed && this.mode === "reading";
   }
 
-  // Block `key` becomes the edited one, the caret at field offset `caret` (a number or a range). `shift` moves the page
-  // down by that much; `reveal` keeps the caret row in view, which a press does not want: the page does not move on a click.
-  // A paragraph of pictures is never edited: the picture at the caret is picked instead. Nor is a block's comments
-  // paragraph: nothing opens. Another block's active comment ends. A table drawn as a grid is edited in the cell holding
-  // the caret, which is an offset of its source's field (in `column` at the end of a row that lacks it, cellAtDoc), or
-  // in `cell` ({ r, c }) with the caret in its field, which keeps the blanks at its text's ends that `shown` (what it
-  // showed before) has (openCell). -> whether a block is edited.
+  // `caret`: a field offset or range. `reveal` keeps the caret row in view, which a press does not want: the page does
+  // not move on a click. A paragraph of pictures is never edited (the picture at the caret is picked instead), nor is a
+  // block's comments paragraph. A grid table is edited in `cell` ({ r, c }), else in the cell holding `caret` as an
+  // offset of its source's field (in `column` at the end of a row that lacks it). -> whether a block is edited.
   activate(key, caret, cx, { shift = 0, reveal = true, cell = null, shown = null, column = null } = {}) {
     if (!this.editable() || this.hiddenNotes(key)) return false;
     if (this.blockNote && this.blockNote.key !== key) this.endBlockNote(cx);
@@ -3228,16 +3146,33 @@ export class Editor {
       const t = tableOf(this.doc, b), there = cell && cell.r < t.rows.length && cell.c < t.columns;
       return this.openCell(b, there ? { ...cell, range: asRange(caret), shown } : this.cellAtSource(b, cell ? 0 : caret, column), cx, { shift, reveal });
     }
-    const anchor = this.anchor(), f = fieldOf(this.doc, b), value = withInnerLine(b, f.value), n = value.length;
-    const r = typeof caret === "number" ? { start: caret, end: caret } : caret ?? { start: 0, end: 0 };
+    const anchor = this.anchor(), f = fieldOf(this.doc, b);
+    return this.openField(key, null, this.fieldFor(b), f, withInnerLine(b, f.value), asRange(caret), anchor, cx, { shift, reveal });
+  }
+
+  // Cell (r, c) of grid table b becomes the edited one, `range` selected in its field, after activate's leaving. Its
+  // field is the one drawing it (made now for a row far from the page), and nothing in the grid moves: the widths it had
+  // when the caret came into the table stay until the caret leaves it. The cell being edited, or one whose field showed
+  // `shown`, keeps the blanks typed at its text's ends (cellMap).
+  openCell(b, { r, c, range, shown = null }, cx, { shift = 0, reveal = true } = {}) {
+    const again = this.activeKey === b.key && this.cell?.r === r && this.cell?.c === c;
+    const anchor = this.anchor(), f = this.cellMap(b, r, c, shown ?? (again ? this.seen : null));
+    if (this.activeKey !== b.key) this.heldWidths = { key: b.key, widths: this.gridOf(b).widths };
+    if (this.cell && this.activeKey === b.key && (this.cell.r !== r || this.cell.c !== c)) this.letField();
+    return this.openField(b.key, { r, c }, this.cellFieldFor(b, r, c), f, f.value, range, anchor, cx, { shift, reveal });
+  }
+
+  // Field `state` shows `value` (field map f) with `range` selected, as the edited field of block `key` or of its `cell`.
+  // Re-opening a block only redraws it.
+  openField(key, cell, state, f, value, range, anchor, cx, { shift, reveal }) {
+    const n = value.length, again = !cell && this.activeKey === key;
     this.f = f; this.opened = value;
-    this.field = this.fieldFor(b); this.tokensOff = false;
-    if (!this.setField(value, { start: clamp(r.start, 0, n), end: clamp(r.end, 0, n) })) { this.drop(); this.rebuild(cx, anchor); return false; }
-    const was = this.activeKey;
-    this.activeKey = key; this.act++;
+    this.field = state; this.tokensOff = false;
+    if (!this.setField(value, { start: clamp(range.start, 0, n), end: clamp(range.end, 0, n) })) { this.drop(); this.rebuild(cx, anchor); return false; }
+    this.activeKey = key; this.cell = cell; this.act++;
     this.retoken();
     this.rows = this.rowsFlag();
-    if (was === key) this.redraw([key], cx);
+    if (again) this.redraw([key], cx);
     else this.rebuild(cx, anchor);
     if (shift) this.offset = clampOffset(this.offset + shift, this.contentH(), this.viewH());
     this.focusField(cx);
@@ -3247,31 +3182,6 @@ export class Editor {
     return true;
   }
 
-  // Cell (r, c) of grid table b becomes the edited one, `range` selected in its field, after activate's leaving. Its
-  // field is the one drawing it (made now for a row far from the page), and nothing in the grid moves: the widths it had
-  // when the caret came into the table stay until the caret leaves it. The cell being edited, or one whose field showed
-  // `shown`, keeps the blanks typed at its text's ends (cellMap).
-  openCell(b, { r, c, range, shown = null }, cx, { shift = 0, reveal = true } = {}) {
-    const again = this.activeKey === b.key && this.cell?.r === r && this.cell?.c === c;
-    const anchor = this.anchor(), f = this.cellMap(b, r, c, shown ?? (again ? this.seen : null)), n = f.value.length;
-    if (this.activeKey !== b.key) this.heldWidths = { key: b.key, widths: this.gridOf(b).widths };
-    if (this.cell && this.activeKey === b.key && (this.cell.r !== r || this.cell.c !== c)) this.letField();
-    this.f = f; this.opened = f.value;
-    this.field = this.cellFieldFor(b, r, c); this.tokensOff = false;
-    if (!this.setField(f.value, { start: clamp(range.start, 0, n), end: clamp(range.end, 0, n) })) { this.drop(); this.rebuild(cx, anchor); return false; }
-    this.activeKey = b.key; this.cell = { r, c }; this.act++;
-    this.retoken();
-    this.rows = this.rowsFlag();
-    this.rebuild(cx, anchor);
-    if (shift) this.offset = clampOffset(this.offset + shift, this.contentH(), this.viewH());
-    this.focusField(cx);
-    if (reveal) this.revealCaret(cx);
-    this.syncWindow(cx);
-    cx.notify();
-    return true;
-  }
-
-  // The cell of grid table b holding the caret `caret` of its source's field (a number or a range), as cellAtDoc.
   cellAtSource(b, caret, column = null) {
     const f = fieldOf(this.doc, b), r = asRange(caret);
     return this.cellAtDoc(b, fieldToDoc(f, r.start), fieldToDoc(f, r.end), column);
@@ -3311,23 +3221,23 @@ export class Editor {
     if (kept && kept.seen === this.seen && kept.note === n && kept.element === e && kept.act === this.act) return kept.tint;
     let tint = null;
     if (n?.kind === "add") tint = n.range.start < n.range.end ? { start: n.range.start, end: n.range.end, letter: TINT_NEW } : null;
-    else if (n || (e && e.act === this.act && COMMENT_KINDS.has(e.kind))) tint = this.deepTint(n ? n.comment.start : e.start);
+    else if (n || (e && e.act === this.act && COMMENT_KINDS.has(e.kind))) tint = tintIn(this.seen, n ? n.comment.start : e.start, TINT_ACTIVE);
     this.tinted = { seen: this.seen, note: n, element: e, act: this.act, tint };
     return tint;
   }
 
-  deepTint(start) {
-    return tintIn(this.seen, start, TINT_ACTIVE);
+  // The layout the active field draws, null while it shows its value as it is.
+  drawnRich() {
+    return this.tokensOff ? null : this.richNow();
   }
 
   // The active field's text as it draws it, for the estimates of rows and columns.
   drawnNow() {
-    const r = this.tokensOff ? null : this.richNow();
-    return r ? r.drawn : this.seen;
+    return this.drawnRich()?.drawn ?? this.seen;
   }
 
   drawnAt(at) {
-    const r = this.tokensOff ? null : this.richNow();
+    const r = this.drawnRich();
     return r ? drawnOffset(r, at) : at;
   }
 
@@ -3395,7 +3305,6 @@ export class Editor {
     return true;
   }
 
-  // What a token draws (page.js), from its id and label.
   tokenPieces(token) {
     const key = `${token.id}\u{0}${token.label}`;
     let pieces = this.pieces.get(key);
@@ -3450,7 +3359,6 @@ export class Editor {
     return hit.find(sp => sp.kind === "image" && inner.start <= sp.start && sp.end <= inner.end) ?? inner;
   }
 
-  // Whether a press on the edited field picks an element of `kind`: in a table cell only CELL_ELEMENTS.
   picks(kind) {
     return !this.cell || CELL_ELEMENTS.has(kind);
   }
@@ -3480,7 +3388,7 @@ export class Editor {
 
   // The element of `kind` whose text, with the hidden marks that go with it (its extent), holds `range` of the field.
   elementHolding(kind, range) {
-    const r = this.tokensOff ? null : this.richNow();
+    const r = this.drawnRich();
     for (const span of parsedInline(this.seen, this.defsNow().map).spans) {
       if (span.kind !== kind) continue;
       const extent = r ? extentOf(r, span) : { start: span.start, end: span.end };
@@ -3509,7 +3417,6 @@ export class Editor {
     if (picked) this.post(cx => { if (this.element === picked) this.closeElement(cx); });
   }
 
-  // Drawn by the root, the element picked's float or the box open over it.
   elementFloat(t) {
     if (this.linkBoxOpen()) return this.linkBoxView(t);
     if (this.imageBoxOpen()) return this.imageBoxView(t);
@@ -3562,10 +3469,7 @@ export class Editor {
     const base = this.doc.text;
     if (gone) this.f = null;
     this.commit(cx);
-    this.activeKey = null; this.pending = null; this.f = null; this.known = NO_CARET; this.act++; this.rows = "many"; this.ownKeyUp = null; this.menuKeyUp = null; this.slash = null; this.bar = null; this.note = null;
-    this.element = null; this.linkBox = null; this.imageBox = null; this.typingStyle = null; this.cell = null; this.heldWidths = null;
-    this.letField();
-    if (pending) this.forget(pending.key);
+    this.release();
     if (gone) this.setText(applySplice(base, gone), cx);
     this.rebuild(cx, anchor);
     cx.notify();
@@ -3659,7 +3563,6 @@ export class Editor {
     if (this.writePending(this.seen, k, cx) && this.known.valid) this.keepStyleAt(this.known.end, mended?.style ?? null);
   }
 
-  // The typing style `format` stays with field caret `at` of the value now shown.
   keepStyleAt(at, format) {
     this.typingStyle = format ? { act: this.act, value: this.seen, at, format } : null;
   }
@@ -3816,8 +3719,6 @@ export class Editor {
     return { ...next, edit: diff(before, next.value) };
   }
 
-  // The picture picked in the edited field, drawn formatted, when field range `r` is all of it: elementNow's answer, or
-  // null.
   wholeImage(r) {
     const picked = this.element?.kind === "image" && this.formatted() ? this.elementNow() : null;
     return picked?.kind === "image" && picked.extent.start === r.start && picked.extent.end === r.end ? picked : null;
@@ -3891,11 +3792,8 @@ export class Editor {
     return { ...this.chromeOf(d, true), row: d.row, advance: this.calOf(d.style).advance, rows: this.rowsOf(d, true) };
   }
 
-  // Where cell (r, c) of grid table data d draws its text, x from the text column's left and y from the block's top:
-  // from the grid's left edge (gridLeft), past the grid's lines, the columns
-  // before it and its padding (cellTextLeft), less the grid's pan, under the rows above it as measured, else estimated;
-  // as wide as its text box; the header's text at its own advance. `rows`: the rows the estimate wraps `drawn` to (the
-  // field reports none).
+  // Where cell (r, c) of grid table data d draws its text, x from the text column's left and y from the block's top.
+  // `rows`: the rows the estimate wraps `drawn` to, as a cell's field reports none.
   cellBox(d, r, c, drawn) {
     const g = d.grid, advance = this.calOf(r === 0 ? "head" : "cell").advance, w = g.boxes[r][c] || g.widths[c] - 2 * GRID.padX;
     return {
@@ -3928,7 +3826,6 @@ export class Editor {
     return wrap;
   }
 
-  // Where the field box `box` (editedBox, cellBox, chromeOf) of block i is in the pane.
   boxInPane(i, box) {
     return { x: columnLeft(this.paneW(), this.margin) + box.x, y: COLUMN.padTop + this.sums[i] + box.y - this.offset };
   }
@@ -3984,7 +3881,6 @@ export class Editor {
     this.setPin(c, a.row, b.row, clamp(a.x, 0, box.w));
   }
 
-  // The row of a field of box `box` (editedBox) at y from its top.
   rowAtY(box, y) {
     const row = Math.max(0, Math.floor(y / box.row));
     return box.rows ? Math.min(row, box.rows - 1) : row;
@@ -4036,14 +3932,12 @@ export class Editor {
 
   // View point p as x from the column's left edge and y from the top of block i.
   blockPoint(i, p) {
-    return { x: columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin), y: p.y + this.offset - COLUMN.padTop - this.sums[i] };
+    return { x: this.columnXOf(p), y: this.columnY(p) - this.sums[i] };
   }
 
   // The field caret for a press at (x, y) on block b, not a grid, x from the column's left edge and y from the block's
-  // top, estimated from the block as currently drawn: rendered, or a field (the edited block's, or a text block's own);
-  // on a table kept as source in Reading, the pressed cell's start; in a paragraph of pictures, where the picture at y
-  // begins. A press only the page heard (beside a text block's field: its marker, the space above it) and Page Up / Down
-  // use it.
+  // top, estimated from the block as currently drawn. For a press only the page heard (beside a text block's field: its
+  // marker, the space above it) and Page Up / Down.
   pressCaret(b, x, y) {
     const d = this.data.get(b.key), active = b.key === this.activeKey, asField = active || d.mode === "field";
     const c = this.chromeOf(d, asField), cal = this.calOf(d.style), value = active ? this.seen : this.openedValue(b);
@@ -4070,8 +3964,6 @@ export class Editor {
     return { r: row, c: column, caret: x < this.cellTextLeft(g, row, column) ? 0 : end };
   }
 
-  // Where the text of cell (r, c) of grid g starts, from the grid's left: past the lines, the columns before it and its
-  // padding, and in a centred or right-aligned column past the room its text box leaves.
   cellTextLeft(g, r, c) {
     const inner = g.widths[c] - 2 * GRID.padX, box = g.boxes[r][c] || inner, align = g.aligns[c];
     const room = align === "center" ? (inner - box) / 2 : align === "right" ? inner - box : 0;
@@ -4091,13 +3983,11 @@ export class Editor {
     return shown ? shown[Math.min(column, count)] : Math.min(column, value.length);
   }
 
-  // Whether `count` characters, as drawn, fit one row of block b's field.
   fitsOneRow(b, count) {
     const d = this.data.get(b.key);
     return Boolean(d) && count * this.calOf(d.style).advance < 0.9 * this.chromeOf(d, true).w;
   }
 
-  // The column of field offset c on its line, in characters as drawn.
   columnOf(c) {
     const text = this.drawnNow(), at = this.drawnAt(c);
     return at - (text.lastIndexOf("\n", at - 1) + 1);
@@ -4183,13 +4073,11 @@ export class Editor {
     return shown[clamp(Math.round((x - box.x) / box.advance), 0, shown.length - 1)];
   }
 
-  // The text the field of cell (r, c) of table `key` draws for `value`: its layout's, when that was made for it.
   cellDrawn(key, r, c, value) {
     const kept = this.cellFields.get(key)?.cells.get(`${r}:${c}`);
     return kept?.rich && kept.value === value ? kept.rich.drawn : value;
   }
 
-  // To the end of the cell before the edited one (dir < 0) or the start of the one after. -> false when there is none.
   crossCell(dir, cx) {
     const b = this.blockByKey(this.activeKey), t = b && tableOf(this.doc, b), next = t && cellBeside(t, this.cell, dir);
     if (!next) return false;
@@ -4197,7 +4085,6 @@ export class Editor {
     return true;
   }
 
-  // To the cell above the edited one (dir < 0) or below it, at x. -> false when there is none.
   cellAcross(dir, x, cx) {
     const b = this.blockByKey(this.activeKey), d = b && this.data.get(b.key);
     if (!d?.grid) return false;
@@ -4264,11 +4151,10 @@ export class Editor {
   }
 
   // The field's wrapper lives in the block's view, whose cx cannot redraw this one: what needs a cx goes to the size
-  // task. The press is marked so the viewport, if it hears it too, leaves it to the field. With Shift the press selects
-  // blocks and the field's focus is not taken; with Cmd it may open a link (openLinkIn). A press in the edited field
+  // task. The press is marked so the viewport, if it hears it too, leaves it to the field. A press in the edited field
   // leaves its caret unknown until it is read after the mouse-up, so that a key-up meanwhile crosses no edge. The
-  // element picked is let go: only a click on a token picks one (pressToken), so a drag shows the bar. So is a picked
-  // picture. `key` names the field: a block's key, or a cell's id (page.js cellId).
+  // element picked is let go: only a click on a token picks one (pressToken), so a drag shows the bar. `key` names the
+  // field: a block's key, or a cell's id (page.js cellId).
   fieldDown(key, e) {
     this.fieldPress = { kind: "down", x: e?.position?.x, y: e?.position?.y };
     this.press = null; this.fieldHeld = key; this.dragFrom = windowPoint(e);
@@ -4354,21 +4240,10 @@ export class Editor {
     this.leave(cx, key);
     const b = this.blockByKey(key), state = this.blockField(key);
     if (!b || !state) return;
-    const anchor = this.anchor(), f = fieldOf(this.doc, b);
-    this.field = state; this.tokensOff = false;
-    this.f = f; this.opened = f.value; this.known = NO_CARET;
-    if (state.value() === f.value) this.seen = f.value;
-    else if (!this.setField(f.value, { start: 0, end: 0 })) { this.drop(); this.rebuild(cx, anchor); return; }
-    this.activeKey = key; this.act++;
-    this.retoken();
-    this.rows = this.rowsFlag();
-    this.rebuild(cx, anchor);
-    if (this.focusedState !== this.field) this.field.focus();
-    cx.notify();
+    this.takeState(key, null, state, fieldOf(this.doc, b), this.anchor(), cx);
   }
 
-  // takeField for the field of cell (r, c) of table `key`: that cell becomes the edited one with no set_value, its caret
-  // where the press put it. The widths the grid has stay while the caret is in the table.
+  // The widths the grid has stay while the caret is in the table.
   takeCell({ key, r, c }, cx) {
     const state = this.cellField(key, r, c);
     if (cellId(key, r, c) === this.editedId() || !state || !this.editable()) return;
@@ -4380,11 +4255,15 @@ export class Editor {
     const anchor = this.anchor(), f = this.cellMap(b, r, c);
     if (this.activeKey !== key) this.heldWidths = { key, widths: this.gridOf(b).widths };
     if (this.cell) this.letField();
+    this.takeState(key, { r, c }, state, f, anchor, cx);
+  }
+
+  takeState(key, cell, state, f, anchor, cx) {
     this.field = state; this.tokensOff = false;
     this.f = f; this.opened = f.value; this.known = NO_CARET;
     if (state.value() === f.value) this.seen = f.value;
     else if (!this.setField(f.value, { start: 0, end: 0 })) { this.drop(); this.rebuild(cx, anchor); return; }
-    this.activeKey = key; this.cell = { r, c }; this.act++;
+    this.activeKey = key; this.cell = cell; this.act++;
     this.retoken();
     this.rows = this.rowsFlag();
     this.rebuild(cx, anchor);
@@ -4527,7 +4406,6 @@ export class Editor {
     return this.typeChange(this.seen, r, { value: left.value, start: left.caret, end: left.caret }, cx);
   }
 
-  // The splice Enter makes at field range `r` of text block b, formatting kept on both sides (splitWith).
   splitAt(b, r) {
     const plain = () => split(this.doc, b, r.start, r.end);
     return this.formatted() ? this.splitWith(b, r, (d, nb, at) => split(d, nb, at.start, at.end)) ?? plain() : plain();
@@ -4836,17 +4714,16 @@ export class Editor {
     if (typeof clip !== "string" || !clip) return;
     const lf = clip.replace(/\r\n/g, "\n"), b = this.pending ? null : this.blockByKey(this.activeKey);
     if (!b && !this.pending) return;
-    if (this.cell) return this.pasteInCell(lf.replace(/\n+$/, ""), cx);
     const text = lf.replace(/\n+$/, "");
+    if (this.cell) return this.pasteInCell(text, cx);
     if ((b && !isText(b)) || !text) return this.typeText(lf, cx);
     if (this.pasteFormatted(text, cx)) return;
     const r = text.includes("\n") ? this.caretNow() : null;
     if (!r) return this.typeText(text, cx);
     if (this.pending) {
-      const value = this.seen.slice(0, r.start) + text + this.seen.slice(r.end), p = this.pending;
-      const w = chain(this.doc, p.base(this.doc, PLACEHOLDER), [...p.steps, (d, b) => paste(d, b, 0, PLACEHOLDER.length, value)]);
-      if (!w) return this.typeText(text, cx);
-      return this.pasted({ ...w.splice, caret: w.splice.caret - (value.length - r.start - text.length) }, cx);
+      const value = this.seen.slice(0, r.start) + text + this.seen.slice(r.end);
+      if (!this.pasteWritesPending(value, r.start + text.length, cx)) this.typeText(text, cx);
+      return;
     }
     // A paragraph left with no text is no block once parsed: the lines take its place as it is.
     if (b.kind === "paragraph" && !this.seen.trim() && this.f?.text === this.text) {
@@ -4908,9 +4785,15 @@ export class Editor {
     const out = pasteInto(this.seen, r, text, { defs: this.defsNow().map, style });
     if (!out) return false;
     if (lines.length === 1) return this.selectField({ start: 0, end: this.seen.length }) && this.typeText(out.value, cx);
-    const p = this.pending, w = chain(this.doc, p.base(this.doc, PLACEHOLDER), [...p.steps, (d, b) => paste(d, b, 0, PLACEHOLDER.length, out.value)]);
+    return this.pasteWritesPending(out.value, out.caret, cx);
+  }
+
+  // The pending block written holding the pasted field value `value`, the caret at its offset `caret`. -> false when it
+  // can't be written there.
+  pasteWritesPending(value, caret, cx) {
+    const p = this.pending, w = chain(this.doc, p.base(this.doc, PLACEHOLDER), [...p.steps, (d, b) => paste(d, b, 0, PLACEHOLDER.length, value)]);
     if (!w) return false;
-    this.pasted({ ...w.splice, caret: w.splice.caret - (out.value.length - out.caret) }, cx);
+    this.pasted({ ...w.splice, caret: w.splice.caret - (value.length - caret) }, cx);
     return true;
   }
 
@@ -4953,7 +4836,6 @@ export class Editor {
     this.formatWith((value, r) => setColor(value, r, name, { defs: this.doc?.defs }), cx);
   }
 
-  // The bar's menus: `mark` (as a format key names it) on the whole selection, or off it, whatever it has now.
   setMark(mark, on, cx) {
     this.formatWith((value, r) => setMark(value, r, mark, on, { defs: this.doc?.defs }), cx);
   }
@@ -5295,7 +5177,7 @@ export class Editor {
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
     const top = this.caretTop(i, s.end);
     if (top === null) return null;
-    const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
+    const viewW = this.paneW(), viewH = this.paneH();
     const place = menuPlace({ rowTop: COLUMN.padTop + top - this.offset, rowH: d.row, viewH, n: s.items.length, side: s.side });
     s.side = place.side;
     return { ...place, left: slashX({ x: this.fieldInPane(i).x + this.wrapAt(s.at).x, viewW, margin: this.margin }) };
@@ -5379,7 +5261,6 @@ export class Editor {
     cx.notify();
   }
 
-  // A row of menu `name` picked: the menu closes and the bar stays over the same text.
   barPick(name, row, cx) {
     this.closeBarMenu(cx);
     this.syncField(cx);
@@ -5417,12 +5298,16 @@ export class Editor {
     const first = pin ? { row: pin.first, x: pin.x } : this.wrapAt(k.start, false, box), last = pin ? pin.last : this.wrapAt(k.end, k.end > k.start, box).row;
     return place({
       firstTop: o.y + first.row * box.row, lastTop: o.y + last * box.row, rowH: box.row, size, x: o.x + first.x,
-      viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H,
+      viewW: this.paneW(), viewH: this.paneH(),
     });
   }
 
   paneW() {
     return this.viewport?.width ?? this.size?.width ?? 900;
+  }
+
+  paneH() {
+    return this.viewport?.height ?? UNSIZED_VIEW_H;
   }
 
   barLayout() {
@@ -5438,7 +5323,7 @@ export class Editor {
     if (!this.barMenuOpen()) return { place, layout, name: null, menu: null };
     const name = this.barMenu.name, sections = BAR_MENUS[name];
     const h = barMenuH(menuRowsOf(name).length, sections.filter(s => s.title).length);
-    const menu = barMenuPlace({ bar: place, button: layout.at[name], h, viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H });
+    const menu = barMenuPlace({ bar: place, button: layout.at[name], h, viewW: this.paneW(), viewH: this.paneH() });
     return { place, layout, name, menu };
   }
 
@@ -5535,7 +5420,6 @@ export class Editor {
       .when(checked, el => el.child(svg(ICON("check")).size(14).flex_none().text_color(t.foreground)));
   }
 
-  // In the colour the text or the highlight draws in; no highlight is a dashed outline.
   swatch(row, t) {
     const box = div().id(`md-bar-swatch-${row.id}`).size(16).flex_none().rounded(4);
     if (row.highlight === false) return box.border_1().border_dashed().border_color(t.muted);
@@ -5590,13 +5474,11 @@ export class Editor {
     cx.notify();
   }
 
-  // Enter in the comment's field: a block's new comment, a block's comment being edited, or a text comment.
   submitNote(cx) {
     if (this.blockAddOpen()) return this.saveBlockAdd(cx);
     return this.blockNoteEditing() ? this.saveBlockNote(cx) : this.saveNote(cx);
   }
 
-  // Escape in the box: the field gets the keyboard back with the selection it had.
   cancelNote(cx) {
     const n = this.note;
     if (!this.noteOpen()) return this.closeNote(cx);
@@ -5630,7 +5512,6 @@ export class Editor {
       .child(Textarea.new(this.noteField).flex_1().text_size(13).text_color(t.foreground));
   }
 
-  // Where the box goes that writes the new comment `adding`, else edits a block's or picture's comment; null for none.
   blockNoteBox(adding) {
     if (adding) return this.blockBoxPlace(adding.key, adding.picture);
     const n = this.blockNoteEditing() ? this.blockNote : null;
@@ -5644,14 +5525,12 @@ export class Editor {
     if (picture >= 0) return this.placeOverPicture(key, picture, NOTE_BOX);
     const i = this.at.get(key), d = this.data.get(key), card = cell >= 0 ? this.blockNotesOf(key, true)[cell] : null;
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
-    const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
+    const viewW = this.paneW(), viewH = this.paneH();
     const top = COLUMN.padTop + (card ? this.cellTop(i, d, card) : this.sums[i] + d.space) - this.offset;
     const left = d.grid ? d.gridLeft : d.depth * INDENT;
     return popoverPlace({ firstTop: top, lastTop: top, rowH: 0, size: NOTE_BOX, viewW, viewH, x: columnLeft(viewW, this.margin) + left });
   }
 
-  // A box over the page that holds the keyboard: the comment box (a block's comment being written or edited included),
-  // the link's address box, a picture's box or the language menu's search box.
   boxOpen() {
     return this.noteOpen() || this.blockNoteEditing() || this.blockAddOpen() || this.linkBoxOpen() || this.pictureBoxOpen() || this.imageBoxOpen() || this.langOpen();
   }
@@ -5666,7 +5545,6 @@ export class Editor {
       .on_mouse_move((_e, cx) => cx.stop_propagation());
   }
 
-  // A float's address, clipped in the middle, the whole of it as its tooltip.
   popoverAddress(id, address, t) {
     return div().id(id).flex_1().min_w(0).px(LINK_POP.addressPad).truncate().text_color(address ? t.muted : t.dim)
       .tooltip(address || NO_ADDRESS).child(clipMiddle(address, LINK_POP.addressChars) || NO_ADDRESS);
@@ -5684,7 +5562,6 @@ export class Editor {
       .child(svg(ICON(look.icon)).size(16).flex_none().text_color(t.muted));
   }
 
-  // Drawn by the root over the link picked, under it when there is no room.
   linkPopover({ span, extent }, t) {
     const shown = clipMiddle(span.url, LINK_POP.addressChars), place = this.placeBar(extent, linkPopoverSize([...shown].length), popoverPlace);
     if (!place) return null;
@@ -5771,8 +5648,6 @@ export class Editor {
     cx.notify();
   }
 
-  // Escape in the address box: nothing changes, the field gets the keyboard back with its selection, and the popover
-  // shows again when the box came from it.
   cancelLinkBox(cx) {
     const b = this.linkBox;
     if (!this.linkBoxOpen()) return this.closeLinkBox(cx);
@@ -5790,7 +5665,6 @@ export class Editor {
     cx?.notify();
   }
 
-  // What links.js writes links with: the document's definitions, and whether the edited field is a table cell's.
   linkOptions() {
     return { defs: this.doc.defs, cell: Boolean(this.cell) };
   }
@@ -5836,7 +5710,6 @@ export class Editor {
     cx.notify();
   }
 
-  // The picked picture's comment, active with it, goes with it.
   unpick(cx) {
     const was = this.picked;
     if (!was) return;
@@ -5847,13 +5720,11 @@ export class Editor {
     cx?.notify();
   }
 
-  // Picks the picture of paragraph of pictures b whose markdown holds or follows document offset `at`, else its last.
   pickNear(b, at, cx) {
     const all = picturesIn(this.doc, b), i = all.findIndex(p => at < p.end);
     this.pick(b.key, i < 0 ? all.length - 1 : i, cx);
   }
 
-  // -> whether a paragraph of pictures holds document offset `at`, its picture there now picked.
   pickAt(at, cx) {
     const b = this.holding(at);
     if (!b?.image) return false;
@@ -5875,8 +5746,6 @@ export class Editor {
     return p ? docToField(fieldOf(this.doc, b), p.start) : 0;
   }
 
-  // Picture `index` of paragraph of pictures `key`: its box in pane coordinates, or null while its block has no place on
-  // the page.
   pictureBoxOf(key, index) {
     const i = this.at.get(key), d = this.data.get(key), box = d && this.pictureOf(key, d.pictureW).boxes[index];
     if (i === undefined || !box || this.sums.length !== this.blocks.length + 1) return null;
@@ -5888,7 +5757,7 @@ export class Editor {
   // keeps it; null while the picture is off the pane. Worked out at each draw, so it follows the page.
   placeOverPicture(key, index, size) {
     const box = this.pictureBoxOf(key, index);
-    return box && popoverPlace({ firstTop: box.y, lastTop: box.y, rowH: box.h, size, x: box.x, viewW: this.paneW(), viewH: this.viewport?.height ?? UNSIZED_VIEW_H });
+    return box && popoverPlace({ firstTop: box.y, lastTop: box.y, rowH: box.h, size, x: box.x, viewW: this.paneW(), viewH: this.paneH() });
   }
 
   // The page scrolls the least that shows the picked picture's top, as much of it as half the pane.
@@ -6075,7 +5944,6 @@ export class Editor {
     this.pictureChange({ start: s.from, end: s.to, insert: next }, s.start, s.start, cx);
   }
 
-  // Escape in the box: nothing is written, and the float comes back.
   cancelPictureBox(cx) {
     if (this.picked?.box) this.picked = { ...this.picked, box: null };
     this.handle.focus();
@@ -6140,7 +6008,6 @@ export class Editor {
     return place && this.pictureFloatAt(place, p.item.src, { buttons, copied: p.copied, run: (name, cx) => this.pictureAction(name, cx) }, t);
   }
 
-  // A picture's float at `place`: its address `src`, then `buttons` (some of PICTURE_BUTTONS), which `run(name, cx)`.
   pictureFloatAt(place, src, { buttons, copied, run }, t) {
     const button = b => this.popoverButton(`md-picture-${b.name}`, copied && b.done ? b.done : b, cx => run(b.name, cx), t);
     return this.popoverFrame("md-picture", place, t)
@@ -6156,7 +6023,7 @@ export class Editor {
     const l = this.lang;
     if (!l || l.act !== this.act || this.mode !== "reading" || !this.doc || (this.file && !this.editable())) return null;
     const b = this.blockByKey(l.key);
-    return b && stripped(b, b.key === this.activeKey) ? { ...l, b } : null;
+    return b && hasStrip(b, b.key === this.activeKey) ? { ...l, b } : null;
   }
 
   langOpen() {
@@ -6252,7 +6119,6 @@ export class Editor {
     this.op(s, cx, { at: fieldToDoc(f, Math.min(c.end, f.value.length)), caret: c });
   }
 
-  // Block `key`'s chip in pane coordinates, or null while it has none or no place on the page.
   chipBox(key) {
     const i = this.at.get(key), d = this.data.get(key);
     if (i === undefined || !d?.chip || this.sums.length !== this.blocks.length + 1) return null;
@@ -6265,7 +6131,7 @@ export class Editor {
   languageMenu(t) {
     const l = this.langNow(), chip = l && this.chipBox(l.key);
     if (!chip) return null;
-    const viewH = this.viewport?.height ?? UNSIZED_VIEW_H, h = languageMenuH(Math.max(1, l.items.length));
+    const viewH = this.paneH(), h = languageMenuH(Math.max(1, l.items.length));
     const place = languageMenuPlace({ chip, h, full: languageMenuH(MENU_ROWS), viewW: this.paneW(), viewH });
     const current = languageOf(infoWord(l.b.info));
     const rows = l.items.length
@@ -6308,7 +6174,6 @@ export class Editor {
     return PICTURE_BUTTONS.filter(b => (!tag || !b.markdown) && (linked || !b.linked));
   }
 
-  // The link whose text holds the picture `span` of the edited field, or null.
   linkAround(span) {
     return parsedInline(this.seen, this.defsNow().map).spans.find(sp => sp.kind === "link" && sp.from <= span.start && span.end <= sp.to) ?? null;
   }
@@ -6404,7 +6269,6 @@ export class Editor {
     return Boolean(b) && b.act === this.act && Boolean(this.activeKey) && this.editable() && b.value === this.seen;
   }
 
-  // Enter in a picture's box, of a paragraph's picture or of one picked in text.
   savePictureBox(cx) {
     if (this.imageBoxOpen()) this.applyImageBox(cx);
     else this.applyPictureBox(cx);
@@ -6429,7 +6293,6 @@ export class Editor {
     return !address || address === span.url ? null : { address: writtenAddress(address) };
   }
 
-  // Escape in the box: nothing changes, the field gets the keyboard back with its selection, and the float shows again.
   cancelImageBox(cx) {
     const b = this.imageBox;
     if (!this.imageBoxOpen()) return this.closeImageBox(cx);
@@ -6519,7 +6382,7 @@ export class Editor {
   placeCard({ b, list }) {
     const i = this.at.get(b.key), d = this.data.get(b.key);
     if (i === undefined || !d?.notes || this.sums.length !== this.blocks.length + 1) return null;
-    const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
+    const viewW = this.paneW(), viewH = this.paneH();
     const iconTop = COLUMN.padTop + this.sums[i] - this.offset + d.notesY;
     return cardPlace({ iconTop, iconLeft: columnLeft(viewW) + d.notesX, n: list.length, viewW, viewH });
   }
@@ -6668,10 +6531,7 @@ export class Editor {
   cellNotesOf(b) {
     const value = b.key !== this.activeKey ? b.content : this.cell ? this.typedTable(b) : this.seen, kept = this.cellMemo.get(b.key);
     if (kept?.value === value) return kept;
-    const cards = cellComments(value).map((x, index) => {
-      const { when, text } = readNote(x.note);
-      return { c: x.comment, index, row: x.row, column: x.column, cell: x.cell, note: x.note, when, text, look: cardLook({ text, header: true }) };
-    });
+    const cards = cellComments(value).map((x, index) => ({ c: x.comment, index, row: x.row, column: x.column, cell: x.cell, note: x.note, ...cardNote(x.note) }));
     const memo = { value, cards, look: null };
     this.cellMemo.set(b.key, memo);
     return memo;
@@ -6684,7 +6544,6 @@ export class Editor {
     return b.content.slice(0, f.lineAt) + this.text.slice(f.body, f.eol) + b.content.slice(f.lineEnd);
   }
 
-  // Each level with its picture's top, in the pictures' order.
   pictureCards(i, b, focus, list) {
     const d = this.data.get(b.key);
     this.blockNoteCards(i, b, this.pictureMemoOf(b), focus, list, card => ({ at: card.picture, want: this.noteTop(i, d, card.picture) }));
@@ -6693,10 +6552,7 @@ export class Editor {
   pictureMemoOf(b) {
     const kept = this.cardMemo.get(b.key);
     if (kept && kept.content === b.content && kept.kind === PICTURE_NOTES_MEMO) return kept;
-    const cards = this.pictureNotes(b).map((c, index) => {
-      const { when, text } = readNote(c.note);
-      return { c, index, picture: c.picture, when, text, look: cardLook({ text, header: true }) };
-    });
+    const cards = this.pictureNotes(b).map((c, index) => ({ c, index, picture: c.picture, ...cardNote(c.note) }));
     const memo = { content: b.content, kind: PICTURE_NOTES_MEMO, cards };
     this.cardMemo.set(b.key, memo);
     return memo;
@@ -6712,7 +6568,6 @@ export class Editor {
     }
   }
 
-  // The card of the comment being written, at the start of the text it goes on.
   newCard() {
     const i = this.at.get(this.activeKey), at = this.note.range.start, id = NEW_CARD;
     const look = cardLook({ text: this.noteField.value(), header: true, full: true });
@@ -6763,7 +6618,7 @@ export class Editor {
   marginCards(t) {
     const list = this.cardList();
     if (!list.length) return [];
-    const top = this.offset - COLUMN.padTop - CARD_SLACK, bottom = top + (this.viewport ? this.viewH() : UNSIZED_VIEW_H) + 2 * CARD_SLACK;
+    const top = this.offset - COLUMN.padTop - CARD_SLACK, bottom = top + this.paneH() + 2 * CARD_SLACK;
     const writable = !this.file || this.editable(), now = new Date();
     return list.filter(e => e.top + e.h > top && e.top < bottom).map(e => this.marginCard(e, writable, now, t));
   }
@@ -6828,7 +6683,6 @@ export class Editor {
     if (this.pickComment(e.key, e.index, cx) && onText) this.editPicked(cx);
   }
 
-  // A press outside a card being written or edited closes it, writing nothing.
   cardOut(e, cx) {
     if (e.adding && e.block) return this.closeBlockAddOut(cx);
     return e.block ? this.closeBlockEdit(cx) : this.closeNote(cx);
@@ -7007,8 +6861,6 @@ export class Editor {
     this.startBlockAdd({ key: b.key, act: this.act, caret: edited ? this.caretNow() : null, picture: -1 }, cx);
   }
 
-  // The new comment `add` (as `blockAdd` holds it) takes the note field, empty; every other comment box, card and menu
-  // closes, writing nothing.
   startBlockAdd(add, cx) {
     const was = this.blockAdd?.key;
     this.closeCard(cx);

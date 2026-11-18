@@ -58,7 +58,6 @@ export function formatAt(value, at, { defs } = {}) {
 
 const scopeOf = (m, boxes) => boxes.map(sp => m.scopeOf(sp)).join("");
 
-// Whether some character shows in [lo, hi) of the model's value.
 function showsIn(m, lo, hi) {
   if (lo >= hi) return false;
   const r = m.runs[m.runAfter(lo)];

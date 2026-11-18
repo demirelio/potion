@@ -1,7 +1,7 @@
 // The inline tokens of the edited text block's field: the field keeps the raw markdown, and each formatted word is
 // one atomic token that holds its hidden marks and draws only what Reading shows, in Reading's formatting. Offsets are
 // UTF-16 indices into the field's value.
-import { graphemeEnd } from "./inline.js";
+import { doubled, graphemeEnd } from "./inline.js";
 import { POINT } from "./comments.js";
 
 const LETTER = 0, GAP = 1, SOLO = 2, LONE = 3;
@@ -44,12 +44,6 @@ function cuts(s, b) {
   return graphemeEnd(s, p) > b;
 }
 
-function grown(array) {
-  const next = new array.constructor(array.length * 2);
-  next.set(array);
-  return next;
-}
-
 // The value tiled into atoms: shown letters of one run with the hidden marks that go with them (LETTER), a stretch the
 // field shows as typed (GAP: spaces, control characters), a shown line break the field cannot draw (SOLO), or hidden
 // marks that go with no character (LONE). A letter atom is split into its characters only where the caret needs them.
@@ -71,7 +65,7 @@ class Atoms {
   // [start, end) is the atom's source, [from, to) its shown character's; `text` what it shows when not its source.
   add(start, end, from, to, kind, look, text, flags) {
     if (this.count === this.start.length) {
-      for (const name of ["start", "end", "from", "to", "kind", "flags", "look"]) this[name] = grown(this[name]);
+      for (const name of ["start", "end", "from", "to", "kind", "flags", "look"]) this[name] = doubled(this[name]);
     }
     const k = this.count++;
     this.start[k] = start; this.end[k] = end; this.from[k] = from; this.to[k] = to;
@@ -410,7 +404,6 @@ class Drawing {
   }
 }
 
-// One token of atoms a..b.
 function tokenOf(r, a, b) {
   const { atoms } = r, s = r.value;
   if (atoms.kind[a] !== LETTER) {
@@ -492,7 +485,6 @@ export function extentOf(r, range) {
   return { start: snapped(r, range.start, START), end: snapped(r, range.end, END) };
 }
 
-// Value offset x as an offset of the drawn text.
 export function drawnOffset(r, x) {
   const { atoms, tokenized, drawnStarts } = r;
   if (x >= r.value.length) return drawnStarts[atoms.count];

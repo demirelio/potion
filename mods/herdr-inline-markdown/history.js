@@ -2,8 +2,8 @@
 import { applySplice, diff } from "./blocks.js";
 
 export const MAX_ENTRIES = 200;
-export const MAX_BYTES = 2 * 1024 * 1024;
-export const GROUP_MS = 1000;
+const MAX_BYTES = 2 * 1024 * 1024;
+const GROUP_MS = 1000;
 
 // Drops the common ends of the removed and inserted text.
 export function trim(text, s) {
@@ -58,15 +58,15 @@ function fold(text, g, e) {
 // to `text`, with the caret and, for an entry given them by select(), the `select` range, and `opensNothing` and
 // `column` (the table column the caret is in) for an entry recorded with them, or null when there is none or the entry
 // does not match `text`.
-export function createHistory({ maxEntries = MAX_ENTRIES, maxBytes = MAX_BYTES, groupMs = GROUP_MS } = {}) {
+export function createHistory() {
   let done = [], undone = [], open = null, size = 0;
 
   const push = e => {
     done.push(e);
     size += bytes(e);
-    while (done.length > 1 && (done.length > maxEntries || size > maxBytes)) size -= bytes(done.shift());
+    while (done.length > 1 && (done.length > MAX_ENTRIES || size > MAX_BYTES)) size -= bytes(done.shift());
   };
-  const groupable = (g, e) => Boolean(g) && e.key === g.key && e.time - g.time < groupMs && !hasNewline(e.inserted)
+  const groupable = (g, e) => Boolean(g) && e.key === g.key && e.time - g.time < GROUP_MS && !hasNewline(e.inserted)
     && !(hasNewline(g.inserted) && g.join === undefined);
   // A typing edit that continues the open group: an insert at its join, or a backward delete ending at its start.
   const continues = (g, e) => {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  POINT, addCellComment, addComment, cellComments, commentable, commentsIn, editCellComment, editComment, highlight, noteText, oneLine,
+  POINT, addComment, cellComments, commentable, commentsIn, editCellComment, editComment, highlight, noteText, oneLine,
   pointComment, readNote, resolveComment, showComments, stampOf, timeLabel,
 } from "../mods/herdr-inline-markdown/comments.js";
 import { tableCells } from "../mods/herdr-inline-markdown/geometry.js";
@@ -208,30 +208,13 @@ test("a comment in a table is in the cell holding its start: its row by the line
 });
 
 test("a | in a cell's note is written \\|, the backslashes right before it doubled, and read back as typed", () => {
-  const value = "| a |\n|---|", [cell] = tableCells(value)[0].cells;
+  const value = "| {==a==}{>>2026-11-17 09:00 \\| old<<} |\n|---|", [{ comment }] = cellComments(value);
   for (const typed of ["x | y", "a \\| b", "ends with \\\\|", "C:\\dir \\ not before a pipe"]) {
-    const out = addCellComment(value, cell, typed, WHEN), [x] = cellComments(out.value);
+    const out = editCellComment(value, comment, typed), [x] = cellComments(out.value);
     assert.equal(readNote(x.note).text, typed, typed);
     assert.equal(tableCells(out.value)[0].cells.length, 1, `${typed}: still one cell`);
   }
-  assert.equal(addCellComment(value, cell, "a \\| b", WHEN).value, "| {==a==}{>>2026-11-17 09:00 \\| a \\\\\\| b<<} |\n|---|");
-});
-
-test("addCellComment wraps a cell's whole text in a highlight with the stamped comment after it, or writes a point comment into an empty cell; a cell holding a comment or a highlight is refused", () => {
-  const value = "| Name | Size |\n|---|---|\n| apple | |\n| pear |  |\n| {==plum==}{>>x<<} | `3` |\n| {==fig==} ||";
-  const cell = (row, column) => tableCells(value).filter(r => !r.delimiter)[row].cells[column];
-  const apple = addCellComment(value, cell(1, 0), "why\nthis | one?", WHEN), written = "{==apple==}{>>2026-11-17 09:00 \\| why this \\| one?<<}";
-  assert.deepEqual(apple, { value: value.replace("apple", written), start: value.indexOf("apple") + written.length, end: value.indexOf("apple") + written.length });
-  assert.deepEqual(inCells(apple.value), [[1, 0, "2026-11-17 09:00 | why this | one?", written, written], [3, 0, "x", "{==plum==}{>>x<<}", "{==plum==}{>>x<<}"]], "read back: the cell, the time, the text");
-  const point = "{>>2026-11-17 09:00 \\| fill in<<}";
-  assert.equal(addCellComment(value, cell(1, 1), "fill in", WHEN).value, value.replace("| apple | |", `| apple | ${point} |`), "an empty cell of one space");
-  assert.equal(addCellComment(value, cell(2, 1), "fill in", WHEN).value, value.replace("| pear |  |", `| pear | ${point} |`), "of two");
-  assert.equal(addCellComment(value, cell(4, 1), "fill in", WHEN).value, value.replace("| {==fig==} ||", `| {==fig==} | ${point} |`), "of none");
-  assert.equal(addCellComment(value, cell(0, 0), "a header", WHEN).value, value.replace("| Name |", "| {==Name==}{>>2026-11-17 09:00 \\| a header<<} |"), "a header cell like any other");
-  assert.equal(addCellComment(value, cell(3, 1), "code", WHEN).value, value.replace("`3`", "{==`3`==}{>>2026-11-17 09:00 \\| code<<}"), "around inline code");
-  assert.deepEqual(addCellComment(value, cell(3, 0), "again", WHEN), { refused: "overlap" });
-  assert.deepEqual(addCellComment(value, cell(4, 0), "again", WHEN), { refused: "overlap" }, "a highlight");
-  assert.equal(addCellComment(value, cell(1, 0), " \n ", WHEN), null, "an empty note");
+  assert.equal(editCellComment(value, comment, "a \\| b").value, "| {==a==}{>>2026-11-17 09:00 \\| a \\\\\\| b<<} |\n|---|");
 });
 
 test("editCellComment swaps a cell comment's text, keeping its time and escaping its pipes; resolveComment leaves the cell's text", () => {

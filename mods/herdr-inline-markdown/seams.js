@@ -273,7 +273,6 @@ export function pasteInto(value, { start, end }, clip, { defs = null, style = nu
 const isBlank = line => !line.trim();
 const lineAt = (text, at) => text.slice(0, at).split("\n").length - 1;
 
-// Whether more text can go on at the end of block b's last line: its text ends there.
 const endsInText = b => b.kind === "paragraph" || b.kind === "quote" || (b.kind === "item" && !b.emptyLine) || (b.kind === "heading" && !b.setext && !b.suffix);
 
 // Clipboard text that makes more than one block, in three: `first`, the lines of its first paragraph, which join the
@@ -298,11 +297,10 @@ function clipParts(clip) {
 // single line never does.
 export const holdsBlocks = clip => clipParts(String(clip ?? "")) !== null;
 
-// `lines` without the blank lines at its start (`start`) and its end (`end`).
-function withoutBlank(lines, start, end) {
+function withoutBlank(lines, leading, trailing) {
   let a = 0, z = lines.length;
-  while (start && a < z && isBlank(lines[a])) a++;
-  while (end && z > a && isBlank(lines[z - 1])) z--;
+  while (leading && a < z && isBlank(lines[a])) a++;
+  while (trailing && z > a && isBlank(lines[z - 1])) z--;
   return lines.slice(a, z);
 }
 

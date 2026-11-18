@@ -1,13 +1,13 @@
 // CriticMarkup comments in the text of one block: `{==marked text==}{>>comment<<}`, a comment at a point
 // `{>>comment<<}`, and a highlight with no comment `{==text==}`. Code spans and code blocks hold none. A comment's
 // note may start with the local time it was written: `{>>2026-11-16 20:51 | the comment<<}`. Offsets are UTF-16
-// indices. No imports.
+// indices.
+import { closes } from "./blocks.js";
 
 const OPEN = "{==", CLOSE = "==}", NOTE_OPEN = "{>>", NOTE_CLOSE = "<<}";
 const BACKSLASH = 92, BACKTICK = 96, BRACE = 123, EQUALS = 61, LESS = 60, PIPE = 124, NEWLINE = 10, BLANK_CHAR = 32, TAB = 9;
 const MAY_HOLD = /\{(?:==|>>)/;
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
-const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 const BLANK = /^[ \t]*$/;
 const INDENTED = /^(?: {0,3}\t| {4})/;
 const LINE_BREAK = /\s*(?:\r\n|\r|\n)\s*/g;
@@ -22,11 +22,6 @@ export const POINT = "💬";
 
 export const highlight = (inner, color) => `<mark color="${color}">${inner}</mark>`;
 
-const closesFence = (line, mark) => {
-  const m = FENCE_CLOSE.exec(line);
-  return Boolean(m) && m[1][0] === mark[0] && m[1].length >= mark.length;
-};
-
 // Each line of `text` as { start, end, kind }: "text", "blank", or "code" (a line of a fenced or indented code block,
 // which a quote can hold).
 function linesOf(text) {
@@ -37,7 +32,7 @@ function linesOf(text) {
     let code = false;
     if (fence) {
       code = true;
-      if (closesFence(line, fence)) fence = null;
+      if (closes(line, fence)) fence = null;
     } else if (FENCE_OPEN.test(line)) {
       fence = FENCE_OPEN.exec(line)[1];
       code = true;
@@ -194,11 +189,8 @@ export function pointComment(note, when = null) {
 // Spaces at the ends of a selection stay outside the marks; a selection of spaces only is a caret at its start.
 function trimmed(value, range) {
   const clampTo = x => Math.max(0, Math.min(value.length, Number(x) || 0));
-  const a = clampTo(range?.start), b = clampTo(range?.end);
-  let s = Math.min(a, b), e = Math.max(a, b);
-  while (s < e && SPACE.test(value[s])) s++;
-  while (e > s && SPACE.test(value[e - 1])) e--;
-  return s === e ? { start: Math.min(a, b), end: Math.min(a, b) } : { start: s, end: e };
+  const a = clampTo(range?.start), b = clampTo(range?.end), from = Math.min(a, b), inner = trimmedRange(value, from, Math.max(a, b));
+  return inner.start === inner.end ? { start: from, end: from } : inner;
 }
 
 function refusal(value, { start: s, end: e }) {
@@ -295,24 +287,6 @@ export function cellComments(value) {
     out.push({ comment: c, row: Math.max(0, line - 1), column, cell, note: cellUnescaped(c.note) });
   }
   return out;
-}
-
-// -> { value, start, end }: table cell `cell` (trimmed, as tableCells gives it) commented with `note`, stamped with `when`
-// when given, the note's pipes escaped, the caret after the comment: all of the cell's text marked, or an empty cell
-// given a point comment with a space each side. Null for an empty note; { refused: "overlap" } for a cell that holds a
-// comment or a highlight already.
-export function addCellComment(value, cell, note, when = null) {
-  const text = oneLine(note), { start, end } = cell;
-  if (!text) return null;
-  if (commentsIn(value).some(c => c.start < end && c.end > start)) return { refused: "overlap" };
-  const comment = `${NOTE_OPEN}${cellEscaped(stamped(text, when))}${NOTE_CLOSE}`;
-  if (start === end) {
-    const before = start > 0 && !SPACE.test(value[start - 1]) ? " " : "", after = value.charCodeAt(start) === PIPE ? " " : "";
-    const caret = start + before.length + comment.length;
-    return { value: value.slice(0, start) + before + comment + after + value.slice(start), start: caret, end: caret };
-  }
-  const written = `${OPEN}${value.slice(start, end)}${CLOSE}${comment}`, caret = start + written.length;
-  return { value: value.slice(0, start) + written + value.slice(end), start: caret, end: caret };
 }
 
 // editComment for a comment in a table cell (cellComments' `comment`): its note read and written as a cell holds it.

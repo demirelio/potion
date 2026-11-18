@@ -4,13 +4,15 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { applySplice, cellCount, parse, reparse } from "../mods/herdr-inline-markdown/blocks.js";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { cellEdit, cellText, insertRow, rowAt, tableOf, writeCell, writeDashes } from "../mods/herdr-inline-markdown/tables.js";
+import { cellText, insertRow, rowAt, tableOf, writeCell, writeDashes } from "../mods/herdr-inline-markdown/tables.js";
 import { originals } from "./markdown-corpus.mjs";
 
 const tableIn = text => {
   const doc = parse(text), b = doc.blocks.find(x => x.kind === "table");
   return { doc, b, t: b ? tableOf(doc, b) : null };
 };
+// The splice that writes `next` into cell (r, c) of table t, its row as tableOf parts it.
+const cellEdit = (doc, b, t, r, c, next) => writeCell(doc.text, t.rows[r], b.start + b.lines[t.rows[r].line].eol, c, next);
 // Node exposes `gc` only to a context made after the flag is set.
 setFlagsFromString("--expose-gc");
 const collectGarbage = runInNewContext("gc");

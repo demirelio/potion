@@ -3,7 +3,7 @@ import { visibleMap } from "./inline.js";
 
 export const COLUMN = { maxWidth: 780, padX: 32, padTop: 28, padBottom: 160 };
 export const REVEAL = { top: 24, bottom: 72 };
-export const PAGE_KEEP = 40;
+const PAGE_KEEP = 40;
 
 const MONO = new Set(["code", "mermaid", "table", "frontmatter", "html", "definition", "hr"]);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -84,8 +84,6 @@ function textPress(t, x, y, cal, side) {
   return 0;
 }
 
-// The cells of a table field: for each line, the trimmed text range of each cell in field offsets, and whether the
-// line is the delimiter row.
 export function tableCells(value) {
   const lines = value.split("\n"), starts = lineStarts(lines);
   return lines.map((line, li) => {
@@ -131,7 +129,7 @@ export function tablePress(t, x, y) {
 // round the grid, its corners rounded `radius`; a column at least `minW` px wide, at most `maxW` unless dashes set it.
 export const GRID = { padX: 10, padY: 6, line: 1, minW: 64, maxW: 360, radius: 6 };
 
-export const naturalWidth = widest => clamp(Math.ceil(widest) + 2 * GRID.padX, GRID.minW, GRID.maxW);
+const naturalWidth = widest => clamp(Math.ceil(widest) + 2 * GRID.padX, GRID.minW, GRID.maxW);
 
 // -> the width of each column, its padding in and its lines out: `widest[c]` is the px width of column c's widest text.
 // The natural widths when they fit `room`. Else a column whose natural width fits an equal share of what is left keeps
@@ -157,9 +155,8 @@ export function columnWidths(widest, room) {
   return widths.map(w => w || Math.floor(left / free));
 }
 
-// The estimated height of each row of a grid whose cells show `shown` (rows of texts) in columns `widths` wide: the
-// cell whose text wraps to the most rows at its style's advance, those rows at its style's row height, the padding,
-// and the line under each row but the last. The first row is the header, in `head`'s style; `body` = { row, advance }.
+// Each row as tall as its cell that wraps to the most rows, with the padding and the line under it but the last's. The
+// first row is the header, in `head`'s style; `body` = { row, advance }.
 export function gridRowHeights(shown, widths, head, body) {
   return shown.map((cells, r) => {
     const st = r === 0 ? head : body;
@@ -169,15 +166,14 @@ export function gridRowHeights(shown, widths, head, body) {
   });
 }
 
-// The top of row `r` of a grid whose rows are `heights` tall, from the grid's top edge.
+// From the grid's top edge.
 export const gridRowTop = (heights, r) => {
   let y = GRID.line;
   for (let k = 0; k < r && k < heights.length; k++) y += heights[k];
   return y;
 };
 
-// The row and column of a grid at (x, y) from its top-left corner, the rows `heights` tall and the columns `widths`
-// wide, each with the line after it; a point past an edge takes the cell nearest it.
+// (x, y) from the grid's top-left corner; a point past an edge takes the cell nearest it.
 export function gridAt(heights, widths, x, y) {
   let row = 0, column = 0;
   for (let top = GRID.line; row < heights.length - 1 && y >= top + heights[row]; row++) top += heights[row];
@@ -239,7 +235,6 @@ export const TABLE_VIEW = { frame: 1, py: 7, rule: 1 };
 // what holds it, `inset` px above its frame. A cell that wraps makes its row taller and puts the rows after it lower.
 export const tableRowTop = (row, lineH, inset = 0) => inset + TABLE_VIEW.frame + row * (2 * TABLE_VIEW.py + lineH + TABLE_VIEW.rule);
 
-// -> { start, end } of the neighbouring cell's trimmed text, or null past the first or last cell.
 export function nextCell(value, caret, dir) {
   const all = tableCells(value).filter(r => !r.delimiter).flatMap(r => r.cells);
   let at = 0;
@@ -291,7 +286,6 @@ function lineEndFrom(text, from) {
   return end < 0 ? text.length : end;
 }
 
-// The offset each line of `text` starts at.
 export function lineOffsets(text) {
   const starts = [0];
   for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
@@ -328,7 +322,7 @@ export function marginLayout(viewW) {
   return { pageW, pageLeft, cardLeft: pageLeft + pageW + MARGIN.gap, cardW: MARGIN.card };
 }
 
-export const columnLeft =(viewportW, margin = null) => (margin ? margin.pageLeft : Math.max(0, (viewportW - COLUMN.maxWidth) / 2)) + COLUMN.padX;
+export const columnLeft = (viewportW, margin = null) => (margin ? margin.pageLeft : Math.max(0, (viewportW - COLUMN.maxWidth) / 2)) + COLUMN.padX;
 // `localX` is a pointer x in md-viewport coordinates.
 export const columnX = (localX, viewportW, margin = null) => localX - columnLeft(viewportW, margin);
 
@@ -379,8 +373,6 @@ export function blockAt(sums, y) {
 
 export const estimateHeight = (lineCount, rowPx, spaceBefore = 0) => spaceBefore + Math.max(1, lineCount) * rowPx;
 
-export const caretY = ({ blockTop, padTop = 0, chromeTop = 0, rowPx, row }) => blockTop + padTop + chromeTop + rowPx * row;
-
 // Keeps [y, y + rowPx] inside the REVEAL margins, moving the least.
 export function revealOffset({ offset, viewportH, y, rowPx, contentH = Infinity }) {
   let o = offset;
@@ -388,10 +380,6 @@ export function revealOffset({ offset, viewportH, y, rowPx, contentH = Infinity 
   else if (y + rowPx > offset + viewportH - REVEAL.bottom) o = y + rowPx - viewportH + REVEAL.bottom;
   return clamp(o, 0, maxOffset(contentH, viewportH));
 }
-
-// The offset that keeps an anchor at the screen y it had: its content top moved from `before` to `after`.
-export const anchorOffset = ({ offset, before, after, contentH = Infinity, viewportH = 0 }) =>
-  clamp(offset + after - before, 0, maxOffset(contentH, viewportH));
 
 // The anchor before a height change: the active block when its caret row is on screen, else the first block whose
 // bottom is below the offset. -> its index.
@@ -415,7 +403,7 @@ export const FRAME = {
   dpr: 2, sharpBudget: 40e6, maxPx: 16000,
   tools: { top: 8, right: 8, h: 26, out: 26, pct: 48, in: 26, comment: 26, gap: 6 },
 };
-export const WHEEL = { gapMs: 150, decidePx: 8, sideways: 2 };
+const WHEEL = { gapMs: 150, decidePx: 8, sideways: 2 };
 const ZOOM_STEPS = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2];
 const SAME_ZOOM = 0.005;
 // Half a pixel: frame sizes are rounded, so content that fits exactly may measure a fraction over.
@@ -651,7 +639,7 @@ export function cardPlace({ iconTop, iconLeft, n, viewW, viewH }) {
 
 // A comment card: its time (and the active card's Resolve) on a row `headH` tall over its text, whose lines hold about
 // `w / charW` characters; `lines` of them unless it shows in full.
-export const CARDS ={ w: MARGIN.card, pad: 10, rowGap: 4, headH: 20, textSize: 13, lineH: 19, charW: 6.8, lines: 3, gap: 8 };
+export const CARDS = { w: MARGIN.card, pad: 10, rowGap: 4, headH: 20, textSize: 13, lineH: 19, charW: 6.8, lines: 3, gap: 8 };
 const CARD_EDGE = 2 + 2 * CARDS.pad;
 const perCardLine = () => Math.max(1, Math.floor((CARDS.w - CARD_EDGE) / CARDS.charW));
 

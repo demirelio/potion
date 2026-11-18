@@ -5,7 +5,7 @@ import { defsFor } from "./blocks.js";
 import { showComments } from "./comments.js";
 import { GRID, columnWidths, dashWidth, gridRowHeights, isSized } from "./geometry.js";
 import { asText, coloredMarks, parseInline } from "./inline.js";
-import { cellText, columnsOf, isIrregular, tableOf } from "./tables.js";
+import { cellText, codePoints, columnsOf, isIrregular, tableOf } from "./tables.js";
 
 // A table of more cells keeps its source look: drawing its grid would take much of a draw's budget.
 export const MAX_GRID_CELLS = 1000;
@@ -13,15 +13,12 @@ export const MAX_GRID_CELLS = 1000;
 const MAY_FORMAT = /[`[\]\\!<&*_~]/;
 // What a comment shows does not depend on its colour.
 const ANY_COLOR = "#000";
-const LOW_SURROGATE = 0xdc00, AFTER_SURROGATES = 0xe000;
 
-// Whether the grid draws table b: not past MAX_GRID_CELLS cells (counted from its lines and header, unparted), nor
-// when a row holds more cells than the header (the grid would hide their text).
+// A row holding more cells than the header keeps its table as source: the grid would hide their text.
 export const drawsGrid = (doc, b) => (b.lines.length - 1) * columnsOf(doc, b) <= MAX_GRID_CELLS && !isIrregular(doc, b);
 
-// TextView's markdown for cell text `source`: its comments highlighted in `color` (the one starting at `deep.at` in
-// `deep.color`) with their notes left out, a <mark> in `color`, every \| as | (GFM reads a cell so, in code spans
-// too), a block start or a link definition escaped as text, and the definitions (`defs`, a doc's) its links use.
+// TextView's markdown for cell text `source`: comments and highlights in `color` (the comment starting at `deep.at` in
+// `deep.color`), every \| read as | as GFM reads a cell (in code spans too), then the definitions its links use.
 export function cellMarkdown(source, color, deep, defs) {
   const text = asText(coloredMarks(showComments(source, color, deep), color).replaceAll("\\|", "|"));
   const used = defsFor(text, defs);
@@ -37,15 +34,6 @@ function shownText(source, defs) {
   return out;
 }
 
-function codePoints(text) {
-  let n = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    if (c < LOW_SURROGATE || c >= AFTER_SURROGATES) n++;
-  }
-  return n;
-}
-
 const sum = list => list.reduce((a, x) => a + x, 0);
 const deepKeyOf = deep => (deep ? `${deep.row}:${deep.column}:${deep.at}:${deep.color}` : "");
 const isDeep = (deep, r, c) => Boolean(deep) && deep.row === r && deep.column === c;
@@ -56,7 +44,7 @@ function readCells(kept, doc, b, defs) {
   if (!drawsGrid(doc, b)) return;
   const t = tableOf(doc, b), sources = t.rows.map((row, r) => row.cells.map((_, c) => cellText(doc, t, r, c)));
   const shown = sources.map(row => row.map(s => shownText(s, defs.map)));
-  Object.assign(kept, { aligns: t.aligns, dashes: t.dashes, byDashes: isSized(t.dashes), sources, shown, chars: shown.map(row => row.map(codePoints)) });
+  Object.assign(kept, { aligns: t.aligns, dashes: t.dashes, byDashes: isSized(t.dashes), sources, shown, chars: shown.map(row => row.map(s => codePoints(s))) });
 }
 
 const sameWidths = (a, b) => Boolean(a) && Boolean(b) && a.length === b.length && a.every((w, i) => w === b[i]);
@@ -89,10 +77,8 @@ function drawCells(kept, color, deep) {
 // `kept`: the caller's memo for the table; `room`: the px the grid may take; `head`, `body`: the calibrated { row,
 // advance } of the header's and the cells' styles; `deep`: a cell's active comment ({ row, column, at (in the cell's
 // text), color }) or null; `defs`: the doc's definitions as { map }, one object while they read the same; `widths`:
-// column widths to keep, while they have a column each, for a table not sized by its dashes (null: from its text).
-// The answer: { texts (each cell's markdown), aligns, dashes, sized (by its dashes), chars (shown code points), widths
-// (padding in, lines out), boxes (a centred or right cell's box width, 0 for the whole cell), heights (estimated; a
-// row's line under it but the last's), rowPx, w (may pass `room`), h }.
+// column widths to keep for a table not sized by its dashes (null: from its text). The answer's `widths` hold the
+// padding but not the lines, `heights` are estimates, and `w` may pass `room`.
 export function gridOf(kept, doc, b, { room, head, body, color, deep, defs, widths = null }) {
   if (kept.content !== b.content || kept.defs !== defs) readCells(kept, doc, b, defs);
   if (!kept.sources) return null;

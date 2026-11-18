@@ -2,23 +2,28 @@
 // where the view asks again.
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { home, appHome, readTextFile, exec, theme } from "herdr";
+import { home, appHome, readTextFile, exec } from "herdr";
 import * as fs from "fs/promises";
 import { mermaidConfig, diagramKey, sharpName, hash, DIAGRAM_COLORS as Z } from "./lib.js";
 import { FRAME, TOOLS_W } from "./geometry.js";
 
-const WAIT = 400; // ms: diagrams that show up together go out together
+const BATCH_WAIT_MS = 400;
 const SHARP_BACKGROUND = "transparent";
 const MAX_BATCH = 8;
 const NODE_MISSING = "Diagrams need Node.js";
-const RECHECK = 10000; // ms: a renderer that was not installed is looked for again after this long
-const RETRY = 15000; // ms: a run that failed as a whole (not one diagram's own error) is tried again after this long
+const RECHECK_MS = 10000;
+const RETRY_MS = 15000;
 
 const why = e => String(e?.message ?? e);
 export const mermaidHome = () => `${home().replace(/\/+$/, "")}/.local/share/herdr-inline-markdown/mermaid`;
 export const cacheDir = () => `${appHome().replace(/\/+$/, "")}/data/herdr-inline-markdown/diagrams`;
 // Where an image() finds the PNG: relative to the app folder.
 export const imagePath = key => `data/herdr-inline-markdown/diagrams/${key}.png`;
+
+function configOf() {
+  const json = JSON.stringify(mermaidConfig());
+  return { json, name: `config-${hash(json)}.json` };
+}
 
 const result = (key, state, more) => ({ key, state, width: 0, height: 0, scale: 1, error: null, ...more });
 // An error that came from the run, not from the diagram, carries the time (ms) after which get() asks for it again.
@@ -33,7 +38,7 @@ export class Diagrams {
     this.want = new Map(); // key -> source, waiting for the next batch
     this.keys = new Map(); // source -> key, for the current config and renderer
     this.written = new Set(); // config files already put in the cache folder
-    this.sig = null; this.config = null; // the theme's colors, and { json, name } made from them
+    this.config = configOf();
     this.timer = null; this.starting = false; this.running = false; this.closed = false;
     this.reminders = new Set();
     this.onChange = null;
@@ -56,10 +61,10 @@ export class Diagrams {
     this.reminders.add(task);
   }
 
-  // A missing version file means the renderer was never installed; it is looked for again after RECHECK, so install.sh
-  // takes effect without reopening the tab.
+  // A missing version file means the renderer was never installed; it is looked for again after RECHECK_MS, so
+  // install.sh takes effect without reopening the tab.
   start(cx) {
-    if (this.starting || (this.renderer !== undefined && !(this.renderer === null && Date.now() - this.checked >= RECHECK))) return;
+    if (this.starting || (this.renderer !== undefined && !(this.renderer === null && Date.now() - this.checked >= RECHECK_MS))) return;
     this.starting = true;
     const was = this.renderer;
     cx.spawn(async cx => {
@@ -74,27 +79,16 @@ export class Diagrams {
       if (this.renderer) {
         try { await fs.mkdir(cacheDir(), { recursive: true }); } catch { /* the writes say so */ }
         if (this.closed) return;
-      } else this.remind(RECHECK, cx);
+      } else this.remind(RECHECK_MS, cx);
       this.starting = false;
       if (was === undefined || was?.version !== this.renderer?.version) this.changed(cx); // a look that found nothing new draws nothing
     });
-  }
-
-  sync(t) {
-    const sig = Object.values(t).join();
-    if (sig === this.sig) return;
-    this.sig = sig;
-    const json = JSON.stringify(mermaidConfig(t));
-    this.config = { json, name: `config-${hash(json)}.json` };
-    this.keys = new Map();
-    this.want = new Map();
   }
 
   // state: "pending" | "ok" | "error" | "missing". Cheap: the view calls it for every diagram whenever its blocks
   // change and whenever it is told something changed here.
   get(source, cx) {
     this.start(cx);
-    this.sync(theme());
     const r = this.renderer;
     if (r === undefined) return result(null, "pending");
     if (r === null) return result(hash(source), "missing");
@@ -110,7 +104,7 @@ export class Diagrams {
     if (!this.want.has(key)) {
       this.want.set(key, source);
       this.timer?.cancel();
-      this.timer = cx.timer.after(WAIT, cx => { this.timer = null; cx.spawn(cx => this.run(cx)); });
+      this.timer = cx.timer.after(BATCH_WAIT_MS, cx => { this.timer = null; cx.spawn(cx => this.run(cx)); });
     }
     return known ?? result(key, "pending");
   }
@@ -118,7 +112,7 @@ export class Diagrams {
   // Laid over the base picture: transparent like it, so the canvas's dots show through, and the shapes' solid fills hide
   // the base under them.
   sharp(key, source, scale, cx) {
-    if (!this.renderer || !this.config || this.sharps.has(key)) return this.sharpOf(key);
+    if (!this.renderer || this.sharps.has(key)) return this.sharpOf(key);
     const name = sharpName(key, SHARP_BACKGROUND, scale);
     this.sharps.set(key, result(name, "pending", { scale }));
     this.sharpWant.push({ key, name, source, scale, config: this.config, background: SHARP_BACKGROUND });
@@ -212,7 +206,7 @@ export class Diagrams {
       if (this.closed) return;
       this.changed(cx);
     }
-    if (misses.some(key => this.known.get(key)?.retryAt !== undefined)) this.remind(RETRY, cx);
+    if (misses.some(key => this.known.get(key)?.retryAt !== undefined)) this.remind(RETRY_MS, cx);
   }
 
   // What the renderer left for this key earlier. A run that ran out of time is worth another try; the rest is final.
@@ -252,9 +246,9 @@ export class Diagrams {
     return true;
   }
 
-  // `again`: the failure is the run's, not the diagram's, so get() asks for the diagram again after RETRY ms.
+  // `again`: the failure is the run's, not the diagram's, so get() asks for the diagram again after RETRY_MS.
   fail(keys, error, again = false) {
-    for (const key of keys) this.known.set(key, result(key, "error", { error, ...(again ? { retryAt: Date.now() + RETRY } : {}) }));
+    for (const key of keys) this.known.set(key, result(key, "error", { error, ...(again ? { retryAt: Date.now() + RETRY_MS } : {}) }));
   }
 }
 

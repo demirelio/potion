@@ -2,12 +2,12 @@ import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, home, props, shared, setShared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
 import { FIND_SCRIPT, basename, dirname, fileKey, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
-import { openMarkdown } from "./open.js";
+import { MOD, PANES, RECENT, openMarkdown } from "./open.js";
 
 // A picker that opens closes the one named here, so one is open at a time; the cmd-shift-m mod reads it to close the
 // picker it opened itself. Shared state is persisted, so a name left by a quit is of an overlay Herdr no longer has.
 const OPEN_PICKER = "herdr-inline-markdown.picker";
-const ROW = 32, ROOM = 8; // a row's height; how many fit before the list has measured itself
+const ROW_H = 32, ROWS_BEFORE_MEASURED = 8;
 const HINTS = {
   pane: "↑↓ to move · ↵ to open beside · esc to close",
   tab: "↑↓ to move · ↵ to open in a new tab · esc to close",
@@ -34,7 +34,7 @@ export class Picker {
     this.folder = start.folder ? normalizePath(start.folder) : this.machine ? "" : normalizePath(home());
     this.home = this.machine ? null : home();
     // A snapshot: the dialog is short-lived, and shared() hands out a new copy on every call.
-    const recent = shared("herdr-inline-markdown.recent");
+    const recent = shared(RECENT);
     this.recent = (Array.isArray(recent) ? recent : []).filter(r => r && typeof r.path === "string" && (r.machine ?? null) === this.machine);
     this.openHere = this.openInTab();
     this.files = [];
@@ -80,7 +80,7 @@ export class Picker {
   // machine the last two are on.
   around() {
     const f = focused(), here = panes().find(p => p.pane === this.anchor), space = spaces().find(s => s.id === this.space);
-    const file = here?.mod === "herdr-inline-markdown" ? fileOf(shared("herdr-inline-markdown.panes")?.[here.pane]) : null;
+    const file = here?.mod === MOD ? fileOf(shared(PANES)?.[here.pane]) : null;
     if (file) return { folder: dirname(file.path), machine: file.machine };
     return { folder: here?.cwd || f?.cwd || space?.folder || "", machine: space?.machine ?? null };
   }
@@ -144,8 +144,8 @@ export class Picker {
 
   // The files shown in the focused tab's Markdown panes. Choosing one only goes to its pane, so Enter skips them.
   openInTab() {
-    const known = shared("herdr-inline-markdown.panes") ?? {}, tab = focused()?.tab;
-    return new Set(panes().filter(p => p.tab === tab && p.mod === "herdr-inline-markdown" && known[p.pane]).map(p => known[p.pane]));
+    const known = shared(PANES) ?? {}, tab = focused()?.tab;
+    return new Set(panes().filter(p => p.tab === tab && p.mod === MOD && known[p.pane]).map(p => known[p.pane]));
   }
 
   isOpenHere(file) {
@@ -168,7 +168,7 @@ export class Picker {
   }
 
   room() {
-    return Math.max(1, Math.floor((this.listHeight ?? ROW * ROOM) / ROW) - (this.status() ? 1 : 0));
+    return Math.max(1, Math.floor((this.listHeight ?? ROW_H * ROWS_BEFORE_MEASURED) / ROW_H) - (this.status() ? 1 : 0));
   }
 
   disabled(row) {
@@ -217,11 +217,11 @@ export class Picker {
 
   move(step) {
     const rows = this.rows(), at = (this.cursor(rows) + step + rows.length) % rows.length, room = this.room();
-    let top = Math.floor(this.scroll / ROW);
+    let top = Math.floor(this.scroll / ROW_H);
     if (at < top) top = at;
     else if (at >= top + room) top = at - room + 1;
     this.at = at;
-    this.scroll = top * ROW;
+    this.scroll = top * ROW_H;
   }
 
   row(t, row, on) {
@@ -229,7 +229,7 @@ export class Picker {
     const name = file ? basename(row.entry.path) : row.kind === "new" ? "New note" : `Create ${row.name}`;
     const dir = file && row.entry.path.includes("/") ? dirname(row.entry.path) : "";
     const hint = off ? `Creating files on ${this.machine} isn't supported yet` : row.kind === "new" ? uniqueName(this.entries().taken) : dir;
-    return h_flex().id(row.id).h(ROW).flex_none().px(10).gap(10).items_center().rounded(7).text_color(off ? t.dim : t.foreground)
+    return h_flex().id(row.id).h(ROW_H).flex_none().px(10).gap(10).items_center().rounded(7).text_color(off ? t.dim : t.foreground)
       .when(on, el => el.bg(t.selected))
       .when(!off, el => el.cursor_pointer().on_click((_e, cx) => this.choose(row, cx)))
       .when(off, el => el.cursor_default())
@@ -249,8 +249,8 @@ export class Picker {
 
   render() {
     const t = theme(), rows = this.rows(), at = this.cursor(rows), status = this.status(), room = this.room();
-    this.scroll = clamp(this.scroll, 0, Math.max(0, rows.length - room) * ROW);
-    const top = Math.floor(this.scroll / ROW);
+    this.scroll = clamp(this.scroll, 0, Math.max(0, rows.length - room) * ROW_H);
+    const top = Math.floor(this.scroll / ROW_H);
     // A name that can't be used is only worth a word when nothing matches the query either.
     const named = this.query.trim() && !rows.some(r => r.kind === "file") ? newFileName(this.query).error : null;
     const note = this.problem ?? named;
@@ -277,15 +277,13 @@ export class Picker {
           cx.notify();
         })
         .on_scroll_wheel((e, cx) => {
-          this.scroll = clamp(this.scroll - e.delta.y, 0, Math.max(0, this.rows().length - this.room()) * ROW);
+          this.scroll = clamp(this.scroll - e.delta.y, 0, Math.max(0, this.rows().length - this.room()) * ROW_H);
           cx.notify();
         })
         .children(rows.slice(top, top + room).map((row, i) => this.row(t, row, top + i === at)))
-        .when(Boolean(status), el => el.child(div().id("mdp-status").h(ROW).flex_none().px(10).flex().items_center().text_size(12).text_color(status.bad ? t.blocked : t.dim).child(status.text))))
+        .when(Boolean(status), el => el.child(div().id("mdp-status").h(ROW_H).flex_none().px(10).flex().items_center().text_size(12).text_color(status.bad ? t.blocked : t.dim).child(status.text))))
       .child(h_flex().id("mdp-footer").flex_none().gap(12).text_size(11).text_color(t.dim)
         .child(div().flex_none().child(HINTS[this.place]))
         .child(div().flex_1().min_w(0).truncate().text_right().child(this.machine && where ? `${this.machine}: ${where}` : where)));
   }
 }
-
-export default Picker;

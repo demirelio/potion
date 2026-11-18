@@ -1,7 +1,8 @@
 // Pure helpers for the Markdown reader/editor and its picker. No imports from herdr or gpui-*: node tests load this file as it is.
 import { IMAGE_ITEM, IMAGE_ONLY, pictureSpans } from "./blocks.js";
 
-export const MARKDOWN_EXT = /\.(md|markdown|mdown|mkd|mkdn|mdx)$/i;
+const MARKDOWN_EXTENSIONS = ["md", "markdown", "mdown", "mkd", "mkdn", "mdx"];
+export const MARKDOWN_EXT = new RegExp(`\\.(?:${MARKDOWN_EXTENSIONS.join("|")})$`, "i");
 export const isMarkdown = name => MARKDOWN_EXT.test(String(name ?? ""));
 
 // 16 lowercase hex chars from two 32-bit lanes (cyrb53's mixing, both lanes kept). Stable across runs and engines.
@@ -119,7 +120,6 @@ export function picturesOf(content) {
   }));
 }
 
-// What names a picture where its markdown can't show: its alt text, else its file's name.
 export const pictureName = p => p.alt || basename(p.src) || "Picture";
 
 const NOT_AN_ADDRESS = "Not a picture address";
@@ -270,7 +270,7 @@ export const markdownPathsFromFind = stdout => pathsFrom(stdout, 1000);
 // For a folder that is not in git; skips node_modules, .git, hidden folders, Library and .cache. Run as
 // exec("sh", ["-c", FIND_SCRIPT], { cwd }). The pipeline's exit status is tr's, so unreadable folders do not fail it.
 export const FIND_SCRIPT = "find . -maxdepth 5 \\( -name node_modules -o -name .git -o -name Library -o -name .cache -o -name '.?*' \\) -prune -o -type f \\( "
-  + ["md", "markdown", "mdown", "mkd", "mkdn", "mdx"].map(e => `-iname '*.${e}'`).join(" -o ")
+  + MARKDOWN_EXTENSIONS.map(e => `-iname '*.${e}'`).join(" -o ")
   + " \\) -print 2>/dev/null | head -n 1000 | sed 's|^\\./||' | tr '\\n' '\\0'";
 
 export const stats = text => {
@@ -354,30 +354,9 @@ export function sourceSplice(map, { at, removed, inserted }, eol, prev = "") {
 
 export const remember = (list, item, same, max) => [item, ...(list ?? []).filter(x => !same(x, item))].slice(0, max);
 
-// The last `max` keys, in insertion order, as a new object.
 export function trimMap(obj, max) {
   const entries = Object.entries(obj ?? {});
   return Object.fromEntries(entries.length > max ? entries.slice(entries.length - max) : entries);
-}
-
-// [r, g, b] from "#rgb", "#rgba", "#rrggbb" or "#rrggbbaa" (the alpha is dropped), else null.
-function channels(color) {
-  const m = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(typeof color === "string" ? color.trim() : "");
-  if (!m) return null;
-  const h = m[1].length <= 4 ? m[1].replace(/./g, "$&$&") : m[1];
-  return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
-}
-// Perceived brightness of 128 or more (of 255); a color that is not hex counts as dark.
-export function isLight(color) {
-  const c = channels(color);
-  return c ? (c[0] * 299 + c[1] * 587 + c[2] * 114) / 1000 >= 128 : false;
-}
-// `t` is 0..1. Either color not hex: `a` as it is.
-export function mix(a, b, t) {
-  const x = channels(a), y = channels(b);
-  if (!x || !y) return a;
-  const w = Math.min(1, Math.max(0, Number(t) || 0));
-  return `#${x.map((v, i) => Math.round(v + (y[i] - v) * w).toString(16).padStart(2, "0")).join("")}`;
 }
 
 const DIAGRAMS = ["flowchart", "sequence", "class", "state", "er", "gantt", "pie", "journey", "timeline", "mindmap", "gitGraph", "xyChart"];
@@ -390,7 +369,6 @@ export const mermaidConfig = () => ({
 
 // The Live Editor's dark canvas; `dot` is its grid dot, rgba(70, 70, 70, 0.275), laid over the canvas.
 export const DIAGRAM_COLORS = { canvas: "#020817", dot: "#151924", edge: "#1e293b", node: "#0f172a", line: "#94a3b8", text: "#f8fafc" };
-export const diagramCanvas = () => DIAGRAM_COLORS.canvas;
 
 export const diagramKey = (source, configJson, version) => hash(`${version}\0${configJson}\0${source}`);
 export const sharpName = (key, background, scale) => `${key}-${hash(background).slice(0, 6)}-x${Math.round(scale * 100)}`;

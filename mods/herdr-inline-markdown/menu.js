@@ -37,5 +37,3 @@ export class Menu {
         .child(div().flex_1().min_w(0).truncate().child("Open as new tab")));
   }
 }
-
-export default Menu;

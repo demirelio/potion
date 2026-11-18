@@ -22,7 +22,6 @@ function trimmed(value, start, end) {
   return s === e ? { start, end: start } : { start: s, end: e };
 }
 
-// -> the word holding offset `at`, null when `at` is not inside one.
 export function wordAround(value, at) {
   const before = WORD_BEFORE.exec(value.slice(0, at))?.[0].length ?? 0, after = WORD_AFTER.exec(value.slice(at))?.[0].length ?? 0;
   return before && after ? { start: at - before, end: at + after } : null;
@@ -46,29 +45,25 @@ function restyled(value, range, op, defs) {
   return sel.caret >= 0 ? caretAt(out.value, out.caret) : { value: out.value, start: out.start, end: out.end };
 }
 
-// `mark`: "bold" | "italic" | "strike" | "underline" | "code" | "highlight". `range`: the field's selection, in UTF-16
-// offsets of `value`. `defs`: the document's link reference definitions.
+// `mark`: one of MARKS. `range`: the field's selection. `defs`: the document's link reference definitions.
 // -> { value, start, end }, the field's value and selection after the key, or null when nothing changes. Every
-// character of the selection gets the mark, unless every one has it, when it comes off them all; the selection stays on
-// them. A caret in a word acts on the word and keeps its place in it; at a caret elsewhere nothing changes.
+// character of the selection gets the mark, unless every one has it, when it comes off them all. A caret in a word acts
+// on the word and keeps its place in it.
 export function toggleMark(value, range, mark, { defs } = {}) {
   return MARKS.has(mark) ? restyled(value, range, { mark }, defs) : null;
 }
 
-// -> { value, start, end }: `mark` (as toggleMark names it, not "link") on every character of the selection, or the word
-// holding the caret, when `on`, else off all of them; null when nothing changes.
+// toggleMark's answer with the mark put on when `on`, else taken off.
 export function setMark(value, range, mark, on, { defs } = {}) {
   return MARKS.has(mark) ? restyled(value, range, { mark, on: Boolean(on) }, defs) : null;
 }
 
-// -> { value, start, end }: every character of the selection (or the word holding the caret) in text colour `name`, one
-// of TEXT_COLORS, or "default" for none; null when nothing changes.
+// toggleMark's answer for text colour `name`, one of TEXT_COLORS, or "default" for none.
 export function setColor(value, range, name, { defs } = {}) {
   if (name !== "default" && !TEXT_COLORS.includes(name)) return null;
   return restyled(value, range, { color: name }, defs);
 }
 
-// The formatting of each character of the selection (or of the word holding the caret).
 function looksOf(value, range, defs) {
   const sel = actedOn(value, range);
   return sel.start === undefined ? [] : looksIn(value, sel, { defs });
