@@ -7,6 +7,17 @@ stays plain markdown that you, your agents and any other tool can read.
 
 _The notes and chats in these pictures are made up. [docs/REFERENCE.md](docs/REFERENCE.md) has every detail._
 
+## Sponsor
+
+<a href="https://thewildmagic.com">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/wildmagic-dark.svg">
+    <img src="docs/media/wildmagic.svg" height="40" alt="Wildmagic">
+  </picture>
+</a>
+
+[Wildmagic](https://thewildmagic.com) sponsors this project.
+
 ## Features
 
 ### No markdown while you write

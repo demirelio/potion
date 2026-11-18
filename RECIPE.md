@@ -6,6 +6,7 @@ can read. Open the plan an agent is writing and it fills in as the lines land; y
 agent's unless the two touch. Comments are saved in the file as CriticMarkup with their time, so the agent finds them
 next to the words they are about. Table column widths and dropped pictures stay with the file too, and mermaid blocks
 are drawn as diagrams. `cmd-m` finds or makes a note in a new tab, `cmd-shift-m` beside the pane you are in.
+Sponsored by [Wildmagic](https://thewildmagic.com).
 
 ![Potion Markdown for Herdr](preview.png)
 
