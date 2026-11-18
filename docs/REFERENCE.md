@@ -7,8 +7,7 @@ you type. It opens beside your terminals in the current tab, or in a tab of its 
 plans an agent writes into a file as they appear, and for writing notes next to your terminals.
 
 This is the long version of the [README](../README.md), which has the short one: what Potion is, what it can do, how to
-install it and which keys it binds. The notes for publishing the repo are in
-[before-open-sourcing.md](before-open-sourcing.md).
+install it and which keys it binds.
 
 ## Contents
 

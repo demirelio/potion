@@ -3,7 +3,7 @@
 A Markdown editor in a Herdr pane, next to your terminals and agents. You write on the rendered page, and the file
 stays plain markdown that you, your agents and any other tool can read.
 
-![Herdr with an agent chat on the left that has just written a plan, and the plan open in Potion on the right: a heading, formatted text with a comment card in the margin, a table, ticked tasks and a drawn diagram](preview.png)
+![Potion Markdown for Herdr: write on the rendered page, and the file stays plain markdown your agents can read. Below it, Herdr with an agent's chat beside the plan it wrote, open in Potion with a comment card in the margin, a table, ticked tasks and a drawn diagram](preview.png)
 
 _The notes and chats in these pictures are made up. [docs/REFERENCE.md](docs/REFERENCE.md) has every detail._
 
