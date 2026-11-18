@@ -675,10 +675,6 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
   hour. The repo needs a `RECIPE.md` (the brief another agent builds the mod from: what you see, how it behaves, what
   it is built from, what to watch out for) and a `preview.png` screenshot; the folder layout (`mods/<name>/` and
   `keys.json`) is already the one Herdr expects.
-- **Choose a license** and add `LICENSE`. `package.json` is `"private": true` and carries no author or license.
-  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists the bundled icons and the test fixtures taken from the
-  CommonMark and GFM specs, which are CC BY-SA 4.0: they are test data only, but decide whether that fits the license
-  you pick.
 - **Check the claims about Herdr.** Every patch and the install paths were made for Herdr 0.1.12. The patches were
   checked by applying them to copies of that version's shipped mods, also with the `mods/<name>/` asset paths
   rewritten the way a clone does it (simulated, not cloned by Herdr), and by loading the mod against test mocks;
@@ -699,4 +695,9 @@ rewrites them on every start), and skip when the files there are not exactly 0.1
   or build it.
 - **`cmd-m` is the macOS shortcut for minimizing a window**, and `install.sh` binds it by default (unless it is
   taken). Pick another default, or make the keys opt-in.
-- **No LICENSE, CHANGELOG, CI or issue templates yet.**
+- **No CHANGELOG, CI or issue templates yet.**
+
+## License
+
+[MIT](LICENSE). The bundled icons and the CommonMark and GFM spec examples used as test data keep their own licenses;
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists them.
