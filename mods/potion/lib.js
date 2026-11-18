@@ -273,6 +273,10 @@ export const FIND_SCRIPT = "find . -maxdepth 5 \\( -name node_modules -o -name .
   + MARKDOWN_EXTENSIONS.map(e => `-iname '*.${e}'`).join(" -o ")
   + " \\) -print 2>/dev/null | head -n 1000 | sed 's|^\\./||' | tr '\\n' '\\0'";
 
+// exec("sh", ["-c", EXISTING_SCRIPT, "sh", ...paths]) prints the paths that exist, NUL-separated (existingFrom).
+export const EXISTING_SCRIPT = 'for f; do [ -e "$f" ] && printf "%s\\0" "$f"; done; exit 0';
+export const existingFrom = stdout => new Set(String(stdout ?? "").split("\0").filter(Boolean));
+
 export const stats = text => {
   const s = String(text ?? "");
   if (!s) return { words: 0, lines: 0 };

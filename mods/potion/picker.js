@@ -1,7 +1,7 @@
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, home, props, shared, setShared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
-import { FIND_SCRIPT, basename, dirname, fileKey, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
+import { EXISTING_SCRIPT, FIND_SCRIPT, basename, dirname, existingFrom, fileKey, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
 import { MOD, PANES, RECENT, openMarkdown } from "./open.js";
 import { withAlpha } from "./colors.js";
 
@@ -106,6 +106,10 @@ export class Picker {
       if (!this.home) throw new Error(`Can't reach ${this.machine}`);
       this.folder = normalizePath(this.home);
     }
+    await Promise.all([this.list(), this.forgetGone()]);
+  }
+
+  async list() {
     const { folder, machine: on } = this;
     try {
       // In a repository git knows the files (and leaves out what .gitignore does); anywhere else, look around.
@@ -117,11 +121,29 @@ export class Picker {
     this.files = markdownPathsFromFind(r.stdout);
   }
 
+  // A recent file deleted since it was opened leaves the list, and the saved list, once its machine says so. The folder
+  // listing can't tell: it leaves out the files git ignores. A machine that can't be asked keeps the list as it is.
+  async forgetGone() {
+    const paths = this.recent.map(r => r.path);
+    if (!paths.length) return;
+    let alive;
+    try {
+      const r = await exec("sh", ["-c", EXISTING_SCRIPT, "sh", ...paths], { on: this.machine });
+      if (r.code !== 0) return;
+      alive = existingFrom(r.stdout);
+    } catch { return; }
+    const gone = new Set(paths.filter(p => !alive.has(p)));
+    if (!gone.size) return;
+    this.recent = this.recent.filter(r => !gone.has(r.path));
+    const saved = shared(RECENT);
+    if (Array.isArray(saved)) setShared(RECENT, saved.filter(r => !(r && (r.machine ?? null) === this.machine && gone.has(r.path))));
+  }
+
   // Recent files come first, also those outside the folder. `path` is what the row shows and the query matches:
   // relative to the folder when inside it, else with "~".
   entries() {
     const c = this.cache;
-    if (c && c.files === this.files && c.folder === this.folder && c.home === this.home) return c;
+    if (c && c.files === this.files && c.recent === this.recent && c.folder === this.folder && c.home === this.home) return c;
     const { folder } = this, prefix = folder === "/" ? "/" : `${folder}/`, seen = new Set(), list = [];
     const add = (file, recent) => {
       if (seen.has(file)) return;
@@ -131,7 +153,7 @@ export class Picker {
     };
     for (const r of this.recent) add(r.path, true);
     if (folder) for (const path of this.files) add(joinPath(folder, path), false);
-    this.cache = { files: this.files, folder, home: this.home, list, taken: new Set(list.filter(e => e.inside && !e.path.includes("/")).map(e => e.path)) };
+    this.cache = { files: this.files, recent: this.recent, folder, home: this.home, list, taken: new Set(list.filter(e => e.inside && !e.path.includes("/")).map(e => e.path)) };
     return this.cache;
   }
 

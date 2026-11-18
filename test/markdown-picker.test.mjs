@@ -9,7 +9,7 @@ import { makeCx, fire_timers, space, must } from "./helpers.mjs";
 const { Picker } = await import("../mods/potion/picker.js");
 const { fileKey } = await import("../mods/potion/lib.js");
 const { withAlpha } = await import("../mods/potion/colors.js");
-const { FIND_SCRIPT } = await import("../mods/potion/lib.js");
+const { EXISTING_SCRIPT, FIND_SCRIPT } = await import("../mods/potion/lib.js");
 
 const FOLDER = "/home/user/Projects/herdr";
 const NUL = list => list.map(p => `${p}\0`).join("");
@@ -17,8 +17,13 @@ const FILES = ["README.md", "docs/plan.md", "docs/notes/ideas.markdown", "src/ap
 
 // exec() for a folder: `git` is the files git lists, 128 for "not a repository", null for git not installed;
 // `find` is what the plain search lists. Every call is also in calls.exec.
-function fakeExec({ git = [], find: found = [], home = "/home/dev", mkdir = 0 } = {}) {
+// `gone`: paths that no longer exist (null: the check itself fails).
+function fakeExec({ git = [], find: found = [], home = "/home/dev", mkdir = 0, gone = [] } = {}) {
   return async (command, args, options) => {
+    if (command === "sh" && args[1] === EXISTING_SCRIPT) {
+      if (gone === null) throw new Error(`machine ${options.on} is unreachable`);
+      return { code: 0, stdout: NUL(args.slice(3).filter(p => !gone.includes(p))), stderr: "" };
+    }
     if (command === "git") {
       if (git === null) throw new Error("spawn git ENOENT");
       if (typeof git === "number") return { code: git, stdout: "", stderr: "fatal: not a git repository" };
@@ -36,6 +41,9 @@ function fakeExec({ git = [], find: found = [], home = "/home/dev", mkdir = 0 } 
     throw new Error(`unexpected command ${command}`);
   };
 }
+
+// The check of which recent files still exist answers at once that all do; every other call goes to `exec`.
+const recentAlive = exec => (command, args, options) => (command === "sh" && args[1] === EXISTING_SCRIPT ? fakeExec()(command, args, options) : exec(command, args, options));
 
 beforeEach(() => reset({ spaces: [space("s1", "herdr", { folder: FOLDER, active: true })], exec: fakeExec({ git: FILES }) }));
 
@@ -375,7 +383,7 @@ test("with every listed file already open in the tab, the highlight stays on the
   state.shared["potion.panes"] = { pm: fileKey(null, `${FOLDER}/docs/plan.md`) };
   state.panes = [{ pane: "pm", terminal: null, tab: "tb1", cwd: null, focused: true, mod: "potion" }];
   state.focused = { space: "s1", tab: "tb1", pane: "pm", terminal: null, shown: null, agent: null, cwd: null };
-  state.exec = async () => ({ code: 0, stdout: "", stderr: "" });
+  state.exec = recentAlive(async () => ({ code: 0, stdout: "", stderr: "" }));
   const { tree } = await mount();
   assert.deepEqual(highlighted(tree()), ["mdp-file-0"]);
 });
@@ -430,6 +438,29 @@ test("a recent file outside the folder does not count as the listed file a Creat
   type(view, "~/x.md");
   assert.equal(row(tree(), "mdp-file-0"), "x.md ~ recent");
   assert.equal(row(tree(), "mdp-create"), "Create ~/x.md");
+});
+
+test("a recent file deleted since it was opened leaves the list and the saved list; its name can be created again", async () => {
+  const kept = { machine: null, path: `${FOLDER}/docs/plan.md` }, elsewhere = { machine: "devbox", path: `${FOLDER}/standup.md` };
+  state.shared["potion.recent"] = [{ machine: null, path: `${FOLDER}/standup.md` }, kept, { machine: null, path: `${FOLDER}/untitled.md` }, elsewhere];
+  state.exec = fakeExec({ git: FILES, gone: [`${FOLDER}/standup.md`, `${FOLDER}/untitled.md`] });
+  const { view, tree } = await mount();
+  const check = calls.exec.find(c => c.args[1] === EXISTING_SCRIPT);
+  assert.deepEqual([check.args.slice(3), check.options.on], [[`${FOLDER}/standup.md`, kept.path, `${FOLDER}/untitled.md`], null], "this machine's recent files, asked on it");
+  assert.ok(!rowIds(tree()).some(id => row(tree(), id).startsWith("standup.md")), "the deleted file is not listed");
+  assert.equal(row(tree(), "mdp-new"), "New note untitled.md", "a deleted untitled.md is a free name again");
+  assert.deepEqual(state.shared["potion.recent"], [kept, elsewhere], "another machine's entry stays");
+  type(view, "standup");
+  assert.equal(row(tree(), "mdp-create"), "Create standup.md");
+});
+
+test("recent files stay as they are when their machine can't say which still exist", async () => {
+  const recent = [{ machine: null, path: `${FOLDER}/docs/plan.md` }];
+  state.shared["potion.recent"] = recent;
+  state.exec = fakeExec({ git: FILES, gone: null });
+  const { tree } = await mount();
+  assert.equal(row(tree(), "mdp-file-0"), "plan.md docs recent");
+  assert.deepEqual(state.shared["potion.recent"], recent);
 });
 
 test("Down and Up move the highlight and wrap around, stopping the key", async () => {
@@ -852,7 +883,7 @@ test("New note stays above the list; only the files that fit are drawn, and the 
 
 test("the status line takes one of the list's rows", async () => {
   let finish;
-  state.exec = () => new Promise(resolve => { finish = resolve; });
+  state.exec = recentAlive(() => new Promise(resolve => { finish = resolve; }));
   state.shared["potion.recent"] = Array.from({ length: 6 }, (_, i) => ({ machine: null, path: `${FOLDER}/r${i}.md` }));
   const { cx, tree } = await mount({ settle: false });
   fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 * 4 }, cx);
