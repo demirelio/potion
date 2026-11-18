@@ -111,11 +111,11 @@ Coming from the bindings of an earlier version (`cmd-m` and `cmd-shift-m` sent t
 
 ### Panes and tabs
 
-- By default a file opens as a new pane to the right of the focused pane, so it sits next to the terminal in the same
-  tab. The file already shown in a pane of that tab gets the focus instead of a second pane.
-- In a tab of its own it opens from `cmd-m`, or from a shift+click or a right-click and "Open as new tab" (added by
-  the integrations); `cmd-shift-m` opens one beside the focused pane. A file that already has a Markdown tab goes to
-  that tab, in whichever space it is.
+- `cmd-m` opens the chosen file in a tab of its own, as do a shift+click and a right-click and "Open as new tab"
+  (added by the integrations). A file that already has a Markdown tab goes to that tab, in whichever space it is.
+- `cmd-shift-m`, a link to another markdown file in a note, and a click on a `.md` file in the file panel (an
+  integration) open it as a new pane to the right of the focused pane, next to the terminal in the same tab. The file
+  already shown in a pane of that tab gets the focus instead of a second pane.
   A tab whose panes are all Markdown is a **Markdown tab**: it renames, moves and closes like any other.
 - **The file picker** lists the markdown files of the folder of the focused pane (from a Markdown pane, its file's
   folder), else of the space's. Type to filter, Up and Down to move, Enter to open; recent files come first.
@@ -151,7 +151,7 @@ gives way to the pane's header, which shows the same file name and toggle.
 - **Footer:** save state, words and lines, the number of [comments](#comments), the diagram status, and the path with
   `~` for the home folder.
 - **Limits:** a file over 1 MiB (Herdr's `readTextFile` limit) or an unreadable one shows a message instead of its
-  text; one over 200 KB says Loading… for a moment while its page is made. A file holding a character the text field
+  text; one over 200 KiB says Loading… for a moment while its page is made. A file holding a character the text field
   cannot hold (a lone UTF-16 surrogate) opens read-only. A file on another machine is read-only for now: it reloads by
   checking every 5 s, a click never edits, and Markdown shows its source read-only.
 - **What it runs:** `git ls-files` in the folder to list markdown files (tracked and untracked, not ignored; at most
@@ -547,20 +547,20 @@ is text.
 
 ### Diagrams
 
-Fenced blocks tagged `mermaid` are drawn as pictures in Reading, in the colors of the current Herdr theme. Herdr can't
+Fenced blocks tagged `mermaid` are drawn as pictures in Reading, in Mermaid's dark `redux-dark-color` theme, whatever
+the Herdr theme. Herdr can't
 draw mermaid itself, so `tools/mermaid` holds a small renderer: mermaid-cli 12.2.0 driving a headless Chrome, set up
 by `install.sh`. Without it the footer says "Diagrams need the mermaid renderer: run install.sh" and a diagram shows as
 a code block; without Node.js it says "Diagrams need Node.js".
 
-Each diagram is drawn once per text, theme and renderer version, and the picture is kept in
+Each diagram is drawn once per text and renderer version, and the picture is kept in
 `~/.config/herdr-app/data/potion/diagrams/` (`.mmd` source, `.png`, `.json` result; the renderer deletes
 entries older than 45 days, and the folder can be emptied by hand at any time). The diagrams of a document are drawn
 together, one Chrome start per batch. A diagram with a syntax error shows mermaid's message in its place, over the
 last good picture if there was one.
 
-A diagram sits in a frame, on a canvas a shade lighter than the page (a shade darker on a light theme). A wide one
-leaves the text column and takes the pane's width, less 32 px on each side; a tall one takes the page's height, less
-24 px above and below. It opens at a size you can read: all of it when that is 75 % or more, else its full width, but
+A diagram sits in a frame, on a dark dotted canvas (`#020817`). A wide one leaves the text column and takes the pane's
+width, less 32 px on each side; a tall one is at most 70 % of the pane's height (and at least 120 px). It opens at a size you can read: all of it when that is 75 % or more, else its full width, but
 never under 75 % or over 100 % (mermaid's own size).
 
 - **Move it:** drag it, or swipe sideways over it. Scrolling up or down over a diagram taller than its frame goes

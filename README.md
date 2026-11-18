@@ -3,7 +3,7 @@
 A Markdown editor in a Herdr pane, next to your terminals and agents. You write on the rendered page, and the file
 stays plain markdown that you, your agents and any other tool can read.
 
-![Herdr with an agent chat on the left and a Potion pane on the right, showing the note King tide alerts: a heading, text with bold and italic, a two-column table, a task list with one item ticked and the top of a drawn diagram](preview.png)
+![Herdr with an agent chat on the left that has just written a plan, and the plan open in Potion on the right: a heading, formatted text with a comment card in the margin, a table, ticked tasks and a drawn diagram](preview.png)
 
 _The notes and chats in these pictures are made up. [docs/REFERENCE.md](docs/REFERENCE.md) has every detail._
 
@@ -19,8 +19,9 @@ when you close it. The file on disk stays ordinary markdown.
 
 ### Watch an agent's plan as it is written
 
-Open the file an agent is writing and the page fills in as the lines land. If you are editing the same file, its
-changes are merged into yours. You are only asked when you both changed the same lines.
+Open the file an agent is writing and the page fills in as the lines land. If you are editing it too, the agent's
+change is merged into yours as long as it stays clear of the part you changed. When the two touch, you pick which to
+keep.
 
 ![A plan file beside an agent chat: lines are appended to the file one by one and the page fills in as they land, with the word and line counts rising](docs/media/live.gif)
 
@@ -71,9 +72,9 @@ Click a box to tick it.
 
 ![Three clicks on empty boxes of a task list tick three items, each getting a check and a strikethrough](docs/media/tasks.gif)
 
-### Diagrams in your theme
+### Diagrams on the page
 
-Mermaid blocks are drawn as diagrams, in the colours of your Herdr theme. Double-click one to edit its source.
+Mermaid blocks are drawn as diagrams right in the note. Double-click one to edit its source.
 
 ![Picking Mermaid diagram from the slash menu, typing a three-node flowchart line by line, and the diagram being drawn when the cursor leaves the block](docs/media/diagram.gif)
 
