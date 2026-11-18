@@ -1,4 +1,4 @@
-import { div, svg } from "gpui-kit";
+import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, home, props, shared, setShared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
 import { FIND_SCRIPT, basename, dirname, fileKey, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
@@ -7,11 +7,12 @@ import { MOD, PANES, RECENT, openMarkdown } from "./open.js";
 // A picker that opens closes the one named here, so one is open at a time; the cmd-shift-m mod reads it to close the
 // picker it opened itself. Shared state is persisted, so a name left by a quit is of an overlay Herdr no longer has.
 const OPEN_PICKER = "potion.picker";
-const ROW_H = 32, ROWS_BEFORE_MEASURED = 8;
-const HINTS = {
-  pane: "↑↓ to move · ↵ to open beside · esc to close",
-  tab: "↑↓ to move · ↵ to open in a new tab · esc to close",
+const ROW_H = 30, ROWS_BEFORE_MEASURED = 8, FIELD_H = 32;
+const KEYS = {
+  pane: [["↑↓", "move"], ["↵", "open beside"], ["esc", "close"]],
+  tab: [["↑↓", "move"], ["↵", "open in a new tab"], ["esc", "close"]],
 };
+const ICON = name => `mods/potion/${name}.svg`;
 const why = e => String(e?.message ?? e);
 const clamp = (n, low, high) => Math.max(low, Math.min(n, high));
 
@@ -42,10 +43,7 @@ export class Picker {
     this.query = ""; this.at = null; this.scroll = 0; this.listHeight = null;
 
     this.input = InputState.new({ placeholder: "Find or create a markdown file…" });
-    this.input.on("change", (_e, cx) => {
-      this.query = this.input.value(); this.at = null; this.scroll = 0; this.problem = null;
-      cx.notify();
-    });
+    this.input.on("change", (_e, cx) => this.typed(cx));
     this.input.on("submit", (_e, cx) => { const rows = this.rows(); this.choose(rows[this.cursor(rows)], cx); });
     this.input.focus();
     this.refocus = cx.timer.after(600, () => { if (!this.closed) this.input.focus(); });
@@ -60,6 +58,11 @@ export class Picker {
       done();
       if (!this.closed) cx.notify();
     })));
+  }
+
+  typed(cx) {
+    this.query = this.input.value(); this.at = null; this.scroll = 0; this.problem = null;
+    cx.notify();
   }
 
   close() {
@@ -229,7 +232,8 @@ export class Picker {
     const name = file ? basename(row.entry.path) : row.kind === "new" ? "New note" : `Create ${row.name}`;
     const dir = file && row.entry.path.includes("/") ? dirname(row.entry.path) : "";
     const hint = off ? `Creating files on ${this.machine} isn't supported yet` : row.kind === "new" ? uniqueName(this.entries().taken) : dir;
-    return h_flex().id(row.id).h(ROW_H).flex_none().px(10).gap(10).items_center().rounded(7).text_color(off ? t.dim : t.foreground)
+    const open = file && this.isOpenHere(row.entry.file), tag = open ? "open" : file && row.entry.recent ? "recent" : null;
+    return h_flex().id(row.id).h(ROW_H).flex_none().px(10).gap(9).items_center().rounded(7).text_size(12.8).text_color(off ? t.dim : t.foreground)
       .when(on, el => el.bg(t.selected))
       .when(!off, el => el.cursor_pointer().on_click((_e, cx) => this.choose(row, cx)))
       .when(off, el => el.cursor_default())
@@ -240,11 +244,46 @@ export class Picker {
         this.at = i;
         cx.notify();
       })
-      .child(svg(file ? "mods/potion/markdown.svg" : "mods/potion/file-plus.svg").size(14).flex_none().text_color(t.muted))
-      .child(div().flex_none().max_w(320).truncate().font_semibold().child(name))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(hint))
-      .when(file && (row.entry.recent || this.isOpenHere(row.entry.file)), el => el.child(div().flex_none().text_size(11).text_color(t.dim)
-        .child(this.isOpenHere(row.entry.file) ? "open" : "recent")));
+      .child(svg(file ? ICON("markdown") : ICON("file-plus")).size(14).flex_none().text_color(on ? t.foreground : t.muted))
+      .child(div().flex_none().max_w(300).truncate().font_medium().child(name))
+      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(hint))
+      .when(Boolean(tag), el => el.child(div().flex_none().h(18).px(7).flex().items_center().rounded_full().text_size(10.5).font_medium()
+        .when(open, el => el.border_1().border_color(t.accent).text_color(t.accent))
+        .when(!open, el => el.bg(t.raised).text_color(t.muted))
+        .child(tag)));
+  }
+
+  header(t) {
+    const where = this.folder ? tildePath(this.folder, this.home) : "", place = this.machine && where ? `${this.machine}: ${where}` : where;
+    return h_flex().id("mdp-header").h(46).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(image(ICON("file-markdown")).w(16).h(16).flex_none())
+      .child(div().flex_none().text_size(14).font_semibold().child("Potion"))
+      .child(div().flex_none().text_size(14).text_color(t.muted).child("Markdown"))
+      .child(div().flex_1())
+      .when(Boolean(place), el => el.child(h_flex().id("mdp-folder").min_w(0).max_w(300).h(26).px(10).gap(6).items_center().rounded_full()
+        .border_1().border_color(t.input).text_size(12).font_medium().text_color(t.muted).tooltip(place)
+        .child(svg(ICON("folder")).size(13).flex_none())
+        .child(div().min_w(0).truncate().child(place))));
+  }
+
+  search(t) {
+    const words = this.query !== "";
+    return div().id("mdp-search").relative().flex_none().mx(12).mt(12).mb(6)
+      .child(Input.new(this.input).h(FIELD_H).pl(34).pr(words ? FIELD_H : 14).rounded_full().border_1().border_color(words ? t.accent : t.input)
+        .bg(t.background).text_size(13).text_color(t.foreground))
+      .child(svg(ICON("search")).absolute().left(13).top(9).size(14).text_color(t.dim))
+      .when(words, el => el.child(div().id("mdp-clear").absolute().right(6).top(6).size(20).flex().items_center().justify_center().rounded_full()
+        .cursor_pointer().tooltip("Clear").text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
+        .on_click((_e, cx) => { this.input.set_value(""); this.typed(cx); this.input.focus(); })
+        .child(svg(ICON("x")).size(12).flex_none())));
+  }
+
+  footer(t) {
+    return h_flex().id("mdp-footer").h(36).flex_none().px(14).gap(14).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
+      .children(KEYS[this.place].map(([key, what]) => h_flex().flex_none().gap(6).items_center()
+        .child(div().h(18).min_w(18).px(5).flex().items_center().justify_center().rounded(5).border_1().border_color(t.input).bg(t.background)
+          .text_size(10.5).font_medium().text_color(t.muted).child(key))
+        .child(div().child(what))));
   }
 
   render() {
@@ -254,8 +293,7 @@ export class Picker {
     // A name that can't be used is only worth a word when nothing matches the query either.
     const named = this.query.trim() && !rows.some(r => r.kind === "file") ? newFileName(this.query).error : null;
     const note = this.problem ?? named;
-    const where = this.folder ? tildePath(this.folder, this.home) : "";
-    return v_flex().id("mdp-root").track_focus(this.handle).size_full().min_h(0).p(18).gap(10).bg(t.popover).text_color(t.foreground).text_size(13)
+    return v_flex().id("mdp-root").track_focus(this.handle).size_full().min_h(0).bg(t.popover).text_color(t.foreground).text_size(13)
       .on_key_down((e, cx) => {
         if (e.key === "escape") this.dismiss();
         else if (e.key === "down") this.move(1);
@@ -264,12 +302,10 @@ export class Picker {
         cx.stop_propagation();
         cx.notify();
       })
-      .child(div().text_size(15).font_semibold().child("Potion"))
-      .child(h_flex().h(36).flex_none().px(10).gap(8).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
-        .child(svg("mods/potion/search.svg").size(15).flex_none().text_color(t.dim))
-        .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
-      .when(Boolean(note), el => el.child(div().id("mdp-note").flex_none().text_size(12).text_color(this.problem ? t.blocked : t.dim).child(note)))
-      .child(v_flex().id("mdp-list").flex_1().min_h(0).overflow_hidden()
+      .child(this.header(t))
+      .child(this.search(t))
+      .when(Boolean(note), el => el.child(div().id("mdp-note").flex_none().px(16).pb(4).text_size(12).text_color(this.problem ? t.blocked : t.dim).child(note)))
+      .child(v_flex().id("mdp-list").flex_1().min_h(0).mx(8).my(4).overflow_hidden()
         .on_size_change((size, cx) => {
           const height = size.height / settings().zoom;
           if (height === this.listHeight) return;
@@ -282,8 +318,6 @@ export class Picker {
         })
         .children(rows.slice(top, top + room).map((row, i) => this.row(t, row, top + i === at)))
         .when(Boolean(status), el => el.child(div().id("mdp-status").h(ROW_H).flex_none().px(10).flex().items_center().text_size(12).text_color(status.bad ? t.blocked : t.dim).child(status.text))))
-      .child(h_flex().id("mdp-footer").flex_none().gap(12).text_size(11).text_color(t.dim)
-        .child(div().flex_none().child(HINTS[this.place]))
-        .child(div().flex_1().min_w(0).truncate().text_right().child(this.machine && where ? `${this.machine}: ${where}` : where)));
+      .child(this.footer(t));
   }
 }

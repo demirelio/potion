@@ -195,24 +195,34 @@ test("no folder, no focused pane and a space with no folder means this computer'
   reset({ spaces: [space("s1", "herdr", { folder: "", active: true })], exec: fakeExec({ git: FILES }) });
   const { tree } = await mount({ folder: null });
   assert.equal(calls.exec[0].options.cwd, "/home/user");
-  assert.match(textOf(must(tree(), "mdp-footer")), /~$/);
+  assert.match(textOf(must(tree(), "mdp-folder")), /~$/);
   await mount({ folder: "" });
   assert.equal(calls.exec.at(-1).options.cwd, "/home/user");
 });
 
-test("the footer has the key hints and the folder with ~", async () => {
+test("the header names Potion Markdown and the folder with ~; the footer has the keys", async () => {
   const { tree } = await mount({ folder: `${FOLDER}/` });
-  const footer = textOf(must(tree(), "mdp-footer"));
-  assert.ok(footer.includes("↑↓ to move · ↵ to open in a new tab · esc to close"));
-  assert.ok(footer.endsWith("~/Projects/herdr"), footer);
+  assert.equal(textOf(must(tree(), "mdp-header")).replace(/\s+/g, " ").trim(), "Potion Markdown ~/Projects/herdr");
+  assert.equal(textOf(must(tree(), "mdp-folder")).trim(), "~/Projects/herdr");
+  assert.equal(textOf(must(tree(), "mdp-footer")).trim(), "↑↓ move ↵ open in a new tab esc close");
   assert.equal(calls.exec[0].options.cwd, FOLDER, "a trailing slash is dropped");
+});
+
+test("typing lights the search field and shows its clear button, which empties the field", async () => {
+  const { cx, tree, view } = await mount();
+  assert.equal(find(tree(), "mdp-clear"), null);
+  view.input.type("plan", cx);
+  assert.equal(all(must(tree(), "mdp-search"), n => n.kind === "input")[0].style.border_color, "accent");
+  fire(must(tree(), "mdp-clear"), "on_click", {}, cx);
+  assert.equal(view.query, "");
+  assert.equal(find(tree(), "mdp-clear"), null);
 });
 
 test("the footer's key hint says where Enter opens the file: beside for a pane, in a new tab for a tab, a tab for anything else", async () => {
   const hint = async place => textOf(must((await mount({ props: { place } })).tree(), "mdp-footer"));
-  assert.ok((await hint("pane")).includes("↑↓ to move · ↵ to open beside · esc to close"));
-  assert.ok((await hint("tab")).includes("↑↓ to move · ↵ to open in a new tab · esc to close"));
-  for (const odd of [undefined, "", "split", 3, "PANE"]) assert.ok((await hint(odd)).includes("↵ to open in a new tab"), String(odd));
+  assert.ok((await hint("pane")).includes("↑↓ move ↵ open beside esc close"));
+  assert.ok((await hint("tab")).includes("↑↓ move ↵ open in a new tab esc close"));
+  for (const odd of [undefined, "", "split", 3, "PANE"]) assert.ok((await hint(odd)).includes("↵ open in a new tab"), String(odd));
 });
 
 const FOCUS = { space: "s1", tab: "s1-tab", terminal: null, shown: null, agent: null };
@@ -227,14 +237,14 @@ test("no folder: the folder of the Markdown file the focused pane shows, on that
   focusPane("p2");
   const { tree } = await mount({ folder: null });
   assert.deepEqual([lookedIn().cwd, lookedIn().on], ["/home/user/notes/deep", null]);
-  assert.ok(textOf(must(tree(), "mdp-footer")).endsWith("~/notes/deep"));
+  assert.ok(textOf(must(tree(), "mdp-folder")).endsWith("~/notes/deep"));
 
   state.shared["potion.panes"] = { p2: "devbox:/home/dev/Work/plan.md" };
   state.exec = fakeExec({ git: ["a.md"], home: "/home/dev" });
   calls.exec.length = 0;
   const remote = await mount({ folder: null });
   assert.deepEqual([lookedIn().cwd, lookedIn().on], ["/home/dev/Work", "devbox"]);
-  assert.ok(textOf(must(remote.tree(), "mdp-footer")).endsWith("devbox: ~/Work"));
+  assert.ok(textOf(must(remote.tree(), "mdp-folder")).endsWith("devbox: ~/Work"));
 });
 
 test("no folder: a file at the top of the file system is looked at in /", async () => {
@@ -756,7 +766,7 @@ test("a folder on another machine: asked there, files open with the machine, cre
   const { view, cx, tree } = await mount({ folder: "/home/dev/Work", machine: "devbox" });
   assert.deepEqual(calls.exec.map(c => [c.command, c.options.on]), [["sh", "devbox"], ["git", "devbox"]]);
   assert.equal(calls.exec[1].options.cwd, "/home/dev/Work");
-  assert.ok(textOf(must(tree(), "mdp-footer")).endsWith("devbox: ~/Work"));
+  assert.ok(textOf(must(tree(), "mdp-folder")).endsWith("devbox: ~/Work"));
   assert.equal(row(tree(), "mdp-new"), "New note Creating files on devbox isn't supported yet");
   assert.equal(must(tree(), "mdp-new").handlers.on_click, undefined);
   type(view, "fresh");
@@ -779,7 +789,7 @@ test("another machine with no folder given: its home is the folder, and recent f
   const { tree } = await mount({ folder: null, machine: "devbox" });
   assert.equal(calls.exec[0].args[1], 'printf %s "$HOME"');
   assert.equal(calls.exec[1].options.cwd, "/home/dev");
-  assert.ok(textOf(must(tree(), "mdp-footer")).endsWith("devbox: ~"));
+  assert.ok(textOf(must(tree(), "mdp-folder")).endsWith("devbox: ~"));
   assert.deepEqual(rowIds(tree()).slice(1).map(id => row(tree(), id)), ["old.md Work recent", "a.md"], "the home folder is the folder, so Work is inside it");
 });
 
@@ -794,17 +804,17 @@ test("another machine whose home cannot be asked still lists a folder it was giv
   state.exec = fakeExec({ git: ["a.md"], home: null });
   const { tree } = await mount({ folder: "/srv/docs", machine: "devbox" });
   assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0"]);
-  assert.ok(textOf(must(tree(), "mdp-footer")).endsWith("devbox: /srv/docs"));
+  assert.ok(textOf(must(tree(), "mdp-folder")).endsWith("devbox: /srv/docs"));
 });
 
 test("only the rows that fit are drawn; the keys and the wheel move the window", async () => {
   state.exec = fakeExec({ git: Array.from({ length: 30 }, (_, i) => `n${String(i).padStart(2, "0")}.md`) });
   const { cx, tree } = await mount();
   assert.equal(rowIds(tree()).length, 8, "eight rows before the list has measured itself");
-  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 32 * 5 }, cx);
-  assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0", "mdp-file-1", "mdp-file-2", "mdp-file-3"], "five rows of 32");
+  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 *5 }, cx);
+  assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0", "mdp-file-1", "mdp-file-2", "mdp-file-3"], "five rows of 30");
   const again = makeCx();
-  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 32 * 5 }, again);
+  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 *5 }, again);
   assert.equal(again.notified, 0, "the same size is not a change");
 
   for (let i = 0; i < 4; i++) press(tree(), "down");
@@ -822,12 +832,12 @@ test("only the rows that fit are drawn; the keys and the wheel move the window",
   assert.deepEqual(rowIds(tree()), ["mdp-file-25", "mdp-file-26", "mdp-file-27", "mdp-file-28", "mdp-file-29"]);
 
   // delta.y is negative when the content moves up.
-  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 32 * 10 } }, cx);
+  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 30 *10 } }, cx);
   assert.deepEqual(rowIds(tree()).slice(0, 1), ["mdp-file-15"]);
   assert.deepEqual(highlighted(tree()), [], "the highlighted row is out of the window now");
-  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: -32 * 1000 } }, cx);
+  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: -30 *1000 } }, cx);
   assert.equal(rowIds(tree()).at(-1), "mdp-file-29", "it stops at the end");
-  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 32 * 1000 } }, cx);
+  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 30 *1000 } }, cx);
   assert.equal(rowIds(tree())[0], "mdp-new", "and at the start");
 });
 
@@ -836,7 +846,7 @@ test("the status line takes one of the rows", async () => {
   state.exec = () => new Promise(resolve => { finish = resolve; });
   state.shared["potion.recent"] = Array.from({ length: 6 }, (_, i) => ({ machine: null, path: `${FOLDER}/r${i}.md` }));
   const { cx, tree } = await mount({ settle: false });
-  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 32 * 4 }, cx);
+  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 *4 }, cx);
   assert.equal(rowIds(tree()).length, 3, "four rows of height, one of them is 'Looking for markdown files…'");
   assert.ok(find(tree(), "mdp-status"));
   finish({ code: 0, stdout: NUL(["a.md"]), stderr: "" });
