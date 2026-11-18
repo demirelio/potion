@@ -1,12 +1,12 @@
 # Potion Markdown for Herdr
 
-A Markdown editor in a Herdr pane, beside your terminals and agents. You write on the rendered page: headings, bold,
-lists, tasks and tables look as they will and no markdown marks show, while the file stays plain markdown your agents
-can read. Open the plan an agent is writing and it fills in as the lines land; your own edits are merged with the
-agent's unless the two touch. Comments are saved in the file as CriticMarkup with their time, so the agent finds them
-next to the words they are about. Table column widths and dropped pictures stay with the file too, and mermaid blocks
-are drawn as diagrams. `cmd-m` finds or makes a note in a new tab, `cmd-shift-m` beside the pane you are in.
-Sponsored by [Wildmagic](https://thewildmagic.com).
+A Markdown editor in a Herdr pane, beside your terminals and agents. Sponsored by Wildmagic
+(https://thewildmagic.com). You write on the rendered page: headings, bold, lists, tasks and tables look as they will
+and no markdown marks show, while the file stays plain markdown your agents can read. Open the plan an agent is
+writing and it fills in as the lines land; your own edits are merged with the agent's unless the two touch. Comments
+are saved in the file as CriticMarkup with their time, so the agent finds them next to the words they are about.
+Table column widths and dropped pictures stay with the file too, and mermaid blocks are drawn as diagrams. `cmd-m`
+finds or makes a note in a new tab, `cmd-shift-m` beside the pane you are in.
 
 ![Potion Markdown for Herdr](preview.png)
 
