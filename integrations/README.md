@@ -7,7 +7,7 @@ file panel), and the Markdown icon and name in the tab bar and the pane header. 
 
 | Folder | Changes | What you get |
 |---|---|---|
-| [`tabs/`](tabs/) | clone of the shipped `tabs` mod | A tab whose panes are all Markdown shows the Markdown icon and is named "Potion" until it has a name |
+| [`tabs/`](tabs/) | clone of the shipped `tabs` mod | A tab whose panes are all Markdown shows the Markdown icon and is named "Markdown" until it has a name |
 | [`files/`](files/) | clone of the shipped `files` mod | A click on a `.md` file opens it beside the focused pane, shift+click in a tab of its own, right-click offers "Open as new tab" |
 | [`pane-header/`](pane-header/) | clone of the shipped `pane` (pane header) mod | The pane header shows a Markdown pane's file icon and name, and the Markdown toggle |
 | [`new-menu/`](new-menu/) | clone of the shipped `new-menu` mod, and a one-line change to the `tabs` clone | A Markdown row in the `+` menu (key `m`) |

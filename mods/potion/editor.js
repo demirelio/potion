@@ -680,7 +680,7 @@ export class Editor {
       // A task spawned here starts inside the draw, where focus and notify throw: a timer runs it after.
       cx.timer.after(0, cx => this.toggle(cx));
     }
-    const head = { name: this.file ? basename(this.file) : "Potion", mode: this.mode }, sig = `${pane}\0${head.name}\0${head.mode}`;
+    const head = { name: this.file ? basename(this.file) : "Markdown", mode: this.mode }, sig = `${pane}\0${head.name}\0${head.mode}`;
     if (sig === this.headSig) return;
     this.headSig = sig;
     cx.spawn(async () => {
@@ -7133,7 +7133,7 @@ export class Editor {
       .when(labels, el => el.child("Markdown"));
     return h_flex().id("md-toolbar").h(40).flex_none().px(14).gap(10).items_center().border_b(1).border_color(t.border)
       .child(image(MARKDOWN_ICON).w(14).h(14).flex_none())
-      .child(div().flex_1().min_w(0).truncate().font_medium().child(this.file ? basename(this.file) : "Potion"))
+      .child(div().flex_1().min_w(0).truncate().font_medium().child(this.file ? basename(this.file) : "Markdown"))
       .child(toggle);
   }
 

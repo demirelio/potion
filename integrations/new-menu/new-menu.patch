@@ -15,5 +15,5 @@
          const agent = /^[1-9]$/.test(e.key) ? installed[Number(e.key) - 1] : null;
 @@ -62,2 +67,3 @@
        .child(this.row("terminal", svg("icons/shell.svg").size(14), "Terminal", () => run("tab.new", { space: space?.id }), shortcut("tab.new")))
-+      .child(this.row("markdown", image("mods/potion/file-markdown.svg").size(14), "Potion", markdown, shortcut("mod.open:potion") || "M", Boolean(space)))
++      .child(this.row("markdown", image("mods/potion/file-markdown.svg").size(14), "Markdown", markdown, shortcut("mod.open:potion") || "M", Boolean(space)))
        .child(div().px(9).pt(8).pb(4).text_size(11).text_color(t.dim).child("Start an agent"))

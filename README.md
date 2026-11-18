@@ -650,7 +650,7 @@ each file's last state (Reading or Markdown) and the folder the last picture cam
 
 [`integrations/`](integrations/README.md) has one folder per optional integration, each with a patch and a README:
 the tab bar (Markdown tab icon and name), the file panel (click a `.md` file), the pane header (file name and
-Markdown toggle) and the `+` menu (a Potion row). They patch clones of Herdr's shipped mods, because Herdr replaces
+Markdown toggle) and the `+` menu (a Markdown row). They patch clones of Herdr's shipped mods, because Herdr replaces
 its own mods on every start. The keys need none of them.
 
 ## Tests

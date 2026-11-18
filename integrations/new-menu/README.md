@@ -9,7 +9,7 @@ Adds a **Markdown** row to the `+` popup. Two patches, because two shipped mods 
 
 ## What it does
 
-- A "Potion" row under "Terminal" opens the file picker for a new tab. It shows the global key bound to
+- A "Markdown" row under "Terminal" opens the file picker for a new tab. It shows the global key bound to
   `mod.open:potion` (`cmd-m`, from the plugin's `keys.json`) as its hint, or `M` when none is.
 - While the menu is open, pressing `m` does the same.
 - The popup is 31 px taller to fit the row.
