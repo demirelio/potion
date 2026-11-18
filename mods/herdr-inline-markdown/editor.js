@@ -24,7 +24,7 @@ import { addLink, clipboardAddress, linkAddress, pictureCut, pictureForm, setAdd
 import { addComment, cellComments, commentable, commentsIn, editComment, noteText, oneLine, readNote, resolveComment, showComments, timeLabel } from "./comments.js";
 import { addBlockNote, addPictureNote, blockUnit, editBlockNote, editCellNote, editPictureNote, notesAfter, ownerOf, ownsNotes, pairNotes, removeWithNotes, resolveBlockNote, resolveCellNote, resolvePictureNote } from "./blocknotes.js";
 import { TEXT_COLORS, deepHighlightColor, highlightColor, textColor } from "./colors.js";
-import { Block, CALIBRATED, Column, FRAMED, FRONT_BOX, BOX, INDENT, MARKER_W, PICTURE_FRAME, QUOTE_BAR, QUOTE_PAD, STYLES, cellId, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } from "./page.js";
+import { Block, CALIBRATED, Column, FRAMED, FRONT_BOX, BOX, INDENT, MARKER_W, PICTURE_FRAME, QUOTE_BAR, QUOTE_PAD, STYLES, cellId, displayText, isRaw, lookOf, markerOf, newOwnerId, owners, prefixStrip, renderBlock, spaceBefore } from "./page.js";
 import { parseInline, parsedInline, visibleMap } from "./inline.js";
 import { drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "./tokens.js";
 
@@ -101,9 +101,8 @@ const FORMAT_BAR = [
 const BAR_BUTTONS = new Map(FORMAT_BAR.flat().map(b => [b.name, b]));
 const buttonW = b => (b.menu ? BAR.button + BAR.chevron : BAR.button);
 const FORMAT_GROUPS = FORMAT_BAR.map(group => group.map(b => ({ name: b.name, w: buttonW(b) })));
-// A table cell can't be a heading, a quote or a list item, and Comment there would comment the whole table, not the
-// words selected: its bar leaves those buttons out.
-const NOT_IN_CELLS = new Set(["comment", "style", "list"]);
+// A table cell can't be a heading, a quote or a list item: its bar leaves those buttons out.
+const NOT_IN_CELLS = new Set(["style", "list"]);
 const CELL_FORMAT_GROUPS = FORMAT_GROUPS.map(group => group.filter(b => !NOT_IN_CELLS.has(b.name))).filter(group => group.length);
 const BAR_RULE_H = 16;
 const commandOf = id => COMMANDS.find(c => c.id === id);
@@ -576,6 +575,9 @@ export class Editor {
     // state, the token sets made in the last ECHO_MS, oldest first.
     this.rich = null; this.tinted = null; this.pieces = new Map(); this.tokensHeld = false; this.tokensOff = false;
     this.echoes = new Map(); this.tokenSets = 0;
+    // The drawn widths of the prefixes of words split at the caret, by style, drawing and label (tokens.js,
+    // clippedTokens), and those waiting for the strip out of sight to draw them.
+    this.prefixWidths = new Map(); this.prefixes = new Map(); this.prefixCount = 0;
     // The typing style: the formatting text typed next at one caret gets ({ act, value, at, format }), set by a format
     // key at a caret outside a word and by the key typed or deleted before; null while none.
     this.typingStyle = null;
@@ -3248,12 +3250,40 @@ export class Editor {
     if (this.tokensHeld || !this.activeKey || this.field.value() !== this.seen) return;
     const sel = this.known.valid ? this.known : caretOf(this.field);
     if (!sel) return;
-    const r = this.richNow(), want = r ? tokensFor(r, sel) : { tokens: [], sel };
+    const r = this.richNow(), want = r ? tokensFor(r, sel, this.measureNow()) : { tokens: [], sel };
     if (sameTokens(this.field.tokens(), want.tokens)) {
       if (want.sel.start !== sel.start || want.sel.end !== sel.end) this.selectField(want.sel);
       return;
     }
     this.putTokens(r, want);
+  }
+
+  tokenStyle() {
+    if (this.cell) return this.cell.r === 0 ? "head" : "cell";
+    return this.data.get(this.activeKey)?.style ?? "p";
+  }
+
+  // tokensFor's `measure` for the active field: the widths its split word's prefixes draw at in its style, or null
+  // while the strip out of sight has yet to draw some of them (prefixStrip).
+  measureNow() {
+    const style = this.tokenStyle(), keyOf = p => `${style}\u{0}${p.id}\u{0}${p.label}`;
+    return prefixes => {
+      const widths = prefixes.map(p => this.prefixWidths.get(keyOf(p)));
+      if (widths.every(w => w !== undefined)) return widths;
+      for (const p of prefixes) {
+        const key = keyOf(p);
+        if (!this.prefixWidths.has(key) && !this.prefixes.has(key)) this.prefixes.set(key, { n: ++this.prefixCount, key, style, id: p.id, label: p.label });
+      }
+      this.post(cx => cx.notify());
+      return null;
+    };
+  }
+
+  prefixSized(key, size) {
+    if (!this.prefixes.delete(key)) return;
+    if (this.prefixWidths.size >= PIECES_KEPT) this.prefixWidths.clear();
+    this.prefixWidths.set(key, size.width / zoom());
+    if (!this.prefixes.size) this.post(() => this.retoken());
   }
 
   // The field takes `this.seen` with the tokens `want` gives it, else without letters at the caret, else with none.
@@ -3271,7 +3301,7 @@ export class Editor {
   // set_value, made as a token set is.
   refill(caret) {
     const sel = { start: caret, end: caret }, r = this.richNow();
-    return this.putTokens(r, r ? tokensFor(r, sel) : { tokens: [], sel });
+    return this.putTokens(r, r ? tokensFor(r, sel, this.measureNow()) : { tokens: [], sel });
   }
 
   // Herdr has no set_tokens: set_value takes the text with its tokens, and the selection goes back after it. A change
@@ -5432,14 +5462,14 @@ export class Editor {
     return Boolean(n) && n.act === this.act && Boolean(this.activeKey) && (!this.file || this.editable());
   }
 
-  // Cmd+Alt+M or the bar's Comment button: a comment on the selection of a written text block, or at its caret, unless
-  // it would land where a comment can't be; in a code block, diagram or table, a comment on the block.
+  // Cmd+Alt+M or the bar's Comment button: a comment on the selection of a written text block or cell, or at its caret,
+  // unless it would land where a comment can't be; in a code block, diagram or table source, a comment on the block.
   openNote(cx) {
     const b = this.pending ? null : this.blockByKey(this.activeKey);
-    if (b && ownsNotes(b)) return this.openBlockAdd(b.key, cx);
-    const r = b && isText(b) ? this.caretNow() : null;
+    if (b && ownsNotes(b) && !this.cell) return this.openBlockAdd(b.key, cx);
+    const r = b && (isText(b) || this.cell) ? this.caretNow() : null;
     if (!r) return;
-    const why = commentable(this.seen, r);
+    const why = commentable(this.seen, r, { cell: Boolean(this.cell) });
     if (why) return notify({ title: COMMENT_REFUSED[why], level: "info" });
     this.showNote({ kind: "add", range: r, text: "" }, cx);
   }
@@ -5465,7 +5495,7 @@ export class Editor {
     if (!this.noteOpen() || this.seen !== n.value) return this.closeNote(cx);
     const text = this.noteField.value();
     if (n.kind === "edit" && !oneLine(text)) return this.resolveIn(n.comment, n.range, cx);
-    const next = n.kind === "add" ? addComment(n.value, n.range, text, new Date()) : editComment(n.value, n.comment, text);
+    const next = n.kind === "add" ? addComment(n.value, n.range, text, new Date(), { cell: Boolean(this.cell) }) : editComment(n.value, n.comment, text);
     if (!next || next.refused) return this.cancelNote(cx);
     this.note = null;
     this.typeChange(n.value, n.range, next, cx);
@@ -6483,7 +6513,7 @@ export class Editor {
   blockCards(key, focus, list) {
     const i = this.at.get(key), b = this.blocks[i], active = key === this.activeKey, owned = b && this.shownNotes(key);
     if (owned) this.ownerCards(i, b, owned.para, focus, list);
-    if (b?.kind === "table") return this.cellCards(i, b, focus, list, owned ? owned.points.length + 1 : 1);
+    if (b?.kind === "table") return this.cellCards(i, b, focus, list, this.firstCellCardAt(key));
     if (owned) return;
     if (b?.image) return this.pictureCards(i, b, focus, list);
     if (!b || !isText(b) || b === this.pending?.block || (!active && !this.notesFor.byKey.has(key))) return;
@@ -6516,13 +6546,21 @@ export class Editor {
     this.blockNoteCards(i, b, this.cellNotesOf(b), focus, list, card => ({ at: after + card.index, want: this.cellTop(i, d, card) }), true);
   }
 
+  firstCellCardAt(key) {
+    return (this.shownNotes(key)?.points.length ?? 0) + 1;
+  }
+
   // The page y that cell comment `card` of table data d (page index i) is level with: its grid row's top, measured or
   // estimated, a cell being edited or not; while the source of a table kept as source is edited, the top of the line
   // holding the comment; else its row's top as Reading's TextView draws a table of one-line rows.
   cellTop(i, d, card) {
-    if (d.grid) return this.sums[i] + d.space + gridRowTop(this.gridHeights(d), card.row);
+    if (d.grid) return this.gridRowY(i, d, card.row);
     if (d.key === this.activeKey) return this.caretTop(i, card.c.start);
     return this.sums[i] + d.space + tableRowTop(card.row, CELL_LINE_H, TABLE_INSET);
+  }
+
+  gridRowY(i, d, row) {
+    return this.sums[i] + d.space + gridRowTop(this.gridHeights(d), row);
   }
 
   // Table b's cell comments as its cards show them (comments.js cellComments: each comment with its cell, row and note;
@@ -6569,9 +6607,17 @@ export class Editor {
   }
 
   newCard() {
-    const i = this.at.get(this.activeKey), at = this.note.range.start, id = NEW_CARD;
+    const i = this.at.get(this.activeKey), b = this.blocks[i], d = this.data.get(this.activeKey), start = this.note.range.start, id = NEW_CARD;
     const look = cardLook({ text: this.noteField.value(), header: true, full: true });
-    return { id, key: this.activeKey, index: -1, c: null, when: null, text: "", i, at, want: this.rowTop(i, this.blocks[i], null, at), h: this.raisedH(id, look.h), active: true, editing: true };
+    const place = this.cell && d?.grid ? this.newCellCardPlace(i, b, d, start) : { at: start, want: this.rowTop(i, b, null, start) };
+    return { id, key: this.activeKey, index: -1, c: null, when: null, text: "", i, ...place, h: this.raisedH(id, look.h), active: true, editing: true };
+  }
+
+  // Level with the edited cell's row, sorted among table b's cell cards where a comment at `start` will be in its text.
+  newCellCardPlace(i, b, d, start) {
+    const f = this.f, inTable = f.lineAt + f.start0 - f.body + start;
+    const before = this.cellNotesOf(b).cards.filter(card => card.c.start < inTable).length;
+    return { at: this.firstCellCardAt(b.key) + before - 0.5, want: this.gridRowY(i, d, this.cell.r) };
   }
 
   // The card of a comment being written on code block, diagram or table `key`, level with its top, after its cards; or
@@ -7014,6 +7060,7 @@ export class Editor {
     if (this.closed) return;
     ++this.calGen;
     this.calibrating = true; this.calNext = {}; this.calSizes = {};
+    this.prefixWidths.clear(); this.prefixes.clear();
     if (!this.inline) for (const e of [...this.entities.values(), this.column]) if (e) cx.notify(e);
     if (this.doc && this.mode === "reading") this.rebuild(cx, this.anchor());
     cx.notify();
@@ -7161,6 +7208,7 @@ export class Editor {
       vp.child(this.calStrip(t));
       this.giveUpLater(cx);
     }
+    if (this.prefixes.size) vp.child(prefixStrip(this, [...this.prefixes.values()], t));
     if (this.resize) vp.child(this.resizeCover());
     return vp;
   }

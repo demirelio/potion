@@ -20,6 +20,8 @@ const { TEXT, RAW, SOURCE, NOTE, LANG, INSTALLED, REBOUND, KEYS_SETTLE_MS } = aw
 const { PICTURE, pictureLayout, BAR, BAR_MENU, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths, dashWidth, dashesFor, dashesAtLeast, draggedWidth, lineX, COLUMN, MARGIN, RESIZE, BLOCK_BUTTON, FRAME, tableRowTop } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
+const { tableOf } = await import("../mods/herdr-inline-markdown/tables.js");
+const { clipOf } = await import("../mods/herdr-inline-markdown/tokens.js");
 
 const FILE = "/n/docs/note.md";
 const DOC = "# Title\n\nHello **world**.\n\n```mermaid\ngraph TD\nA-->B\n```\n\nBye\n";
@@ -8195,6 +8197,26 @@ test("a caret readout into a formatted word splits it into letters, and one out 
   assert.deepEqual(tokenTexts(m), ["**b", "o", "l", "d**"], "a selection's end splits the word it touches");
 });
 
+test("a word split at the caret has its prefixes measured out of sight, then each letter draws the whole word at those widths", async () => {
+  const m = await page("Some **bold** text\n", { 0: 24 });
+  await openBlock(m, 0, 0);
+  await caretTo(m, 9);
+  await caretTo(m, 9);
+  assert.deepEqual(tokenTexts(m), ["**b", "o", "l", "d**"]);
+  assert.ok(m.view.field.tokens().every(t => clipOf(t.token.id) === null), "letters drawn alone until the widths are known");
+  const strip = () => all(m.tree(), n => /^md-prefix-\d+$/.test(n.id ?? ""));
+  assert.deepEqual(strip().map(n => textOf(n).replaceAll(" ", "")), ["b", "bo", "bol", "bold"]);
+  for (const [i, n] of strip().entries()) fire(n, "on_size_change", { width: [9, 18, 23, 32][i], height: 20 }, m.cx);
+  await flush();
+  assert.deepEqual(m.view.field.tokens().map(t => [t.token.text, t.token.label, clipOf(t.token.id)?.x, clipOf(t.token.id)?.width]),
+    [["**b", "b", 0, 9], ["o", "o", 9, 9], ["l", "l", 18, 5], ["d**", "d", 23, 9]]);
+  assert.deepEqual(m.view.field.selection, { start: 9, end: 9 }, "the caret stays between o and l");
+  assert.deepEqual(strip(), [], "the strip goes once all are measured");
+  await caretTo(m, 16);
+  await caretTo(m, 7);
+  assert.equal(clipOf(m.view.field.tokens()[0].token.id)?.width, 9, "a word measured once is drawn at its widths at once");
+});
+
 // How long a token set may still report a change of the same text, before such a change is a forward Delete again.
 const ECHO_MS = 100;
 
@@ -8535,7 +8557,7 @@ test("a press on a link selects its whole text and shows its popover under it: t
   assert.deepEqual([textOf(address).trim(), address.style.tooltip], ["https://e.com/d", "https://e.com/d"]);
   assert.ok(["open", "copy", "edit", "remove"].every(b => find(pop, `md-link-${b}`)), "Open, Copy, Edit and Remove");
   assert.deepEqual([pop.style.top, pop.style.left], [topOf(m, 0) + 24 + BAR.gap, X + 4 * advance], "under the link's row, at its start");
-  assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-link", "md-cal"], "over the page");
+  assert.deepEqual(must(t, "md-viewport").kids.map(k => k.id), ["md-scroller", "md-link", "md-cal", "md-prefixes"], "over the page; the split words' prefixes out of sight");
   audit(t);
   assertNoSource(m, "https://e.com/d", "the link selected");
   assert.equal(drawnText(m.view.field), "See the docs now");
@@ -11524,11 +11546,11 @@ test("a new block comment scrolled out of sight, so no longer drawn, closes on a
   assert.deepEqual([m.view.blockAdd, m.view.text], [null, doc], "a press beside the page");
 });
 
-test("Cmd+Alt+M comments the code block, diagram source or table being edited, and with one of them selected as a block the page's alt-cmd-m does; with two blocks, another kind or a file that can't be edited it does nothing", async () => {
+test("Cmd+Alt+M comments the code block or diagram source being edited, and with one of them or a table selected as a block the page's alt-cmd-m does; with two blocks, another kind or a file that can't be edited it does nothing", async () => {
   await atTime(NOW, async () => {
     const m = await widePage(BLOCK_NOTES, NOTED_SIZES);
     const [code, diagram, table] = ["code", "mermaid", "table"].map(k => keyOfKind(m, k));
-    for (const key of [code, diagram, table]) {
+    for (const key of [code, diagram]) {
       await openKey(m, key);
       act(m, "mdb-comment");
       assert.deepEqual([Boolean(newCardOf(m)), m.view.blockAdd?.key, frameOf(m, key)?.style.border_color], [true, key, highlightColor(theme())], m.view.data.get(key).kind);
@@ -12611,7 +12633,7 @@ test("in a cell, Backspace at a bold run's edge keeps the bold, words copied fro
   assert.ok(m.view.text.includes("| Name | # Size |") && m.view.text.includes("| `x\\|y` **w** / |"), m.view.text);
 });
 
-test("format keys act on a cell's selection as in a paragraph, one entry each; a selection in a cell shows the bar, Cmd+K opens the address box, and Cmd+Alt+M comments the whole table", async () => {
+test("format keys act on a cell's selection as in a paragraph, one entry each; a selection in a cell shows the bar, Cmd+K opens the address box, and Cmd+Alt+M comments the selected text", async () => {
   const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), state = await pressCell(m, table, 1, 1, 0, 2);
   assert.ok(barOf(m), "the bar over a selection in a cell");
   act(m, "mdb-bold");
@@ -12623,7 +12645,7 @@ test("format keys act on a cell's selection as in a paragraph, one entry each; a
   act(m, "mdb-undo");
   assert.equal(m.view.text, CELLS_DOC, "one Cmd+Z");
   act(m, "mdb-comment");
-  assert.deepEqual([m.view.blockAdd?.key, m.view.activeKey], [table, table], "the whole table's new comment");
+  assert.deepEqual([m.view.note?.kind, m.view.note?.range, m.view.blockAdd, m.view.cell], ["add", { start: 0, end: 2 }, null, { r: 1, c: 1 }], "a new comment on the cell's text");
 });
 
 test("Escape leaves the cell, once the bar over its selection has gone, and Enter on the page comes back to it with its selection; a press outside the table commits and leaves; a long word typed leaves the widths alone until the caret leaves the table", async () => {
@@ -12917,7 +12939,7 @@ async function clickCellToken(m, i, r, c, t, { modifiers = NO_MODS, share = 0.5,
 const BAR_H = BAR.button + 2 * (BAR.pad + 1);
 const wordIn = (text, word) => ({ start: text.indexOf(word), end: text.indexOf(word) + word.length });
 
-test("the format bar over words selected in a cell of the third row and second column: after a drag forward or back, over the row and at the x the mouse gave; after a double-click, left of the press by at most the word; after Shift+arrows and a right-click, where the text wrapped at the cell's width puts it; no Comment, Text style or List; Bold is one entry and the Colour menu colours the words", async () => {
+test("the format bar over words selected in a cell of the third row and second column: after a drag forward or back, over the row and at the x the mouse gave; after a double-click, left of the press by at most the word; after Shift+arrows and a right-click, where the text wrapped at the cell's width puts it; Comment first, no Text style or List; Bold is one entry and the Colour menu colours the words", async () => {
   const m = await page(MIDDLE_DOC, MIDDLE_SIZES), table = keyAt(m, 1), state = m.view.cellField(table, 2, 1);
   const advance = m.view.calOf("cell").advance, row = m.view.data.get(table).row, w = m.view.data.get(table).grid.widths[1] - 2 * GRID.padX;
   const drawnRows = referenceRows(LATE, w / DRAWN_CELL), estimatedRows = referenceRows(LATE, w / advance);
@@ -12960,7 +12982,7 @@ test("the format bar over words selected in a cell of the third row and second c
   await flush();
   assert.equal(selectedText(m), "autumn", "a right-click selects the word under it");
   over(estimate(autumn.start), "a right-click: the estimate");
-  assert.deepEqual(barButtons(m), ["bold", "italic", "underline", "strike", "code", "|", "color", "|", "link"]);
+  assert.deepEqual(barButtons(m), ["comment", "|", "bold", "italic", "underline", "strike", "code", "|", "color", "|", "link"]);
   const entries = m.view.history.entries.length;
   barPress(m, "bold");
   assert.equal(m.view.text, MIDDLE_DOC.replace("the autumn", "the **autumn**"));
@@ -13971,4 +13993,124 @@ test("a table in a list item no wider than the text sits at its indent; a wider 
   reset();
   const n = await columnOnlyPage(listed(CENTRED_TABLE), sizes), nd = n.view.data.get(keyAt(n, 1));
   assert.deepEqual([nd.gridLeft, n.view.gridRoom(nd)], [INDENT, n.view.textWidth() - INDENT], "a narrow pane: at its indent, panning in the column");
+});
+
+// The blocks of NOTED_CELLS: an intro holding a comment (0), so the margin shows; a table of five rows whose last holds a
+// comment (1); End (2).
+const NOTED_CELLS = [
+  "Intro {==x==}{>>2026-11-15 09:00 | first<<}.", "",
+  "| Name | Notes |", "|---|---|", "| apple | crisp |", "| pear | ripe and sweet |", "| plum | dark |",
+  "| fig | {==soft==}{>>2026-11-15 09:00 \\| on fig<<} |",
+  "", "End", "",
+].join("\n");
+const NOTED_CELL_SIZES = { 0: 24, 1: 14 + gridH(5), 2: 38 };
+// The text of every cell of the first table in `text`, row by row, as a parse of `text` parts it.
+const cellsOf = text => {
+  const doc = parse(text), b = doc.blocks.find(x => x.kind === "table");
+  return tableOf(doc, b).rows.map(row => row.cells.map(cell => (cell ? text.slice(cell.start, cell.end) : null)));
+};
+// The backgrounds the field of cell (r, c) of table `key` draws its tokens on.
+const cellBgs = (m, key, r, c) => m.view.cellField(key, r, c).tokens().flatMap(x =>
+  all(cellInputOf(m, key, r, c).token({ token: x.token, range: x.range, selected: false, line_height: 21, available_width: 300 }, m.cx), n => n.style.bg !== undefined).map(n => n.style.bg));
+
+test("the bar's Comment over words in a cell, as in a paragraph: the words keep a provisional highlight and a new card opens level with the cell's row, before the cards of rows below; Enter writes {==words==}{>>time \\| …<<} in the cell, every | of the note escaped, the table keeping its cells; one undo step, undo and redo putting the caret back in the cell", async () => {
+  await atTime(NOW, async () => {
+    const m = await widePage(NOTED_CELLS, NOTED_CELL_SIZES), table = keyAt(m, 1);
+    await pressCell(m, table, 2, 1, 9, 14);
+    assert.deepEqual([selectedText(m), barButtons(m)[0]], ["sweet", "comment"]);
+    barPress(m, "comment");
+    const card = newCardOf(m), level = rowLevel(m, table, 2);
+    assert.deepEqual([card?.style.top, card?.style.left, m.view.noteField.focused, noteBoxOf(m), m.view.cell], [level, WIDE.cardLeft, true, null, { r: 2, c: 1 }], "level with the cell's row, the keyboard in it");
+    assert.deepEqual(cardsOf(m).map(n => n.id), [cardId(m, 0), NEW_CARD_ID, `md-card-${table}-cell-0`], "between the intro's card and the card of a row below");
+    assert.ok(cellCard(m, table, 0).style.top > card.style.top);
+    assert.deepEqual([...new Set(cellBgs(m, table, 2, 1))], [highlightColor(theme())], "the words highlighted");
+    const entries = m.view.history.entries.length;
+    writeNote(m, "a | b");
+    saveNote(m);
+    const written = "ripe and {==sweet==}{>>2026-11-16 22:00 \\| a \\| b<<}", doc = NOTED_CELLS.replace("ripe and sweet", written);
+    assert.equal(m.view.text, doc);
+    assert.deepEqual(cellsOf(m.view.text), [["Name", "Notes"], ["apple", "crisp"], ["pear", written], ["plum", "dark"], ["fig", "{==soft==}{>>2026-11-15 09:00 \\| on fig<<}"]], "the table keeps its cells");
+    assert.deepEqual([m.view.history.entries.length, m.view.cell, m.view.field.value(), m.view.field.selection, m.view.field.focused], [entries + 1, { r: 2, c: 1 }, written, at(written.length), true]);
+    const saved = cellCard(m, table, 0);
+    assert.deepEqual([newCardOf(m), saved?.style.top, textOf(must(saved, `md-card-${table}-cell-0-text`)).trim()], [null, level, "a | b"], "its card where the new one was, the | as typed");
+    assert.deepEqual([drawnField(m), [...new Set(cellBgs(m, table, 2, 1))]], ["ripe and sweet", [highlightColor(theme())]], "the words highlighted in the cell, the marks and the note hidden");
+    act(m, "mdb-undo");
+    assert.deepEqual([m.view.text, m.view.cell, m.view.field.value(), m.view.field.selection], [NOTED_CELLS, { r: 2, c: 1 }, "ripe and sweet", { start: 9, end: 14 }], "one Cmd+Z, the caret back in the cell");
+    act(m, "mdb-redo");
+    assert.deepEqual([m.view.text, m.view.cell], [doc, { r: 2, c: 1 }], "redo");
+  });
+});
+
+// The blocks of COMMENT_CELLS: the intro (0), a table whose second row holds a code span and a comment, and whose third
+// row's second cell is empty (1), End (2).
+const COMMENT_CELLS = ["Intro", "", "| Name | Notes |", "|---|---|", "| apple | crisp and cold |", "| pear | a `x\\|y` b {==z==}{>>n<<} c |", "| plum | |", "", "End", ""].join("\n");
+const COMMENT_CELL_SIZES = { 0: 24, 1: 14 + gridH(4), 2: 38 };
+
+test("Cmd+Alt+M in a cell comments the selection, or puts a point comment at the caret, as in a paragraph, an empty cell too; a selection reaching into code or cutting through a comment gets a notice; Escape writes nothing and gives the cell its selection back", async () => {
+  await atTime(NOW, async () => {
+    const m = await narrowPage(COMMENT_CELLS, COMMENT_CELL_SIZES), table = keyAt(m, 1);
+    await pressCell(m, table, 1, 1, 10, 14);
+    act(m, "mdb-comment");
+    assert.deepEqual([Boolean(noteBoxOf(m)), m.view.noteField.focused, m.view.note?.kind, m.view.blockAdd, m.view.cell], [true, true, "add", null, { r: 1, c: 1 }], "the box, not the whole table's comment");
+    m.view.field.focused = false;
+    act(m, "mdb-note-cancel");
+    assert.deepEqual([noteBoxOf(m), m.view.text, m.view.cell, m.view.field.selection, m.view.field.focused, m.view.history.canUndo], [null, COMMENT_CELLS, { r: 1, c: 1 }, { start: 10, end: 14 }, true, false], "Escape: nothing written, the selection back");
+    await pressCell(m, table, 1, 1, 5);
+    act(m, "mdb-comment");
+    writeNote(m, "here");
+    saveNote(m);
+    const point = "crisp{>>2026-11-16 22:00 \\| here<<} and cold";
+    assert.deepEqual([m.view.text, m.view.field.value(), m.view.field.selection], [COMMENT_CELLS.replace("crisp and cold", point), point, at(point.indexOf(" and"))], "a point comment at the caret, the caret after it");
+    await pressCell(m, table, 3, 1, 0);
+    act(m, "mdb-comment");
+    writeNote(m, "fill in");
+    saveNote(m);
+    assert.ok(m.view.text.includes("| plum | {>>2026-11-16 22:00 \\| fill in<<} |"), m.view.text);
+    const written = m.view.text;
+    await pressCell(m, table, 2, 1, 8);
+    await pressCell(m, table, 2, 1, 1, 6);
+    assert.equal(selectedText(m), " `x\\|", "the caret beside the code span first, so its letters split, then a selection into it");
+    act(m, "mdb-comment");
+    assert.deepEqual([noteBoxOf(m), calls.notify.at(-1)], [null, { title: "Comments can't go in code", level: "info" }]);
+    await pressCell(m, table, 2, 1, 9, 15);
+    act(m, "mdb-comment");
+    assert.deepEqual([noteBoxOf(m), calls.notify.at(-1), m.view.text], [null, { title: "A comment can't cut through another one", level: "info" }, written]);
+  });
+});
+
+test("without a margin the comment box floats over the words selected in a cell, where the cell is drawn: left of the text in a centred table, and moved with a table panned sideways", async () => {
+  const m = await centredPage(), table = keyAt(m, 1), advance = m.view.calOf("cell").advance;
+  await pressCell(m, table, 2, 0, 0);
+  m.view.field.select(5, 10);
+  cellKeyUp(m, table, 2, 0, "right", { shift: true });
+  await flush();
+  act(m, "mdb-comment");
+  const o = cellOrigin(m, 1, 2, 0), box = noteBoxOf(m)?.style;
+  assert.ok(o.x < leftOf(m), "the cell lies left of the text");
+  assert.deepEqual([selectedText(m), box?.top, box?.left], ["words", o.y - BAR.gap - NOTE_BOX.h, o.x + 5 * advance]);
+  reset();
+  const w = await page(WIDE_DOC, WIDE_SIZES), wide = keyAt(w, 1), d = w.view.data.get(wide);
+  await pressCell(w, wide, 1, 1, 0);
+  scroll(w, { x: leftOf(w) + 100, y: topOf(w, 1) + d.space + 10 }, 0, -40, { touch_phase: "started", modifiers: { shift: true } });
+  w.view.field.select(0, 3);
+  cellKeyUp(w, wide, 1, 1, "right", { shift: true });
+  await flush();
+  act(w, "mdb-comment");
+  const x = leftOf(w) + d.gridLeft + lineX(d.grid.widths, 0) + GRID.line + GRID.padX - panNow(w, wide);
+  assert.deepEqual([panNow(w, wide), noteBoxOf(w)?.style.left, noteBoxOf(w)?.style.top], [40, x, gridY(w, 1, 1) + GRID.padY - BAR.gap - NOTE_BOX.h]);
+});
+
+test("in a table being edited the table's Comment button, and Cmd+Alt+M with the table selected as a block, still comment the whole table, while Cmd+Alt+M in its cell comments the cell's text", async () => {
+  const m = await widePage(BLOCK_NOTES, NOTED_SIZES), table = keyOfKind(m, "table");
+  await openKey(m, table);
+  act(m, "mdb-comment");
+  assert.deepEqual([m.view.note?.kind, m.view.blockAdd, m.view.cell, Boolean(newCardOf(m))], ["add", null, { r: 0, c: 0 }, true], "in a cell: a comment on its text");
+  act(m, "mdb-note-cancel");
+  await pressButton(m, table);
+  assert.deepEqual([m.view.blockAdd?.key, m.view.note, m.view.activeKey], [table, null, table], "the Comment button");
+  act(m, "mdb-note-cancel");
+  escape(m);
+  m.view.setSel({ from: table, to: table }, m.cx);
+  rootKey(m, "alt-cmd-m", CMD_ALT_M);
+  assert.deepEqual([m.view.blockAdd?.key, Boolean(newCardOf(m))], [table, true], "selected as a block");
 });

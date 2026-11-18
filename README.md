@@ -170,12 +170,12 @@ px each, the table wider than the page, when even that doesn't fit), or as wide 
 a column's text centred or at the right when its delimiter row's colons say so (`:-:`, `--:`). Each cell shows its text
 as a paragraph does: formatting, links (Cmd+click opens them; a click in a file you can't edit), comments highlighted.
 A click in a cell puts the caret where you click, and you type in the cell as in a paragraph: the format keys, typed
-`**bold**` and the like, copy and paste, the [format bar](#the-format-bar) over a selection (without Comment, Text style
-and List), a link's [popover](#links) and the address box, Cmd+K. A cell holds one line: a line break you paste becomes
-a space, and a `|` you type, or one in an address you give a link there, shows as `|` and is written `\|`, so the table
-keeps its columns. Tab and Shift+Tab select the whole text of the next and the previous cell, the header row first;
-Tab in the last cell adds an empty row and puts the caret in its first cell. Enter goes to the end of the cell below,
-and on the last row adds an empty row with the caret in the same column; Cmd+Enter opens a new paragraph after the
+`**bold**` and the like, copy and paste, the [format bar](#the-format-bar) over a selection (without Text style and
+List), a link's [popover](#links) and the address box, Cmd+K, a [comment](#comments) on the selection with
+Cmd+Alt+M. A cell holds one line: a line break you paste becomes a space, and a `|` you type, or one in an address you
+give a link there, shows as `|` and is written `\|`, so the table keeps its columns. Tab and Shift+Tab select the
+whole text of the next and the previous cell, the header row first; Tab in the last cell adds an empty row and puts
+the caret in its first cell. Enter goes to the end of the cell below, and on the last row adds an empty row with the caret in the same column; Cmd+Enter opens a new paragraph after the
 table. The arrows cross cell edges as they cross blocks: Left and Right at a cell's start and end go on to the cell
 before and after, Up and Down to the cell above and below at the same place along the row, and out of the table at
 its first and last cells and rows; into a table they come at the cell under the caret. Backspace at a cell's start and
@@ -229,8 +229,8 @@ fences.
 | Cmd+Shift+C | The same for inline code: other formatting goes around the code (`` **`x`** ``), and making formatted text code keeps its formatting, splitting the code where it changes |
 | Cmd+Shift+H | The same for a highlight |
 | Cmd+K | Opens the [address box](#links) under the selection, offering the web or mail address the clipboard holds; Enter makes the selection a link to what you typed. On a caret in a word it links the word; elsewhere Enter writes the address as a link. In a link the box holds its address, to change it |
-| Cmd+Alt+M | In a paragraph, heading, item or quote: a [comment](#comments) on the selection, or at the caret. In a code block, diagram source or table you are editing, or with one of them selected as a block, a comment on the whole block. With a picture picked, a comment on that picture (its own, when it has one) |
-| Select text in a paragraph, heading, item, quote or table cell | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link; in a table's cell without Comment, Text style and List. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block not being edited a drag selects the drawn text, for Cmd+C |
+| Cmd+Alt+M | In a paragraph, heading, item, quote or table cell: a [comment](#comments) on the selection, or at the caret. In a code block, diagram source or table source you are editing, or with one of them (any table) selected as a block, a comment on the whole block. With a picture picked, a comment on that picture (its own, when it has one) |
+| Select text in a paragraph, heading, item, quote or table cell | A [format bar](#the-format-bar) over the selection (under it at the top of the pane): Comment, Text style, Bold, Italic, Underline, Strikethrough, Code, Colour, List and Link; in a table's cell without Text style and List. It stays for the next mark, until the selection goes, you type, press Escape or click elsewhere; Link and Comment close it, opening their box. A drag or a double-click in one that is not being edited selects there as in the one being edited, and the bar shows when you let go. A right-click on selected text shows the bar over it; on a word with nothing selected it selects the word first. In a code block not being edited a drag selects the drawn text, for Cmd+C |
 | Drag across blocks, or Shift+click | Selects whole blocks: Cmd+C copies their markdown, Cmd+X cuts it, Backspace or Delete removes them, Escape or a click clears the selection |
 
 The file stays plain markdown. Bold, italic, strikethrough and code are written `**…**`, `*…*`, `~~…~~` and
@@ -316,10 +316,9 @@ can't edit the chip only names the language, and a block with none has no chip.
 ### The format bar
 
 Selecting text in a paragraph, heading, item, quote or table cell shows a bar over it, its groups parted by thin
-lines. In a cell it leaves out Text style and List, since a cell can't be a heading, a quote or a list item, and
-Comment, which there would comment the whole table (as Cmd+Alt+M does in a cell for now); a header cell takes Bold
-too, which writes `**` though the header is drawn bold already, and the button shows pressed only once the marks are
-there.
+lines. In a cell it leaves out Text style and List, since a cell can't be a heading, a quote or a list item; Comment
+comments the words selected in the cell. A header cell takes Bold too, which writes `**` though the header is drawn
+bold already, and the button shows pressed only once the marks are there.
 
 | Button | What it does |
 |---|---|
@@ -402,11 +401,11 @@ before the editor stored times are like that). Only the comment's text is ever s
 - **Editing in place.** Edit, or a click on a card's text, turns it into a field holding the comment, the caret at its end,
   growing with it. Enter saves it, keeping its time, as one undo step; Escape leaves it as it was; Enter on an emptied
   comment resolves it.
-- **A new comment.** Select text in a paragraph, heading, list item or quote you are editing and press Cmd+Alt+M, or
-  Comment on the format bar: the selection keeps a highlight and a new card opens beside it, "Add a comment…". Enter
-  writes the comment with the time; Escape, or Enter with nothing typed, drops it and the selection is back. With
-  nothing selected the comment goes at the caret. Spaces at the ends of the selection stay outside it. Saving is one
-  undo step, and the caret lands after the comment.
+- **A new comment.** Select text in a paragraph, heading, list item, quote or table cell you are editing and press
+  Cmd+Alt+M, or Comment on the format bar: the selection keeps a highlight and a new card opens beside it, "Add a
+  comment…". Enter writes the comment with the time; Escape, or Enter with nothing typed, drops it and the selection is
+  back. With nothing selected the comment goes at the caret. Spaces at the ends of the selection stay outside it.
+  Saving is one undo step, and the caret lands after the comment.
 - **Resolve** takes the comment and its marks off; the marked text stays, selected. It is one undo step, whose undo
   brings the comment back with its time.
 - **Narrower panes**, and a file with no comment yet, have no margin. A new comment is written in a small box over the
@@ -451,8 +450,12 @@ before the editor stored times are like that). Only the comment's text is ever s
   the paragraph where it is, as ordinary text; a code block given the Mermaid language keeps its comments. In a narrow
   pane the block shows their count at its top (left of a code block's language chip, its Comment button left of the
   count), and its card's Edit opens the comment box over the block; the frame goes when the box closes.
-- **In table cells.** A comment on one cell is written in the cell, around its text, and every `|` in the comment,
-  the time's separator too, is written `\|`, since a bare `|` would end the cell (a `\` right before a `|` is doubled):
+- **In table cells.** Text in a cell takes a comment as text in a paragraph does: select words in the cell you are
+  editing, or leave the caret where the comment goes, and press Cmd+Alt+M or Comment on the format bar. The new card
+  opens level with the cell's row (in a narrow pane the small box floats over the words), and Enter writes the comment
+  in the cell, around the words, with the time: one undo step, whose undo and redo put the caret back in the cell. An
+  empty cell takes a point comment. Every `|` in a cell's comment, the time's separator too, is written `\|`, since a
+  bare `|` would end the cell (a `\` right before a `|` is doubled):
 
   ```
   | Name  | Size                                                   |
@@ -470,9 +473,9 @@ before the editor stored times are like that). Only the comment's text is ever s
   the time and writes the `|` escaped again, Resolve takes the marks and the comment off and leaves the cell's text.
   Each is one undo step, and undo opens nothing. In a narrow pane the table's count counts its cells' comments with its
   own, and its card lists its own first, then each cell's under that cell's text as Reading shows it. Any CriticMarkup
-  in a table reads this way: several comments in one cell, or one on part of a cell's text. Adding a comment to a cell
-  from the page comes with the table cells; until then the table's Comment button and Cmd+Alt+M comment the whole
-  table, and a cell's comment is written by hand, or by an agent, in the form above.
+  in a table reads this way, written from the page or by hand or by an agent in the form above: several comments in
+  one cell, or one on part of a cell's text. The table's Comment button, and Cmd+Alt+M with the table selected as a
+  block, comment the whole table.
 - **On pictures.** A picture's menu (see [Pictures](#pictures)) has a Comment button first, and Cmd+Alt+M with a
   picture picked does the same: a new card opens beside the picture, level with its top, and the picture gets a 2 px
   frame in the highlight colour while you write, its menu staying. Enter writes the comment with the time; Escape or

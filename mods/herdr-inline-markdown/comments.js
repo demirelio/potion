@@ -112,12 +112,12 @@ function scan(text, from, to, comments, code) {
   }
 }
 
-// `stretches`: the runs of text lines (a paragraph each), which is where comments can be; `code`: code block lines and
-// the code spans found in the stretches.
-function layout(text) {
-  const comments = [], code = [], stretches = [];
+// `stretches`: the runs of text lines (a paragraph each), or all of a table `cell`'s text, as no block starts in a
+// cell: where comments can be; `code`: code block lines and the code spans found in the stretches.
+function layout(text, cell = false) {
+  const comments = [], code = [], stretches = cell ? [{ start: 0, end: text.length }] : [];
   let run = null;
-  for (const line of linesOf(text)) {
+  for (const line of cell ? [] : linesOf(text)) {
     if (line.kind === "text") {
       if (run) run.end = line.end;
       else run = { start: line.start, end: line.end };
@@ -193,8 +193,8 @@ function trimmed(value, range) {
   return inner.start === inner.end ? { start: from, end: from } : inner;
 }
 
-function refusal(value, { start: s, end: e }) {
-  const { comments, code, stretches } = layout(value);
+function refusal(value, { start: s, end: e }, cell) {
+  const { comments, code, stretches } = layout(value, cell);
   const caret = s === e;
   if (comments.some(c => (caret ? c.start < s && s < c.end : s < c.end && e > c.start))) return "overlap";
   const insideBlock = r => r.block && r.start <= s && e <= r.end;
@@ -206,17 +206,18 @@ function refusal(value, { start: s, end: e }) {
 
 // Why a comment can't go on the selection `range` of `value`: "overlap" (it would cut through or hold another one),
 // "code" or "paragraphs" (it would cross a blank line); null when it can.
-export const commentable = (value, range) => refusal(value, trimmed(value, range));
+export const commentable = (value, range, { cell = false } = {}) => refusal(value, trimmed(value, range), cell);
 
 // -> { value, start, end }: the selection marked with `note` (a point comment at a caret), stamped with `when` when
-// given, the caret after it; null for an empty note; { refused } with commentable's reason.
-export function addComment(value, range, note, when = null) {
+// given, the caret after it; null for an empty note; { refused } with commentable's reason. In a table `cell` the note
+// is written as a cell holds it.
+export function addComment(value, range, note, when = null, { cell = false } = {}) {
   const text = oneLine(note), sel = trimmed(value, range);
   if (!text) return null;
-  const why = refusal(value, sel);
+  const why = refusal(value, sel, cell);
   if (why) return { refused: why };
-  const marks = sel.start === sel.end ? "" : `${OPEN}${value.slice(sel.start, sel.end)}${CLOSE}`;
-  const written = `${marks}${NOTE_OPEN}${stamped(text, when)}${NOTE_CLOSE}`, caret = sel.start + written.length;
+  const marks = sel.start === sel.end ? "" : `${OPEN}${value.slice(sel.start, sel.end)}${CLOSE}`, stamp = stamped(text, when);
+  const written = `${marks}${NOTE_OPEN}${cell ? cellEscaped(stamp) : stamp}${NOTE_CLOSE}`, caret = sel.start + written.length;
   return { value: value.slice(0, sel.start) + written + value.slice(sel.end), start: caret, end: caret };
 }
 

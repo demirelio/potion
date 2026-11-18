@@ -9,6 +9,7 @@ import { showComments } from "./comments.js";
 import { deepHighlightColor, highlightColor, textColor } from "./colors.js";
 import { asText, coloredMarks } from "./inline.js";
 import { CHIP, CODE_HEAD, GRID, NOTES, RESIZE, lineX } from "./geometry.js";
+import { clipOf, piecesOf } from "./tokens.js";
 
 export const owners = new Map();
 let owned = 0;
@@ -266,9 +267,21 @@ function piece(owner, d, t, p) {
 }
 
 function tokenView(owner, d, t, ctx) {
-  return h_flex().flex_none().h(ctx.line_height).items_center()
+  const drawn = h_flex().flex_none().h(ctx.line_height).items_center().children(owner.tokenPieces(ctx.token).map(p => piece(owner, d, t, p)));
+  const clip = clipOf(ctx.token.id);
+  if (!clip) return drawn.when(ctx.selected, el => el.bg(t.selection));
+  return div().w(clip.width).h(ctx.line_height).flex_none().relative().overflow_hidden()
     .when(ctx.selected, el => el.bg(t.selection))
-    .children(owner.tokenPieces(ctx.token).map(p => piece(owner, d, t, p)));
+    .child(drawn.absolute().top(0).left(-clip.x));
+}
+
+// The prefixes of words split at the caret, drawn out of sight as a token draws them, for the editor to measure:
+// [{ n, key, style, id, label }].
+export function prefixStrip(owner, prefixes, t) {
+  return v_flex().id("md-prefixes").absolute().top(-10000).left(0).items_start()
+    .children(prefixes.map(m => h_flex().id(`md-prefix-${m.n}`).flex_none()
+      .on_size_change((size, cx) => owner.prefixSized(m.key, size, cx))
+      .children(piecesOf(m.id, m.label).map(p => piece(owner, { style: m.style, color: "foreground", ratio: STYLES[m.style].lh }, t, p)))));
 }
 
 // A text block is drawn by the same field whether it is edited or not; only the edited one has the block keys. The

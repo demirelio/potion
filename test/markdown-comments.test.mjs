@@ -132,6 +132,19 @@ test("a new comment is written with the local time it was written, 24-hour, befo
   assert.equal(addComment(value, range, "  ", AT), null, "an empty comment is still nothing");
 });
 
+test("in a table cell a new comment's | are written \\|, the time's separator too, so the row keeps its cells; a cell's text is one line of text, so an empty cell takes a point comment and a fence or an indent there is no code", () => {
+  const cell = { cell: true }, out = addComment("ripe and sweet", { start: 9, end: 14 }, "a | b \\| c", AT, cell);
+  assert.equal(out.value, "ripe and {==sweet==}{>>2026-11-16 20:51 \\| a \\| b \\\\\\| c<<}");
+  const row = `| pear | ${out.value} |\n|---|---|`, [x] = cellComments(row);
+  assert.deepEqual([tableCells(row)[0].cells.length, readNote(x.note).text], [2, "a | b \\| c"], "read back as typed, the row's two cells kept");
+  assert.equal(addComment("", { start: 0, end: 0 }, "fill in", AT, cell).value, "{>>2026-11-16 20:51 \\| fill in<<}", "an empty cell");
+  assert.equal(addComment("", { start: 0, end: 0 }, "fill in", AT).refused, "paragraphs", "an empty paragraph");
+  assert.deepEqual([commentable("```js plain", { start: 6, end: 11 }, cell), commentable("    plain", { start: 4, end: 9 }, cell)], [null, null]);
+  assert.equal(commentable("```js plain", { start: 6, end: 11 }), "code", "a paragraph's fence");
+  assert.equal(commentable("a `x\\|y` b", { start: 0, end: 5 }, cell), "code", "into a code span");
+  assert.equal(commentable("a {==b==}{>>n<<} c", { start: 0, end: 5 }, cell), "overlap");
+});
+
 test("a note that starts with a stamp has that time and the text after it; any other note has no time and is all text", () => {
   assert.deepEqual(readNote("2026-11-16 20:51 | the comment"), { when: new Date(2026, 10, 16, 20, 51), text: "the comment" });
   assert.deepEqual(readNote("the comment"), { when: null, text: "the comment" });

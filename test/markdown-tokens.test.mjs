@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
 import { parse } from "../mods/herdr-inline-markdown/blocks.js";
-import { drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "../mods/herdr-inline-markdown/tokens.js";
+import { clipOf, drawnOffset, extentOf, piecesOf, pressedAt, richOf, sameTokens, tokensFor } from "../mods/herdr-inline-markdown/tokens.js";
 
 const rich = (value, opts) => richOf(value, parseInline(value, opts));
 const caret = at => ({ start: at, end: at });
@@ -104,6 +104,30 @@ test("the words at both ends of a selection are split; a word inside it stays wh
   assert.deepEqual(texts(value, { start: 3, end: 17 }), ["**a", "b**", "**cd**", "**e", "f**"]);
 });
 
+test("with its prefixes' widths, a word split at the caret draws the whole word in each letter's box, so its letters stay where they were", () => {
+  const value = "a **bo**ld b", asked = [];
+  const measure = prefixes => { asked.push(...prefixes); return [7, 15, 19, 27]; };
+  const list = tokensFor(rich(value), caret(5), measure).tokens;
+  assert.deepEqual(asked, [{ id: "b:1", label: "b" }, { id: "b:2", label: "bo" }, { id: "b:2,:1", label: "bol" }, { id: "b:2,:2", label: "bold" }]);
+  assert.deepEqual(list.map(t => t.token.text), ["**b", "o**", "l", "d"], "the ranges a token per letter has");
+  assert.deepEqual(list.map(t => t.token.label), ["b", "o", "l", "d"]);
+  assert.deepEqual(list.map(t => clipOf(t.token.id)), [[0, 7], [7, 8], [15, 4], [19, 8]].map(([x, width]) => ({ x, width, id: "b:2,:2", label: "bold" })));
+  assert.deepEqual(piecesOf(list[2].token.id, list[2].token.label), [{ text: "bo", bold: true }, { text: "ld" }], "each draws the whole word");
+  assert.equal(clipOf("b:2,:2"), null);
+});
+
+test("until the widths are known, or when a letter would get none, the split word is a token per letter drawn alone", () => {
+  const value = "a **bold** b", alone = texts(value, caret(6));
+  for (const measure of [() => null, () => [7, 7, 12, 20]]) {
+    const list = tokensFor(rich(value), caret(6), measure).tokens;
+    assert.deepEqual(list.map(t => t.token.text), alone);
+    assert.ok(list.every(t => clipOf(t.token.id) === null));
+  }
+  const emoji = "**e\u{301}👍🏽x**", prefixes = [];
+  tokensFor(rich(emoji), caret(2), p => { prefixes.push(...p.map(x => x.label)); return null; });
+  assert.deepEqual(prefixes, ["e\u{301}", "e\u{301}👍🏽", "e\u{301}👍🏽x"], "a prefix per whole character");
+});
+
 test("a caret or a selection end inside hidden marks moves to a letter's edge, never inside a token", () => {
   const value = "a **bold** b", r = rich(value);
   assert.deepEqual(tokensFor(r, caret(3)).sel, caret(2), "inside the opening marks: before the word");
@@ -145,6 +169,8 @@ test("a token never holds a control character: a line break hidden in a link tit
   }
 });
 
+const byLength = prefixes => prefixes.map(p => 7 * p.label.length + 1);
+
 test("every token's range holds exactly its text, tokens never overlap, and every label is something to draw", () => {
   const values = [
     "a **bold** b", "**bo**ld *x* ~~s~~ `c d` [l k](u) ![i j](p) {==h i==}{>>n<<} {>>p<<} \\* &amp; <u>u</u>",
@@ -154,8 +180,8 @@ test("every token's range holds exactly its text, tokens never overlap, and ever
   for (const value of values) {
     const r = rich(value, { defs: parse("[r]: /url\n").defs });
     for (let at = 0; at <= value.length; at++) {
-      for (const sel of [caret(at), { start: 0, end: at }, { start: at, end: value.length }]) {
-        const { tokens: list, sel: snapped } = tokensFor(r, sel);
+      for (const [sel, measure] of [[caret(at), null], [caret(at), byLength], [{ start: 0, end: at }, null], [{ start: at, end: value.length }, byLength]]) {
+        const { tokens: list, sel: snapped } = tokensFor(r, sel, measure);
         let end = 0;
         for (const t of list) {
           assert.equal(value.slice(t.range.start, t.range.end), t.token.text, `${value} @${at}`);

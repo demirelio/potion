@@ -8,7 +8,7 @@ import { makeCx, must } from "./helpers.mjs";
 const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 const { CODE_HEAD, GRID, NOTES, RESIZE, lineX } = await import("../mods/herdr-inline-markdown/geometry.js");
-const { BOX, CALIBRATED, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
+const { BOX, CALIBRATED, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, prefixStrip, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { gridOf } = await import("../mods/herdr-inline-markdown/grid.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
 const { TEXT, RAW } = await import("../mods/herdr-inline-markdown/keys.js");
@@ -421,6 +421,23 @@ test("the edited text block's field draws each token in the block's type, a row 
   const task = piecesDrawn("- [x] done **b**\n", 0, "b:1", "b", { more: { checked: true } }).pieces[0];
   assert.equal(task.line_through, true, "a ticked task's words are struck through");
   assert.equal(piecesDrawn("Some **bold**\n", 0, "b:4", "bold", { selected: true }).box.style.bg, "selection");
+});
+
+test("a letter of a word split at the caret draws the whole word, moved left by the letters before it, in a box as wide as its own", () => {
+  const { box, pieces } = piecesDrawn("Some **bold** text\n", 0, "~7:8:4:boldb:2,:2", "o", { selected: true });
+  assert.deepEqual([box.style.w, box.style.h, box.style.overflow_hidden, box.style.bg], [8, 24, true, "selection"]);
+  assert.deepEqual(pieces.map(p => [p.text, p.font_weight]), [["bo", 700], ["ld", 400]]);
+  const word = box.kids[0];
+  assert.deepEqual([word.style.absolute, word.style.left, word.style.top], [true, -7, 0]);
+});
+
+test("the prefixes of a split word are drawn out of sight in the style asked, each reporting its width", () => {
+  const sized = [], owner = { ...tokenOwner(), fonts: { sans: ".SystemUIFont", mono: "Mono" }, prefixSized: (key, size) => sized.push([key, size.width]) };
+  const strip = prefixStrip(owner, [{ n: 3, key: "k", style: "head", id: "b:2", label: "bo" }], theme());
+  const row = must(strip, "md-prefix-3");
+  assert.deepEqual(all(row, n => n.kind === "div" && n.kids.some(k => k.kind === "text")).map(n => [textOf(n), n.style.text_size, n.style.font_weight]), [["bo", 14, 700]]);
+  fire(row, "on_size_change", { width: 17, height: 21 }, makeCx());
+  assert.deepEqual(sized, [["k", 17]]);
 });
 
 test("each piece of a token is formatted as Reading draws it", () => {

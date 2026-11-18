@@ -22,6 +22,8 @@ const LOOK_ORDER = "bisuclhdp";
 const LOOK_LETTERS = /^[bisuclhdp]*/;
 const LOOK_NAMES = { b: "bold", i: "italic", s: "strike", u: "underline", c: "code", l: "link", h: "highlight", d: "deep", p: "picture" };
 const POINT_ID = "N";
+// A clipped letter token's id: "~x:width:n:", then the whole word's label (n UTF-16 units), then its drawing id.
+const CLIP = "~";
 const NARROW = new Set("fijlrtI.,:;'!|` ");
 const WIDE = new Set("mwMW");
 const CODE_WIDTH = 1.25;
@@ -444,18 +446,61 @@ function lettersOf(r, a, b) {
   return out;
 }
 
-function letterToken(r, letters, i, j) {
+function drawingOf(r, letters, i, j) {
   const d = new Drawing(r.looks);
   for (let m = i; m <= j; m++) d.add(letters[m].text, letters[m].look, letters[m].icon);
-  return made(r.value, letters[i].start, letters[j].end, d.id(), d.label);
+  return { id: d.id(), label: d.label };
+}
+
+function letterToken(r, letters, i, j) {
+  const { id, label } = drawingOf(r, letters, i, j);
+  return made(r.value, letters[i].start, letters[j].end, id, label);
+}
+
+// The letters a caret can stand between, as [first, last] letter indices: a character Herdr would cut stays whole.
+function unitsOf(s, letters) {
+  const units = [];
+  let first = 0;
+  for (let m = 0; m < letters.length; m++) {
+    if (m < letters.length - 1 && cuts(s, letters[m].end)) continue;
+    units.push([first, m]);
+    first = m + 1;
+  }
+  return units;
+}
+
+// A token per unit, each drawing the whole word moved left by the units before it, in a box as wide as its own: a
+// letter laid out alone is rounded up to whole pixels and loses its kerning, so a word of such tokens spreads out.
+// `measure` takes the drawings of the word's prefixes and gives their drawn widths, or null until it knows them.
+function clippedTokens(r, letters, units, measure) {
+  const prefixes = units.map(([, m]) => drawingOf(r, letters, 0, m));
+  const edges = measure(prefixes);
+  if (!edges) return null;
+  const word = prefixes[prefixes.length - 1], head = `:${word.label.length}:${word.label}${word.id}`, out = [];
+  let x = 0;
+  for (let u = 0; u < units.length; u++) {
+    const [i, m] = units[u], width = edges[u] - x;
+    if (!(width > 0)) return null;
+    out.push(made(r.value, letters[i].start, letters[m].end, `${CLIP}${x}:${width}${head}`, drawingOf(r, letters, i, m).label));
+    x = edges[u];
+  }
+  return out;
+}
+
+// -> { x, width, id, label } for a clipped token's id: its box across the word, and the word's drawing; else null.
+export function clipOf(id) {
+  if (!id.startsWith(CLIP)) return null;
+  const a = id.indexOf(":"), b = id.indexOf(":", a + 1), c = id.indexOf(":", b + 1), end = c + 1 + Number(id.slice(b + 1, c));
+  return { x: Number(id.slice(1, a)), width: Number(id.slice(a + 1, b)), label: id.slice(c + 1, end), id: id.slice(end) };
 }
 
 const touches = (start, end, x) => x >= start && x <= end;
 
 // -> { tokens, sel }: the field's tokens for selection `sel` (null: none known), each as set_value takes it ({ range,
 // token: { id, text, label } }), and the selection moved off any token's inside. A word holding or touching an end of
-// the selection is a token per letter, so the caret can stop between them; every other word is one token.
-export function tokensFor(r, sel) {
+// the selection is a token per letter, so the caret can stop between them; every other word is one token. With
+// `measure` (see clippedTokens) a split word's letters keep the places they have in the whole word.
+export function tokensFor(r, sel, measure = null) {
   const { atoms, tokenized, wordEnd } = r, s = r.value, n = atoms.count, tokens = [];
   const caret = sel && sel.start === sel.end;
   const a = sel ? snapped(r, sel.start, caret ? CARET : START) : -1;
@@ -467,13 +512,10 @@ export function tokensFor(r, sel) {
     const start = atoms.start[k], end = atoms.end[last];
     if (!sel || !(touches(start, end, a) || touches(start, end, b))) tokens.push(tokenOf(r, k, last));
     else {
-      const letters = lettersOf(r, k, last);
-      let unit = 0;
-      for (let m = 0; m < letters.length; m++) {
-        if (m < letters.length - 1 && cuts(s, letters[m].end)) continue;
-        tokens.push(letterToken(r, letters, unit, m));
-        unit = m + 1;
-      }
+      const letters = lettersOf(r, k, last), units = unitsOf(s, letters);
+      const clipped = measure && clippedTokens(r, letters, units, measure);
+      if (clipped) tokens.push(...clipped);
+      else for (const [i, m] of units) tokens.push(letterToken(r, letters, i, m));
     }
     k = last;
   }
@@ -540,8 +582,11 @@ function lookOf(name) {
 }
 
 // What a token draws, from its id and label: pieces { text, ...look } in order (`mark` a highlight's colour, `color` a
-// text colour), { icon } for a picture's icon, and { text, point } for a point comment's marker.
+// text colour), { icon } for a picture's icon, and { text, point } for a point comment's marker. A clipped token draws
+// its whole word.
 export function piecesOf(id, label) {
+  const clip = clipOf(id);
+  if (clip) return piecesOf(clip.id, clip.label);
   const out = [];
   let at = 0;
   for (const part of id.split(",")) {
