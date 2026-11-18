@@ -18,7 +18,7 @@ const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, NOTE, LANG, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths, dashWidth, dashesFor, dashesAtLeast, lineX, COLUMN, MARGIN, RESIZE, BLOCK_BUTTON } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths, dashWidth, dashesFor, dashesAtLeast, draggedWidth, lineX, COLUMN, MARGIN, RESIZE, BLOCK_BUTTON } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 
@@ -11522,9 +11522,10 @@ const buttonOf = (m, key, t = m.tree()) => find(t, `md-block-comment-${key}`);
 const buttonsIn = t => all(t, n => /^md-(block|frame)-comment-/.test(n.id ?? "")).map(n => n.id);
 // A point inside block `key`'s box, away from its strip and its top right corner.
 const overBlock = (m, key) => ({ x: leftOf(m) + 60, y: pageTop(m, key) + m.view.data.get(key).space + 34 });
+// The button is placed from its block's left edge, which a grid spreading left of the text column takes with it.
 const buttonPoint = (m, key) => {
-  const s = must(m.tree(), `md-block-comment-${key}`).style;
-  return { x: leftOf(m) + s.left + s.w / 2, y: pageTop(m, key) + s.top + s.h / 2 };
+  const s = must(m.tree(), `md-block-comment-${key}`).style, d = m.view.data.get(key), edge = d.grid ? Math.min(0, d.gridLeft) : 0;
+  return { x: leftOf(m) + edge + s.left + s.w / 2, y: pageTop(m, key) + s.top + s.h / 2 };
 };
 // The pointer comes over the block, then onto its button, and presses it on the page.
 async function pressButton(m, key) {
@@ -12615,7 +12616,7 @@ const gridY = (m, i, r) => {
 };
 const gridX = (m, i, c) => {
   const d = m.view.data.get(keyAt(m, i));
-  return leftOf(m) + d.depth * INDENT + GRID.line + d.grid.widths.slice(0, c).reduce((a, w) => a + w + GRID.line, 0);
+  return leftOf(m) + d.gridLeft + GRID.line + d.grid.widths.slice(0, c).reduce((a, w) => a + w + GRID.line, 0);
 };
 const cellKeyUp = (m, key, r, c, k, modifiers = {}) => fire(must(m.tree(), `md-field-${key}-${r}-${c}`), "on_key_up", { key: k, keystroke: k, modifiers: { ...NO_MODS, ...modifiers } }, m.cx);
 
@@ -13598,23 +13599,24 @@ test("in a cell Backspace at its start and forward Delete at its end change noth
   assert.ok(p.view.offset > 0, "the page moved");
 });
 
-// A sized table wider than its room (716 px of text column and 60 px past it in a 900 px pane): 60, 40 and 50 dashes.
+// A sized table wider than its room (716 px of text column and 60 px either side of it in a 900 px pane): 60, 40 and
+// 50 dashes.
 const WIDE_DOC = `Intro\n\n| a | b | c |\n|${"-".repeat(60)}|${"-".repeat(40)}|${"-".repeat(50)}|\n| one | two | three |\n\nEnd\n`;
 const WIDE_SIZES = { 0: 24, 1: 14 + gridH(2), 2: 38 };
 const panNow = (m, key) => m.view.panOf(m.view.data.get(key));
 // The screen point on the line right of column c of grid table block i, `dx` px right of it, level with row 1.
 const lineOn = (m, i, c, dx = 0) => {
   const d = m.view.data.get(keyAt(m, i));
-  return { x: leftOf(m) + d.depth * INDENT + lineX(d.grid.widths, c) - m.view.panOf(d) + dx, y: gridY(m, i, 1) + 8 };
+  return { x: leftOf(m) + d.gridLeft + lineX(d.grid.widths, c) - m.view.panOf(d) + dx, y: gridY(m, i, 1) + 8 };
 };
 
-test("a table whose dashes add up to more than its room is drawn that wide from the column's left edge, clipped to its room; Shift+wheel and a sideways gesture over it pan it, a shade at each edge with more that way; up and down scroll the page", async () => {
+test("a table whose dashes add up to more than its room is drawn that wide, clipped to its room; Shift+wheel and a sideways gesture over it pan it, a shade at each edge with more that way; up and down scroll the page", async () => {
   const m = await page(WIDE_DOC, WIDE_SIZES, 100), table = keyAt(m, 1), d = m.view.data.get(table), adv = m.view.calOf("cell").advance;
   const room = m.view.gridRoom(d);
   assert.deepEqual(d.grid.widths, [60, 40, 50].map(n => dashWidth(n, adv)));
   assert.ok(d.grid.w > room, `${d.grid.w} px in ${room}`);
   const box = must(m.tree(), `md-table-box-${table}`), clip = must(m.tree(), `md-table-clip-${table}`);
-  assert.deepEqual([box.style.w, clip.style.overflow_hidden, gridOfKey(m, table).style.ml], [room, true, undefined], "from the column's left edge");
+  assert.deepEqual([box.style.w, clip.style.overflow_hidden, gridOfKey(m, table).style.ml], [room, true, undefined], "its first column showing");
   const shades = () => ["left", "right"].map(side => Boolean(find(m.tree(), `md-table-shade-${side}-${table}`)));
   assert.deepEqual(shades(), [false, true], "more to the right");
   const on = { x: leftOf(m) + 100, y: topOf(m, 1) + d.space + 10 };
@@ -13650,12 +13652,12 @@ test("the caret in a cell off to the side of a wide table pans it into view, the
   assert.deepEqual(m.view.cell, { r: 1, c: 2 });
   assert.equal(panNow(m, table), d.grid.w - room, "the third column's right edge at its room's");
   const x = () => m.view.fieldInPane(1).x;
-  assert.equal(x(), leftOf(m) + lineX(d.grid.widths, 1) + GRID.line + GRID.padX - panNow(m, table), "the cell's box where it is drawn");
+  assert.equal(x(), leftOf(m) + d.gridLeft + lineX(d.grid.widths, 1) + GRID.line + GRID.padX - panNow(m, table), "the cell's box where it is drawn");
   const was = x();
   scroll(m, { x: leftOf(m) + 100, y: topOf(m, 1) + d.space + 10 }, 50, 0, { touch_phase: "started" });
   assert.equal(x(), was + 50, "a pan moves it");
   escape(m);
-  await clickAt(m, { x: leftOf(m) + lineX(d.grid.widths, 1) + GRID.line + 7 - panNow(m, table), y: gridY(m, 1, 1) + 8 });
+  await clickAt(m, { x: leftOf(m) + d.gridLeft + lineX(d.grid.widths, 1) + GRID.line + 7 - panNow(m, table), y: gridY(m, 1, 1) + 8 });
   assert.deepEqual([m.view.cell, m.view.field.selection], [{ r: 1, c: 2 }, at(0)], "a press on a panned cell's padding opens that cell");
   act(m, "mdb-shift-tab");
   act(m, "mdb-shift-tab");
@@ -13809,12 +13811,13 @@ test("a column's line let go over a comment's card, past the page column, ends t
   assert.equal(must(m.tree(), "md-viewport").kids.at(-1).id, "md-resizing", "the cover is drawn over every card and float");
   const firstMove = bubble(m, under, "on_mouse_move", { x: from.x + 40, y: from.y });
   bubble(m, under, "on_mouse_move", over);
-  const dragged = m.view.data.get(table).grid.widths;
-  assert.equal(dragged[1], dashWidth(dashesFor(g0.widths[1] + over.x - from.x, adv), adv), "the line under the pointer");
+  const dragged = m.view.data.get(table).grid.widths, kept = dashesAtLeast(g0.widths[0], adv);
+  const pulled = dashesFor(draggedWidth(g0.widths[1], over.x - from.x, m.view.tableSpan(), m.view.textWidth(), dashWidth(kept, adv) + 3 * GRID.line), adv);
+  assert.equal(dragged[1], dashWidth(pulled, adv), "as wide as the pointer pulled it");
   assert.equal(bubble(m, under, "on_mouse_up:left", over, { click_count: 0 }), "md-resizing", "the cover hears the release first");
   await flush();
   assert.deepEqual([m.view.resize, find(m.tree(), "md-resizing")], [null, null], "the drag is over");
-  const written = [dashesAtLeast(g0.widths[0], adv), dashesFor(g0.widths[1] + over.x - from.x, adv)];
+  const written = [kept, pulled];
   assert.equal(m.view.text, doc.replace("|---|---|", `|${"-".repeat(written[0])}|${"-".repeat(written[1])}|`), "its widths written");
   hover(m, { x: over.x + 60, y: over.y });
   assert.deepEqual(m.view.data.get(table).grid.widths, dragged, "the line no longer follows the pointer");
@@ -13871,8 +13874,8 @@ test("while a line is dragged, a move that changes no column's dashes builds and
   assert.ok(panNow(w, wide) === pan + 30 && w.cx.notified > editing, "a cell of it edited: the floats over it follow");
 });
 
-// A sized table wider than the text column (716 px) that fits the room a 1400 px pane gives it (1026 px): 106, 30 and
-// 7 dashes, so the second column's text starts past the column's right edge.
+// A sized table of 1007 px, wider than the text column (716 px) and within the room a 1400 px pane gives it (1336 px):
+// 106, 30 and 7 dashes. Centred, its last column lies past the text column's right edge.
 const OUT_TABLE = `| Name | Link | N |\n|${"-".repeat(106)}|${"-".repeat(30)}|${"-".repeat(7)}|\n| apple | [docs](https://e.com/d) and more | 1 |\n| pear | plain words | 2 |`;
 const OUT_DOC = `Intro\n\n${OUT_TABLE}\n\nEnd\n`;
 const OUT_SIZES = { 0: 24, 1: 14 + gridH(3), 2: 38 };
@@ -13880,52 +13883,31 @@ const OUT_PANE = 1400;
 const outPage = (disk = OUT_DOC, sizes = OUT_SIZES) => page(disk, sizes, 600, OUT_PANE);
 const shadesOf = (m, key) => ["left", "right"].map(side => Boolean(find(m.tree(), `md-table-shade-${side}-${key}`)));
 
-test("a table wider than the text column spreads out to the right, its box as wide as its grid up to the pane's edge less the page's padding, the block as wide too; it pans only when wider than that; its room follows the pane's width", async () => {
-  const m = await outPage(), table = keyAt(m, 1), d = m.view.data.get(table), room = m.view.gridRoom(d);
-  const box = () => must(m.tree(), `md-table-box-${table}`);
-  assert.equal(room, OUT_PANE - COLUMN.padX - leftOf(m), "to the pane's edge less the page's padding");
-  assert.ok(d.grid.w > m.view.textWidth() && d.grid.w <= room, `${d.grid.w} px: wider than the column, within ${room}`);
-  assert.deepEqual([box().style.w, blockAt(m, 1).style.min_w, gridOfKey(m, table).style.ml, shadesOf(m, table)], [d.grid.w, d.grid.w, undefined, [false, false]], "drawn whole past the column");
-  scroll(m, { x: leftOf(m) + 100, y: topOf(m, 1) + d.space + 10 }, 0, -40, { touch_phase: "started", modifiers: { shift: true } });
-  assert.equal(panNow(m, table), 0, "Shift+wheel: nothing to pan");
-  viewportOf(m, 1100);
-  const narrower = 1100 - COLUMN.padX - leftOf(m);
-  assert.deepEqual([m.view.gridRoom(m.view.data.get(table)), box().style.w, shadesOf(m, table)], [narrower, narrower, [false, true]], "a narrower pane: as much as it has room for, the rest panned to");
-  viewportOf(m, OUT_PANE);
-  assert.deepEqual([box().style.w, shadesOf(m, table)], [d.grid.w, [false, false]], "wide again");
-  reset();
-  const w = await outPage(WIDE_DOC, WIDE_SIZES), wide = keyAt(w, 1), dw = w.view.data.get(wide), wideRoom = w.view.gridRoom(dw);
-  assert.ok(dw.grid.w > wideRoom, `${dw.grid.w} px in ${wideRoom}`);
-  assert.deepEqual([must(w.tree(), `md-table-box-${wide}`).style.w, shadesOf(w, wide)], [wideRoom, [false, true]], "wider than its room: that much shows");
-  scroll(w, { x: leftOf(w) + 100, y: topOf(w, 1) + dw.space + 10 }, -5000, 0, { touch_phase: "started" });
-  assert.equal(panNow(w, wide), dw.grid.w - wideRoom, "it pans as far as its right edge");
-});
-
-test("a press on a cell past the text column opens that cell: in its field with the caret where pressed, nothing panned; on its padding at the start or the end of its text; Tab into a cell out there doesn't pan; a press past the table's room is beside the page", async () => {
+test("a press on a cell past the text column opens that cell: in its field with the caret where pressed, nothing panned; on its padding at the start or the end of its text; Tab into a cell out there doesn't pan; a press past the grid's right edge is beside the page", async () => {
   const m = await outPage(), table = keyAt(m, 1), d = m.view.data.get(table);
-  assert.ok(cellOrigin(m, 1, 1, 1).x - leftOf(m) > m.view.textWidth(), "the second column's text starts past the column");
-  await pressCell(m, table, 2, 1, 3);
-  assert.deepEqual([...caretAt(m), panNow(m, table)], [table, { r: 2, c: 1 }, at(3), 0]);
-  assert.equal(m.view.fieldInPane(1).x, cellOrigin(m, 1, 2, 1).x, "the cell's box where it is drawn");
+  assert.ok(cellOrigin(m, 1, 1, 2).x - leftOf(m) > m.view.textWidth(), "the last column's text starts past the column");
+  await pressCell(m, table, 2, 2, 1);
+  assert.deepEqual([...caretAt(m), panNow(m, table)], [table, { r: 2, c: 2 }, at(1), 0]);
+  assert.equal(m.view.fieldInPane(1).x, cellOrigin(m, 1, 2, 2).x, "the cell's box where it is drawn");
   const padding = GRID.padX - 4;
-  await clickAt(m, { x: gridX(m, 1, 1) + padding, y: gridY(m, 1, 1) + 8 });
-  assert.deepEqual([...caretAt(m), panNow(m, table)], [table, { r: 1, c: 1 }, at(0), 0], "its padding left of its text");
-  await clickAt(m, { x: gridX(m, 1, 1) + d.grid.widths[1] - padding, y: gridY(m, 1, 2) + 8 });
-  assert.deepEqual(caretAt(m), [table, { r: 2, c: 1 }, at("plain words".length)], "right of it");
+  await clickAt(m, { x: gridX(m, 1, 2) + padding, y: gridY(m, 1, 1) + 8 });
+  assert.deepEqual([...caretAt(m), panNow(m, table)], [table, { r: 1, c: 2 }, at(0), 0], "its padding left of its text");
+  await clickAt(m, { x: gridX(m, 1, 2) + d.grid.widths[2] - padding, y: gridY(m, 1, 2) + 8 });
+  assert.deepEqual(caretAt(m), [table, { r: 2, c: 2 }, at("2".length)], "right of it");
   await pressCell(m, table, 1, 0, 0);
   act(m, "mdb-tab");
   act(m, "mdb-tab");
   assert.deepEqual([m.view.cell, panNow(m, table)], [{ r: 1, c: 2 }, 0], "Tab to the last column: it shows");
-  await clickAt(m, { x: leftOf(m) + m.view.gridRoom(d) + 8, y: gridY(m, 1, 1) + 8 });
-  assert.equal(m.view.activeKey, null, "past its room");
+  await clickAt(m, { x: leftOf(m) + d.gridLeft + d.grid.w + 8, y: gridY(m, 1, 1) + 8 });
+  assert.equal(m.view.activeKey, null, "past the grid's right edge");
 });
 
-test("the line of a column out there shows under the pointer and drags: the table grows as wide as its room before it pans", async () => {
+test("the line of a column out there shows under the pointer and drags: the table grows both ways as wide as its room before it pans", async () => {
   const m = await outPage(), table = keyAt(m, 1), d = m.view.data.get(table), room = m.view.gridRoom(d);
   hover(m, lineOn(m, 1, 2));
   assert.equal(find(m.tree(), `md-resize-${table}`)?.style.left, lineX(d.grid.widths, 2) - RESIZE.grab, "the grid's right edge, past the column");
   const from = lineOn(m, 1, 2);
-  drag(m, from, { x: from.x + room - d.grid.w - RESIZE.grab, y: from.y });
+  drag(m, from, { x: from.x + (room - d.grid.w) / 2 - RESIZE.grab, y: from.y });
   await flush();
   const wider = m.view.data.get(table);
   assert.ok(wider.grid.w > d.grid.w && wider.grid.w <= room, `${wider.grid.w} px from ${d.grid.w}, within ${room}`);
@@ -13937,7 +13919,7 @@ test("the line of a column out there shows under the pointer and drags: the tabl
   assert.ok(widest.grid.w > room && pan > 0 && lineX(widest.grid.widths, 2) - pan < room, `${widest.grid.w} px panned ${pan}: past its room, the line in view`);
 });
 
-test("over a cell out there, come to by Tab, a link's popover and the format bar show where the cell is drawn", async () => {
+test("over a cell reaching past the text column, come to by Tab, a link's popover and the format bar show where the cell is drawn", async () => {
   const m = await outPage(), table = keyAt(m, 1), state = m.view.cellField(table, 1, 1), advance = m.view.calOf("cell").advance;
   const docsAt = state.value().indexOf("docs"), docs = state.tokens().find(t => t.range.start <= docsAt && docsAt < t.range.end);
   await pressCell(m, table, 1, 0, 0);
@@ -13967,7 +13949,7 @@ test("the table's Comment button sits right of its grid's top right corner out t
   assert.equal(must(m.tree(), `md-comment-frame-${table}`).style.w, d.grid.w, "the frame over the whole grid");
   reset();
   const c = await widePage(OUT_DOC.replace("Intro", "Intro {==here==}{>>a note<<}"), OUT_SIZES), key = keyAt(c, 1), dc = c.view.data.get(key), room = c.view.gridRoom(dc);
-  assert.equal(leftOf(c) + room, WIDE.cardLeft - MARGIN.gap, "MARGIN.gap short of the cards");
+  assert.equal(leftOf(c) + dc.gridLeft + room, WIDE.cardLeft - MARGIN.gap, "MARGIN.gap short of the cards");
   assert.deepEqual([must(c.tree(), `md-table-box-${key}`).style.w, shadesOf(c, key)], [room, [false, true]], "the rest of it pans");
   hover(c, overBlock(c, key));
   const inside = must(c.tree(), `md-block-comment-${key}`).style;
@@ -13977,7 +13959,8 @@ test("the table's Comment button sits right of its grid's top right corner out t
 });
 
 test("a drag that starts on a cell out there and goes down beside the page selects blocks; Down from a cell out there comes into the column under the caret of a wide table below", async () => {
-  const m = await outPage(), table = keyAt(m, 1), from = { x: gridX(m, 1, 1) + GRID.padX - 4, y: gridY(m, 1, 2) + 8 };
+  const m = await outPage(), table = keyAt(m, 1), from = { x: gridX(m, 1, 2) + GRID.padX - 4, y: gridY(m, 1, 2) + 8 };
+  assert.ok(from.x - leftOf(m) > m.view.textWidth(), "a cell past the text column");
   down(m, from);
   hover(m, { x: from.x, y: from.y + 6 });
   hover(m, { x: from.x, y: topOf(m, 2) + 20 });
@@ -13988,9 +13971,10 @@ test("a drag that starts on a cell out there and goes down beside the page selec
   const two = await outPage(`Intro\n\n${OUT_TABLE}\n\n${OUT_TABLE}\n\nEnd\n`, { 0: 24, 1: 14 + gridH(3), 2: 14 + gridH(3), 3: 38 }), [a, b] = [keyAt(two, 1), keyAt(two, 2)];
   await pressCell(two, a, 2, 0, 0);
   act(two, "mdb-tab");
-  assert.deepEqual([two.view.cell, panNow(two, a)], [{ r: 2, c: 1 }, 0]);
+  act(two, "mdb-tab");
+  assert.deepEqual([two.view.cell, panNow(two, a)], [{ r: 2, c: 2 }, 0]);
   act(two, "mdb-down");
-  assert.deepEqual([two.view.activeKey, two.view.cell, panNow(two, b)], [b, { r: 0, c: 1 }, 0], "the column under the caret");
+  assert.deepEqual([two.view.activeKey, two.view.cell, panNow(two, b)], [b, { r: 0, c: 2 }, 0], "the column under the caret");
 });
 
 test("in a pane with no room right of the text column a wide table keeps to the column and pans there", async () => {
@@ -14005,4 +13989,153 @@ test("in a pane with no room right of the text column a wide table keeps to the 
   assert.deepEqual([m.view.cell, panNow(m, table)], [{ r: 1, c: 1 }, lineX(d.grid.widths, 1) + GRID.line - room], "Tab pans to the cell");
   await clickAt(m, { x: leftOf(m) + room + 8, y: gridY(m, 1, 1) + 8 });
   assert.equal(m.view.activeKey, null, "a press right of the column is beside the page");
+});
+
+// A sized table of 1074 px in a 1400 px pane (text column 716 px, from 342): centred, it starts 179 px left of the text
+// and its first column (20 dashes) lies wholly left of it. Without its last column it is 855 px.
+const CENTRED_TABLE = `| Name | Notes | Size | N |\n|${"-".repeat(20)}|${"-".repeat(60)}|${"-".repeat(40)}|${"-".repeat(30)}|\n| [docs](https://e.com/d) and more | plain | 1 | x |\n| pear words | plain words and more | 2 | y |`;
+const NARROWER_TABLE = `| Name | Notes | Size |\n|${"-".repeat(20)}|${"-".repeat(60)}|${"-".repeat(40)}|\n| pear | plain words | 2 |`;
+const CENTRED_DOC = `Intro\n\n${CENTRED_TABLE}\n\nEnd\n`;
+const centredPage = (disk = CENTRED_DOC, sizes = OUT_SIZES) => page(disk, sizes, 600, OUT_PANE);
+const listed = table => `- item\n\n  ${table.split("\n").join("\n  ")}\n\nEnd\n`;
+// A pane with no room beside the text column.
+async function columnOnlyPage(disk, sizes) {
+  const m = await mount({ disk });
+  fire(must(m.tree(), "md-root"), "on_size_change", { width: 700, height: 660 }, m.cx);
+  viewportOf(m, 700, 600);
+  await heights(m, sizes);
+  return m;
+}
+
+test("a table wider than the text column is centred on it, as far left of the text as right of it, its block with it; it pans only when wider than the pane less its padding, from padding to padding; one no wider than the text stays at the column's left edge", async () => {
+  const m = await centredPage(), table = keyAt(m, 1), d = m.view.data.get(table), textW = m.view.textWidth();
+  const left = -d.gridLeft, right = d.gridLeft + d.grid.w - textW, box = () => must(m.tree(), `md-table-box-${table}`);
+  assert.ok(left > 0 && Math.abs(left - right) <= 1, `${left} px left of the text, ${right} px right of it`);
+  assert.deepEqual([blockAt(m, 1).style.ml, blockAt(m, 1).style.min_w, box().style.w, shadesOf(m, table)], [d.gridLeft, d.grid.w, d.grid.w, [false, false]], "drawn whole, its block from its left edge");
+  assert.equal(m.view.gridRoom(d), OUT_PANE - 2 * COLUMN.padX, "its room: the pane less its padding");
+  const over = () => ({ x: leftOf(m) + 100, y: topOf(m, 1) + m.view.data.get(table).space + 10 });
+  scroll(m, over(), 0, -40, { touch_phase: "started", modifiers: { shift: true } });
+  assert.equal(panNow(m, table), 0, "Shift+wheel: nothing to pan");
+  viewportOf(m, 1000);
+  const dn = m.view.data.get(table), room = 1000 - 2 * COLUMN.padX;
+  assert.deepEqual([leftOf(m) + dn.gridLeft, m.view.gridRoom(dn), box().style.w, shadesOf(m, table)], [COLUMN.padX, room, room, [false, true]], "a narrower pane: padding to padding, the rest panned to");
+  scroll(m, over(), -5000, 0, { touch_phase: "started" });
+  assert.equal(panNow(m, table), dn.grid.w - room, "it pans as far as its right edge");
+  viewportOf(m, OUT_PANE);
+  assert.deepEqual([m.view.data.get(table).gridLeft, box().style.w, shadesOf(m, table)], [d.gridLeft, d.grid.w, [false, false]], "wide again");
+  reset();
+  const n = await centredPage(CELLS_DOC, CELLS_SIZES), small = keyAt(n, 1);
+  assert.deepEqual([n.view.data.get(small).gridLeft, blockAt(n, 1).style.ml], [0, undefined], "no wider than the text: at the column's left edge");
+});
+
+test("with comments in the margin a wide table stops MARGIN.gap short of the cards and spreads left, as far as the pane's padding", async () => {
+  const note = "Intro {==here==}{>>a note<<}", sizes = { 0: 24, 1: 14 + gridH(2), 2: 38 };
+  const m = await widePage(`${note}\n\n${NARROWER_TABLE}\n\nEnd\n`, sizes), key = keyAt(m, 1), d = m.view.data.get(key);
+  const from = leftOf(m) + d.gridLeft, to = from + m.view.gridShownW(d);
+  assert.deepEqual([d.grid.w, to], [855, WIDE.cardLeft - MARGIN.gap], "short of the cards");
+  assert.ok(leftOf(m) - from > to - (leftOf(m) + m.view.textWidth()), `${leftOf(m) - from} px left of the text, ${to - leftOf(m) - m.view.textWidth()} right of it`);
+  reset();
+  const w = await widePage(CENTRED_DOC.replace("Intro", note), OUT_SIZES), wide = keyAt(w, 1), dw = w.view.data.get(wide);
+  assert.deepEqual([leftOf(w) + dw.gridLeft, leftOf(w) + dw.gridLeft + w.view.gridShownW(dw), shadesOf(w, wide)], [COLUMN.padX, WIDE.cardLeft - MARGIN.gap, [false, true]], "wider than that: padding to the cards, the rest panned to");
+});
+
+test("a press on a cell left of the text column opens it: in its field with the caret where pressed, on its padding at its text's start or end; a press left of the grid is beside the page", async () => {
+  const m = await centredPage(), table = keyAt(m, 1), d = m.view.data.get(table);
+  assert.ok(gridX(m, 1, 1) < leftOf(m), "the first column lies left of the text");
+  await pressCell(m, table, 2, 0, 3);
+  assert.deepEqual([...caretAt(m), panNow(m, table)], [table, { r: 2, c: 0 }, at(3), 0]);
+  assert.equal(m.view.fieldInPane(1).x, cellOrigin(m, 1, 2, 0).x, "the cell's box where it is drawn");
+  const padding = GRID.padX - 4;
+  await clickAt(m, { x: gridX(m, 1, 0) + padding, y: gridY(m, 1, 1) + 8 });
+  assert.deepEqual(caretAt(m), [table, { r: 1, c: 0 }, at(0)], "its padding left of its text");
+  await clickAt(m, { x: gridX(m, 1, 0) + d.grid.widths[0] - padding, y: gridY(m, 1, 2) + 8 });
+  assert.deepEqual(caretAt(m), [table, { r: 2, c: 0 }, at("pear words".length)], "right of it");
+  await clickAt(m, { x: gridX(m, 1, 0) - 12, y: gridY(m, 1, 1) + 8 });
+  assert.equal(m.view.activeKey, null, "left of the grid");
+});
+
+test("the line of a column left of the text shows under the pointer and drags it, the table centred still and the line under the pointer; the right edge of a table no wider than the text dragged past it spreads the table both ways", async () => {
+  const m = await centredPage(), table = keyAt(m, 1), d = m.view.data.get(table), textW = m.view.textWidth(), advance = m.view.calOf("cell").advance;
+  const from = lineOn(m, 1, 0), to = { x: from.x - 40, y: from.y };
+  assert.ok(from.x < leftOf(m), "the first column's line, left of the text");
+  hover(m, from);
+  assert.equal(find(m.tree(), `md-resize-${table}`)?.style.left, lineX(d.grid.widths, 0) - RESIZE.grab);
+  drag(m, from, to);
+  await flush();
+  const after = m.view.data.get(table);
+  assert.ok(after.grid.widths[0] < d.grid.widths[0] && m.view.text !== CENTRED_DOC, `narrower: ${after.grid.widths[0]} px from ${d.grid.widths[0]}`);
+  assert.equal(after.gridLeft, Math.floor((textW - after.grid.w) / 2), "centred");
+  assert.ok(Math.abs(lineOn(m, 1, 0).x - to.x) <= advance, `the line at ${lineOn(m, 1, 0).x}, the pointer at ${to.x}`);
+  reset();
+  const n = await centredPage(CELLS_DOC, CELLS_SIZES), small = keyAt(n, 1), edge = lineOn(n, 1, 1), far = { x: edge.x + 800, y: edge.y };
+  drag(n, edge, far, 1);
+  await flush();
+  const ds = n.view.data.get(small);
+  assert.ok(ds.gridLeft < 0 && ds.gridLeft + ds.grid.w > textW, `spread both ways: ${ds.gridLeft} to ${ds.gridLeft + ds.grid.w}`);
+  assert.ok(Math.abs(lineOn(n, 1, 1).x - far.x) <= advance, `the right edge at ${lineOn(n, 1, 1).x}, the pointer at ${far.x}`);
+  viewportOf(n, 1000);
+  assert.deepEqual([panNow(n, small), shadesOf(n, small)], [0, [false, true]], "nothing panned while it showed whole: a narrower pane shows its first column");
+});
+
+test("over a cell left of the text a link's popover and the format bar show where the cell is drawn", async () => {
+  const m = await centredPage(), table = keyAt(m, 1), state = m.view.cellField(table, 1, 0), advance = m.view.calOf("cell").advance;
+  const docsAt = state.value().indexOf("docs"), docs = state.tokens().find(t => t.range.start <= docsAt && docsAt < t.range.end);
+  await clickCellToken(m, 1, 1, 0, docs);
+  const o = cellOrigin(m, 1, 1, 0), pop = popoverOf(m)?.style;
+  assert.deepEqual([m.view.cell, Boolean(pop)], [{ r: 1, c: 0 }, true]);
+  assert.ok(o.x < leftOf(m) && Math.abs(pop.left - o.x) <= 1, `the popover at ${pop.left}, the link at ${o.x}`);
+  escape(m);
+  await pressCell(m, table, 2, 0, 0);
+  m.view.field.select(5, 10);
+  cellKeyUp(m, table, 2, 0, "right", { shift: true });
+  await flush();
+  const o2 = cellOrigin(m, 1, 2, 0), bar = barOf(m)?.style;
+  assert.deepEqual([selectedText(m), bar?.top], ["words", o2.y - BAR.gap - BAR_H]);
+  assert.ok(Math.abs(bar.left - (o2.x + 5 * advance)) < 1e-6, `the bar at ${bar.left}, "words" at ${o2.x + 5 * advance}`);
+});
+
+test("a centred table's Comment button shows with the pointer over a cell left of the text, sits right of its grid's top right corner and opens a comment, its box at the grid's left edge and the frame over the whole grid; a drag from a cell left of the text going down beside the page selects blocks", async () => {
+  const m = await centredPage(), table = keyAt(m, 1), d = m.view.data.get(table);
+  hover(m, { x: gridX(m, 1, 0) + 20, y: gridY(m, 1, 1) + 8 });
+  const button = must(m.tree(), `md-block-comment-${table}`).style;
+  assert.deepEqual([button.left, button.top], [d.grid.w + BLOCK_BUTTON.gap, d.space + BLOCK_BUTTON.inset], "from the block's left edge, the grid's");
+  await pressButton(m, table);
+  assert.deepEqual([m.view.blockAdd?.key, must(m.tree(), "md-note").style.left], [table, leftOf(m) + d.gridLeft], "it opens the new comment at the grid's left edge");
+  const frame = must(m.tree(), `md-comment-frame-${table}`).style;
+  assert.deepEqual([frame.left, frame.w], [0, d.grid.w], "the frame over the whole grid");
+  reset();
+  const s = await centredPage(), key = keyAt(s, 1), from = { x: gridX(s, 1, 0) + GRID.padX - 4, y: gridY(s, 1, 2) + 8 };
+  down(s, from);
+  hover(s, { x: from.x, y: from.y + 6 });
+  hover(s, { x: from.x, y: topOf(s, 2) + 20 });
+  assert.deepEqual(s.view.sel, { from: key, to: keyAt(s, 2) }, "the table and the paragraph beside which the pointer is");
+  up(s, { x: from.x, y: topOf(s, 2) + 20 }, { click_count: 0 });
+  await flush();
+});
+
+test("Down from a cell left of the text comes into the column under the caret of a table below, centred on its own width", async () => {
+  const m = await centredPage(`Intro\n\n${CENTRED_TABLE}\n\n${NARROWER_TABLE}\n\nEnd\n`, { 0: 24, 1: 14 + gridH(3), 2: 14 + gridH(2), 3: 38 });
+  const [a, b] = [keyAt(m, 1), keyAt(m, 2)], db = m.view.data.get(b), firstLine = leftOf(m) + db.gridLeft + lineX(db.grid.widths, 0);
+  await pressCell(m, a, 2, 1, 0);
+  const x = m.view.caretX(0);
+  assert.ok(x < 0 && db.gridLeft < x, `the caret ${-x} px left of the text, the table below from ${db.gridLeft}`);
+  act(m, "mdb-down");
+  assert.deepEqual([m.view.activeKey, m.view.cell], [b, { r: 0, c: 0 }], "the first column, under the caret");
+  await pressCell(m, a, 2, 1, 16);
+  assert.ok(leftOf(m) + m.view.caretX(16) > firstLine, "right of the first column's line below");
+  act(m, "mdb-down");
+  assert.deepEqual([m.view.activeKey, m.view.cell], [b, { r: 0, c: 1 }], "the second column, under the caret");
+});
+
+test("a table in a list item no wider than the text sits at its indent; a wider one is centred on the text column, its indent left aside, and takes presses there; in a pane with no room beside the text it keeps to its indent in the column", async () => {
+  const sizes = { 0: 30, 1: 14 + gridH(3), 2: 38 }, m = await centredPage(listed(CENTRED_TABLE), sizes), key = keyAt(m, 1), d = m.view.data.get(key);
+  assert.deepEqual([d.depth, d.gridLeft], [1, Math.floor((m.view.textWidth() - d.grid.w) / 2)], "centred on the text column");
+  await clickAt(m, { x: gridX(m, 1, 0) + GRID.padX - 4, y: gridY(m, 1, 1) + 8 });
+  assert.deepEqual(caretAt(m), [key, { r: 1, c: 0 }, at(0)], "a press on a cell left of the text");
+  reset();
+  const s = await centredPage(listed("| Fruits | Size |\n|---|---|\n| apple | 12 |"), { 0: 30, 1: 14 + gridH(2), 2: 38 });
+  assert.equal(s.view.data.get(keyAt(s, 1)).gridLeft, INDENT, "at its indent");
+  reset();
+  const n = await columnOnlyPage(listed(CENTRED_TABLE), sizes), nd = n.view.data.get(keyAt(n, 1));
+  assert.deepEqual([nd.gridLeft, n.view.gridRoom(nd)], [INDENT, n.view.textWidth() - INDENT], "a narrow pane: at its indent, panning in the column");
 });

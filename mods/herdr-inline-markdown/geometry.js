@@ -332,11 +332,26 @@ export const columnLeft =(viewportW, margin = null) => (margin ? margin.pageLeft
 // `localX` is a pointer x in md-viewport coordinates.
 export const columnX = (localX, viewportW, margin = null) => localX - columnLeft(viewportW, margin);
 
-// How far right of the text column's left edge a table may reach: to the pane's right edge less the page's padding, or
-// in the margin layout `gap` short of the cards; never less than the text column, `textW` px.
-export function tableRoom(viewW, margin, textW) {
-  const right = margin ? margin.cardLeft - MARGIN.gap : viewW - COLUMN.padX;
-  return Math.max(textW, Math.floor(right - columnLeft(viewW, margin)));
+// How far tables may reach from the text column's left edge: to the pane's padding on either side, on the right in
+// the margin layout `gap` short of the cards; never inside the text column, `textW` px.
+export function tableSpan(viewW, margin, textW) {
+  const at = columnLeft(viewW, margin), right = margin ? margin.cardLeft - MARGIN.gap : viewW - COLUMN.padX;
+  return { left: Math.min(0, Math.ceil(COLUMN.padX - at)), right: Math.max(textW, Math.floor(right - at)) };
+}
+
+// Where a grid `w` px wide sits from the text column's left edge and the room it shows in: at `indent` while it shows
+// no wider than the text, else centred on it within `span`, what one side's limit stops going to the other.
+export function gridPlace(span, textW, indent, w) {
+  const room = span.right - span.left, shown = Math.min(w, room);
+  if (shown <= textW) return { left: indent, room: span.right - indent };
+  return { left: clamp(Math.floor((textW - shown) / 2), span.left, span.right - shown), room };
+}
+
+// A dragged column's width: twice the move while the grid sits centred, so that its line keeps under the pointer.
+export function draggedWidth(from, dx, span, textW, restOfGrid) {
+  const centredMin = textW - restOfGrid, centredMax = Math.max(centredMin, Math.min(textW - 2 * span.left, 2 * span.right - textW) - restOfGrid);
+  const halfway = (centredMin + centredMax) / 2, reach = from - (clamp(from, centredMin, centredMax) - centredMin) / 2 + dx;
+  return reach <= centredMin ? reach : reach <= halfway ? 2 * reach - centredMin : reach + (centredMax - centredMin) / 2;
 }
 
 export const maxOffset = (contentH, viewportH) => Math.max(0, contentH - viewportH);

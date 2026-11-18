@@ -326,36 +326,38 @@ export function renderBlock(owner, d) {
       .child(div().flex_1().min_w(0).pl(QUOTE_PAD).child(body));
   }
   // A diagram's frame and each picture draw their own selection tint: a picture can be opaque. A table's block reaches
-  // as far as its grid shows, past the text column, so that its tint covers it.
+  // as far as its grid shows on either side of the text column, so that its tint covers it. What lies over the block is
+  // placed in the column's x; the block's left edge is at `edge`, never right of the column's.
   const shown = d.mode === "rendered", diagram = shown && d.look === "diagram", picture = shown && d.look === "picture";
-  const button = owner.blockButtonIn(d);
-  return div().id(`md-block-${d.key}`).w_full().pt(d.space).pl(d.depth * INDENT)
-    .when(Boolean(d.grid), el => el.min_w(d.depth * INDENT + owner.gridShownW(d)))
+  const button = owner.blockButtonIn(d), left = d.grid ? d.gridLeft : d.depth * INDENT, edge = Math.min(0, left);
+  return div().id(`md-block-${d.key}`).w_full().pt(d.space).pl(left - edge)
+    .when(edge < 0, el => el.ml(edge))
+    .when(Boolean(d.grid), el => el.min_w(left - edge + owner.gridShownW(d)))
     .when(diagram, el => el.cursor_pointer())
     .when(picture, el => el.cursor_default())
     .when(!diagram && !picture, el => el.cursor_text())
     .when(d.selected && !d.frameW && !picture, el => el.bg(t.selection).rounded(4))
     .on_size_change((size, cx) => owner.blockSized(d.key, size, cx))
     .child(body)
-    .when(Boolean(d.framed), el => el.relative().child(commentFrame(owner, d, t)))
-    .when(Boolean(button), el => el.relative().child(blockButton(owner, d, button, t)))
-    .when(d.notes > 0, el => el.relative().child(commentCount(d, t)));
+    .when(Boolean(d.framed), el => el.relative().child(commentFrame(owner, d, t, edge)))
+    .when(Boolean(button), el => el.relative().child(blockButton(owner, d, button, t, edge)))
+    .when(d.notes > 0, el => el.relative().child(commentCount(d, t, edge)));
 }
 
 // The frame of a code block, diagram or table whose comment is active (the deeper ochre) or being written (the
 // highlight colour): an overlay on its box, its diagram's frame or its grid's shown part, so that nothing under it moves.
-function commentFrame(owner, d, t) {
+function commentFrame(owner, d, t, edge) {
   const color = d.framed === FRAMED.adding ? highlightColor(t) : deepHighlightColor(t);
   const frame = div().id(`md-comment-frame-${d.key}`).absolute().border_2().border_color(color);
   if (d.frameW) return frame.rounded(8).left(d.depth * INDENT + d.frameMl).bottom(0).w(d.frameW).h(d.frameH);
-  if (d.grid) return frame.rounded(GRID.radius).left(d.depth * INDENT).top(d.space).w(owner.gridShownW(d)).bottom(0);
+  if (d.grid) return frame.rounded(GRID.radius).left(d.gridLeft - edge).top(d.space).w(owner.gridShownW(d)).bottom(0);
   return frame.rounded(8).left(d.depth * INDENT).right(0).top(d.space).bottom(0);
 }
 
 // A code block's or table's Comment button at `box` (the editor's blockButtonIn). It takes its own press, which goes
 // no further: a table's lies over its source's field while that is edited.
-function blockButton(owner, d, box, t) {
-  return h_flex().id(`md-block-comment-${d.key}`).absolute().left(box.x).top(box.y).w(box.w).h(box.h).items_center().justify_center()
+function blockButton(owner, d, box, t, edge) {
+  return h_flex().id(`md-block-comment-${d.key}`).absolute().left(box.x - edge).top(box.y).w(box.w).h(box.h).items_center().justify_center()
     .rounded(6).cursor_pointer().tooltip(COMMENT_TIP).hover(s => s.bg(t.hover))
     .when(d.kind === "table", el => el.bg(t.popover).border_1().border_color(t.border).shadow_sm())
     .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); owner.commentPress(d.key, cx); })
@@ -364,8 +366,8 @@ function blockButton(owner, d, box, t) {
 }
 
 // The editor takes a press on it from the page, as it does a task box's.
-function commentCount(d, t) {
-  return h_flex().id(`md-notes-${d.key}`).absolute().left(d.notesX).top(d.notesY).w(NOTES.w).h(NOTES.h).gap(3).items_center().justify_center()
+function commentCount(d, t, edge) {
+  return h_flex().id(`md-notes-${d.key}`).absolute().left(d.notesX - edge).top(d.notesY).w(NOTES.w).h(NOTES.h).gap(3).items_center().justify_center()
     .rounded(6).cursor_pointer().text_size(11.5).text_color(t.muted).hover(s => s.bg(t.hover))
     .tooltip(d.notes === 1 ? "1 comment" : `${d.notes} comments`)
     .child(svg(COMMENTS_ICON).size(14).flex_none())

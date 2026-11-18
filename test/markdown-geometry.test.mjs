@@ -8,7 +8,7 @@ import {
   barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
   CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, TABLE_VIEW, tablePress, tableRowTop, GRID, columnWidths, gridRowHeights,
-  gridAt, gridRowTop, DASHES, dashWidth, dashesFor, dashesAtLeast, isSized, lineX, lineNear, revealSpan, tableRoom,
+  gridAt, gridRowTop, DASHES, dashWidth, dashesFor, dashesAtLeast, isSized, lineX, lineNear, revealSpan, tableSpan, gridPlace, draggedWidth,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
@@ -700,15 +700,45 @@ test("the margin layout: a page column of at least 520 px and a card column besi
   assert.ok(m.cardLeft + m.cardW <= 1401 - MARGIN.edge);
 });
 
-test("a table's room runs from the text column's left edge to the pane's right edge less the page's padding, in the margin layout to MARGIN.gap short of the cards, and is never narrower than the text column", () => {
-  assert.equal(tableRoom(1400, null, 716), 1400 - COLUMN.padX - columnLeft(1400), "a wide pane: 1026 px");
-  assert.equal(tableRoom(900, null, 716), 776, "60 px right of the text column in a 900 px pane");
-  const margin = marginLayout(1400);
-  assert.equal(columnLeft(1400, margin) + tableRoom(1400, margin, 716), margin.cardLeft - MARGIN.gap, "short of the cards");
-  assert.equal(tableRoom(1400, margin, 716), 716 + COLUMN.padX, "the page's right padding");
-  assert.equal(tableRoom(700, null, 636), 636, "a narrow pane: the text column");
-  assert.equal(tableRoom(600, null, 716), 716, "never narrower than the text column");
-  assert.equal(tableRoom(1001, null, 716), Math.floor(1001 - COLUMN.padX - columnLeft(1001)), "whole pixels");
+test("tables reach, from the text column's left edge, to the pane's padding on either side, on the right in the margin layout to MARGIN.gap short of the cards; never inside the text column", () => {
+  assert.deepEqual(tableSpan(1400, null, 716), { left: COLUMN.padX - columnLeft(1400), right: 1400 - COLUMN.padX - columnLeft(1400) }, "a wide pane: -310 to 1026");
+  assert.deepEqual(tableSpan(900, null, 716), { left: -60, right: 776 }, "60 px either side of the text column in a 900 px pane");
+  const margin = marginLayout(1400), at = columnLeft(1400, margin), span = tableSpan(1400, margin, 716);
+  assert.deepEqual([at + span.left, at + span.right], [COLUMN.padX, margin.cardLeft - MARGIN.gap], "the pane's padding on the left, short of the cards");
+  assert.equal(span.right, 716 + COLUMN.padX, "the page's right padding");
+  assert.deepEqual(tableSpan(1000, marginLayout(1000), 620), { left: -16, right: 652 }, "a narrower margin layout: 16 px left of the text column");
+  assert.deepEqual(tableSpan(700, null, 636), { left: 0, right: 636 }, "a narrow pane: the text column");
+  assert.deepEqual(tableSpan(600, null, 716), { left: 0, right: 716 }, "never inside the text column");
+  assert.deepEqual(tableSpan(1001, null, 716), { left: -110, right: 826 }, "whole pixels, inside the padding");
+});
+
+test("a grid no wider than the text column sits at its indent; a wider one is centred on the text column, and where one side reaches its limit the rest goes the other way; its room is the whole span, past which it pans", () => {
+  const wide = tableSpan(1400, null, 716);
+  assert.deepEqual(gridPlace(wide, 716, 0, 600), { left: 0, room: 1026 }, "narrower than the text: as before");
+  assert.deepEqual(gridPlace(wide, 716, 0, 716), { left: 0, room: 1026 }, "as wide as the text");
+  assert.deepEqual(gridPlace(wide, 716, 0, 1007), { left: -146, room: 1336 }, "centred: 146 px left of the text, 145 right");
+  assert.deepEqual(gridPlace(wide, 716, 0, 1336), { left: -310, room: 1336 }, "the whole span");
+  assert.deepEqual(gridPlace(wide, 716, 0, 2000), { left: -310, room: 1336 }, "wider than the span: it shows that much");
+  assert.deepEqual([gridPlace(wide, 716, 24, 600), gridPlace(wide, 716, 24, 1007)], [{ left: 24, room: 1002 }, { left: -146, room: 1336 }], "in a list item: the indent only while no wider than the text");
+  const cards = tableSpan(1400, marginLayout(1400), 716);
+  assert.deepEqual([760, 860, 916, 1200].map(w => gridPlace(cards, 716, 0, w).left), [-22, -112, -168, -168], "short of the cards: centred, then the rest to the left");
+  const tight = tableSpan(1000, marginLayout(1000), 620);
+  assert.deepEqual([640, 660, 668].map(w => gridPlace(tight, 620, 0, w).left), [-10, -16, -16], "against the pane's left padding, the rest to the right");
+  const narrow = tableSpan(700, null, 636);
+  assert.deepEqual([gridPlace(narrow, 636, 0, 900), gridPlace(narrow, 636, 24, 900)], [{ left: 0, room: 636 }, { left: 24, room: 612 }], "a narrow pane: in the column");
+});
+
+test("a dragged column takes the pointer's move, twice over while its grid sits centred, so that its line stays under the pointer as the grid spreads both ways", () => {
+  const wide = tableSpan(1400, null, 716), lineOf = (v, rest) => gridPlace(wide, 716, 0, v + rest).left + v + rest;
+  assert.equal(draggedWidth(400, 100, wide, 716, 100), 500, "still no wider than the text");
+  const v = draggedWidth(400, 300, wide, 716, 100);
+  assert.deepEqual([v, lineOf(v, 100)], [784, 500 + 300], "the grid 884 px, centred: the right edge where the pointer is");
+  const back = draggedWidth(700, -100, wide, 716, 100);
+  assert.deepEqual([back, lineOf(back, 100)], [558, lineOf(700, 100) - 100], "narrower again, back at the column's left edge");
+  assert.equal(draggedWidth(400, 700, wide, 716, 100), 1410, "past the span: the move itself beyond where the grid fills it");
+  assert.equal(draggedWidth(300, 500, tableSpan(700, null, 636), 636, 100), 800, "a narrow pane: the move itself");
+  const cards = tableSpan(1400, marginLayout(1400), 716);
+  assert.deepEqual([draggedWidth(700, 40, cards, 716, 0), draggedWidth(700, 60, cards, 716, 0)], [764, 792], "short of the cards: centred up to them, then the move itself");
 });
 
 test("the column's left edge follows the margin layout, and the slash menu keeps to it", () => {

@@ -77,7 +77,7 @@ const GRID_TABLE = "| Name | Size | Note |\n|---|:-:|--:|\n| **apple** | 12 | [a
 function drawnGrid(more = {}, also = {}) {
   const doc = parse(GRID_TABLE), b = doc.blocks[0], cal = { row: 21, advance: 6.6 };
   const grid = gridOf({}, doc, b, { room: 700, head: cal, body: cal, color: HIGHLIGHT, deep: null, defs: { map: doc.defs } });
-  return drawn(GRID_TABLE, 0, { look: "grid", style: "cell", text: "", grid, ...more }, { rowSized(key, r, size) { (this.rows ??= []).push([key, r, size]); }, ...also });
+  return drawn(GRID_TABLE, 0, { look: "grid", style: "cell", text: "", grid, gridLeft: 0, ...more }, { rowSized(key, r, size) { (this.rows ??= []).push([key, r, size]); }, ...also });
 }
 
 test("a table drawn as a grid: its rows and cells, each cell's text by a TextView of its own, no pipe and no delimiter row", () => {
@@ -143,6 +143,17 @@ test("a table's box is as wide as the part of its grid that shows, wider than th
   assert.deepEqual([root.style.min_w, root.style.w_full, root.style.bg], [shown, true, "selection"], "the block reaches past the column with the grid");
   const narrow = drawnGrid({}, { gridShownW: d => d.grid.w }), nk = narrow.d.key;
   assert.deepEqual([must(narrow.el, `md-table-box-${nk}`).style.w, must(narrow.el, `md-block-${nk}`).style.min_w], [narrow.d.grid.w, narrow.d.grid.w], "a grid that shows whole");
+});
+
+test("a grid centred left of the text column takes its block with it: the block starts where the grid does, as far left of the column, and what lies over it (the comment frame, the Comment button, the comment count) is placed from there", () => {
+  const button = { x: 650, y: 4, w: 26, h: 26 }, also = { gridShownW: d => d.grid.w, blockButtonIn: () => button };
+  const { el, d } = drawnGrid({ gridLeft: -100, selected: true, framed: "active", notes: 2, notesX: 500, notesY: 0 }, also), key = d.key;
+  const root = must(el, `md-block-${key}`);
+  assert.deepEqual([root.style.ml, root.style.pl, root.style.min_w, root.style.bg], [-100, 0, d.grid.w, "selection"], "the tint under the whole grid");
+  assert.equal(must(el, `md-table-box-${key}`).style.ml, undefined, "the grid at the block's left edge");
+  assert.deepEqual([must(el, `md-comment-frame-${key}`).style.left, must(el, `md-block-comment-${key}`).style.left, must(el, `md-notes-${key}`).style.left], [0, 750, 600]);
+  const indented = drawnGrid({ depth: 1, gridLeft: 24 }), root2 = must(indented.el, `md-block-${indented.d.key}`);
+  assert.deepEqual([root2.style.ml, root2.style.pl], [undefined, 24], "no wider than the text: at its indent, as before");
 });
 
 test("space above a block: 0 first, 32 / 28 / 24 / 20 above headings, 8 after one, 6 inside a list, 14 otherwise", () => {

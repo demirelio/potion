@@ -5,7 +5,7 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureName, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, GRID, LANG_MENU, LINK_BOX, LINK_POP, MARGIN, MENU, NOTES, NOTE_BOX, RESIZE, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, dashWidth, dashesAtLeast, dashesFor, decideAxis, estimateHeight, frameBox, frameTool, gridAt, gridRowTop, isOneRow, languageMenuH, languageMenuPlace, lineNear, lineOffsets, lineX, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, revealSpan, sharpScale, slashX, stackCards, startView, startsGesture, tablePress, tableRoom, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, GRID, LANG_MENU, LINK_BOX, LINK_POP, MARGIN, MENU, NOTES, NOTE_BOX, RESIZE, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, dashWidth, dashesAtLeast, dashesFor, decideAxis, draggedWidth, estimateHeight, frameBox, frameTool, gridAt, gridPlace, gridRowTop, isOneRow, languageMenuH, languageMenuPlace, lineNear, lineOffsets, lineX, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, revealSpan, sharpScale, slashX, stackCards, startView, startsGesture, tablePress, tableRowTop, tableSpan, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
 import { alignBoxes, drawsGrid, gridOf } from "./grid.js";
 import { cellText, cellWritten, insertRow, rowAt, tableOf, writeCell, writeDashes } from "./tables.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
@@ -2056,13 +2056,14 @@ export class Editor {
   dataFor(blocks, i, width) {
     const b = blocks[i], source = b.key === this.activeKey && !this.cell, dragged = this.resize?.key === b.key ? this.resize.grid : null;
     const grid = b.kind === "table" && !source ? dragged ?? this.gridNow(b, width) : null;
+    const place = grid ? gridPlace(this.tableSpan(), this.textWidth(), b.depth * INDENT, grid.w) : null;
     const cell = grid && b.key === this.activeKey ? `${this.cell.r}:${this.cell.c}` : "";
     const look = lookOf(b, Boolean(grid)), cal = this.calOf(look.style), marker = markerOf(b);
     const text = grid ? "" : look.look === "text" ? displayText(b, this.highlight) : b.kind === "table" ? this.tableText(b) : look.look === "boxed" ? b.render : b.content;
     const space = spaceBefore(blocks, i, this.doc.blocks);
     return {
       key: b.key, kind: b.kind, look: look.look, style: look.style, color: look.color, grid, cell, cells: grid ? this.cellFields.get(b.key)?.gen ?? 0 : 0,
-      room: grid ? this.tableReach() - b.depth * INDENT : 0, space, depth: b.depth, text, ...this.notesData(b, look, space, cal, width), ...this.chipData(b),
+      room: place?.room ?? 0, gridLeft: place?.left ?? 0, space, depth: b.depth, text, ...this.notesData(b, look, space, cal, width), ...this.chipData(b),
       marker, label: marker === "number" ? `${b.number}${b.delim}` : "", checked: Boolean(b.task?.checked),
       diagram: look.look === "diagram" ? diagramSig(this.shown.get(b.key), this.good.get(b.key)) : "",
       mode: b.key === this.activeKey ? "active" : this.blockFields.has(b.key) ? "field" : "rendered",
@@ -2116,7 +2117,8 @@ export class Editor {
     return d.key === this.activeKey || d.key === this.hoverBox;
   }
 
-  // Block data d's Comment button from the block's top-left while it shows, else null: left of a code block's language
+  // Block data d's Comment button while it shows, else null, x from the text column's left and y from the block's top
+  // (page.js draws it less a centred grid's shift): left of a code block's language
   // chip, by the top right corner of a table's grid (gridButtonX), inside the box of a table kept as source at its top
   // right, or left of the block's comment count where it would cover that.
   blockButtonIn(d) {
@@ -2130,8 +2132,8 @@ export class Editor {
 
   // Right of what shows of table data d's grid while that clears the cards and the pane's edge, else inside its corner.
   gridButtonX(d) {
-    const B = BLOCK_BUTTON, right = d.depth * INDENT + this.gridShownW(d);
-    const clear = d.depth * INDENT + d.room + (this.margin ? MARGIN.gap : COLUMN.padX);
+    const B = BLOCK_BUTTON, right = d.gridLeft + this.gridShownW(d);
+    const clear = this.tableSpan().right + (this.margin ? MARGIN.gap : COLUMN.padX);
     return right + B.gap + B.size <= clear ? right + B.gap : right - B.inset - B.size;
   }
 
@@ -2177,13 +2179,13 @@ export class Editor {
     this.wake();
   }
 
-  // The px grid table data d may take right of its indent; a grid wider than that pans sideways in it.
+  // The px grid table data d may show from its left edge (`gridLeft`); a grid wider than that pans sideways in it.
   gridRoom(d) {
     return d.room;
   }
 
-  tableReach() {
-    return tableRoom(this.paneW(), this.margin, this.textWidth());
+  tableSpan() {
+    return tableSpan(this.paneW(), this.margin, this.textWidth());
   }
 
   gridShownW(d) {
@@ -2826,13 +2828,13 @@ export class Editor {
   }
 
   // Viewport point p over a table's grid: the table's key, its data d and room, and p from the grid's top and from the
-  // left of the column's part it shows in; else null.
+  // left of the part it shows in; else null.
   gridPoint(p) {
     const blocks = this.blocks, n = blocks.length, y = p.y + this.offset - COLUMN.padTop;
     if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n]) return null;
     const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key), gy = y - this.sums[i] - (d?.space ?? 0);
     if (!d?.grid || gy < 0) return null;
-    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin) - b.depth * INDENT;
+    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin) - d.gridLeft;
     return { key: b.key, d, room: this.gridRoom(d), x, y: gy };
   }
 
@@ -2877,15 +2879,16 @@ export class Editor {
     const dx = w.x - r.from.x;
     if (!r.moved && Math.abs(dx) <= CLICK_SLOP) return;
     r.moved = true;
-    const g = r.base, head = this.calOf("head"), body = this.calOf("cell"), d = this.data.get(r.key);
+    const g = r.base, head = this.calOf("head"), body = this.calOf("cell"), d = this.data.get(r.key), span = this.tableSpan(), textW = this.textWidth();
     r.dashes ??= g.sized ? g.dashes.slice() : g.widths.map(x => dashesAtLeast(x, body.advance));
-    const dashes = dashesFor(g.widths[r.column] + dx, body.advance);
+    const rest = r.dashes.reduce((a, n, k) => (k === r.column ? a : a + dashWidth(n, body.advance)), (r.dashes.length + 1) * GRID.line);
+    const dashes = dashesFor(draggedWidth(g.widths[r.column], dx, span, textW, rest), body.advance);
     if (r.grid && dashes === r.dashes[r.column]) return;
     r.dashes[r.column] = dashes;
     const widths = r.dashes.map(n => dashWidth(n, body.advance)), boxed = g.aligns.some(a => a === "center" || a === "right");
     const gridW = widths.reduce((a, x) => a + x, 0) + (widths.length + 1) * GRID.line;
     r.grid = { ...g, widths, w: gridW, boxes: boxed ? alignBoxes(g.chars, g.aligns, widths, head, body) : g.boxes };
-    const room = this.gridRoom(d), at = lineX(widths, r.column);
+    const room = gridPlace(span, textW, d.depth * INDENT, gridW).room, at = lineX(widths, r.column);
     this.tablePans.set(r.key, clamp(revealSpan(r.pan, room, at - RESIZE.grab, at + RESIZE.grab), 0, Math.max(0, gridW - room)));
     this.redraw([r.key], cx);
     if (this.cell && this.activeKey === r.key) cx.notify();
@@ -2942,9 +2945,9 @@ export class Editor {
     if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n] || !this.showsEdits()) return null;
     const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
     if (!d || !(d.strip || d.kind === "table") || y < this.sums[i] + d.space) return null;
-    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin);
-    const right = d.grid ? Math.max(b.depth * INDENT + this.gridShownW(d), this.gridButtonX(d) + BLOCK_BUTTON.size) : this.textWidth();
-    return x >= b.depth * INDENT && x < right ? b.key : null;
+    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin), left = d.grid ? d.gridLeft : b.depth * INDENT;
+    const right = d.grid ? Math.max(left + this.gridShownW(d), this.gridButtonX(d) + BLOCK_BUTTON.size) : this.textWidth();
+    return x >= left && x < right ? b.key : null;
   }
 
   notifyBlocks(keys, cx) {
@@ -3033,10 +3036,11 @@ export class Editor {
     this.unselect(this.stateOf(from));
   }
 
-  // The block level with viewport point p right of the text column, within a table's reach: a drag from a cell goes on.
+  // The block level with viewport point p beside the text column, within the tables' reach: a drag from a cell goes on.
   besideColumn(p) {
-    const n = this.blocks.length, y = p.y + this.offset - COLUMN.padTop, x = columnX(p.x, this.paneW(), this.margin);
-    if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n] || x < this.textWidth() || x >= this.tableReach()) return null;
+    const n = this.blocks.length, y = p.y + this.offset - COLUMN.padTop, x = columnX(p.x, this.paneW(), this.margin), span = this.tableSpan();
+    const beside = (x < 0 && x >= span.left) || (x >= this.textWidth() && x < span.right);
+    if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n] || !beside) return null;
     return this.blocks[blockAt(this.sums, y)];
   }
 
@@ -3133,8 +3137,8 @@ export class Editor {
   // The block under a viewport point and what on it: a diagram's frame (also where it reaches into the margins), a cell
   // of its − % + group or its Comment button, a picture block (`item` the picture under the point, or -1), a code
   // block's or table's Comment button, a code block's language chip, a checkbox, a body, the space below the last block
-  // ("end"), or a margin outside every block ("outside"). x and y are relative to the block's root, fx and fy to the
-  // frame. A page with no blocks is all "end".
+  // ("end"), or a margin outside every block ("outside"). x is from the text column's left (negative left of it on a
+  // centred grid), y from the block's top, fx and fy from the frame. A page with no blocks is all "end".
   hit(p) {
     const blocks = this.blocks, n = blocks.length;
     if (this.sums.length !== n + 1) return null;
@@ -3148,7 +3152,7 @@ export class Editor {
     }
     const button = this.buttonAt(x, y);
     if (button) return { block: button, on: "comment" };
-    if (x < 0 || (x >= this.textWidth() && !this.onGridOut(x, y))) return { on: "outside" };
+    if ((x < 0 || x >= this.textWidth()) && !this.onGridOut(x, y)) return { on: "outside" };
     if (!n) return { on: "end" };
     if (y < 0) return { on: "outside" };
     if (y >= this.sums[n]) return { on: "end" };
@@ -3160,15 +3164,15 @@ export class Editor {
     return { block: b, on, x, y: y - this.sums[i] };
   }
 
-  // Whether column point (x, y) is on what shows of a grid right of the text column, its right line's grab zone included.
+  // Whether column point (x, y) beside the text column is on what shows of a grid or its right line's grab zone.
   onGridOut(x, y) {
     const n = this.blocks.length;
     if (!n || y < 0 || y >= this.sums[n]) return false;
     const i = blockAt(this.sums, y), d = this.data.get(this.blocks[i].key);
-    return Boolean(d?.grid) && y >= this.sums[i] + d.space && x < d.depth * INDENT + this.gridShownW(d) + RESIZE.grab;
+    return Boolean(d?.grid) && y >= this.sums[i] + d.space && x >= d.gridLeft && x < d.gridLeft + this.gridShownW(d) + RESIZE.grab;
   }
 
-  // The block whose Comment button holds column point (x, y); a grid's may lie right of the text column.
+  // The block whose Comment button holds column point (x, y); a grid's may lie outside the text column.
   buttonAt(x, y) {
     const n = this.blocks.length;
     if (!n || y < 0 || y >= this.sums[n]) return null;
@@ -3887,14 +3891,15 @@ export class Editor {
     return { ...this.chromeOf(d, true), row: d.row, advance: this.calOf(d.style).advance, rows: this.rowsOf(d, true) };
   }
 
-  // Where cell (r, c) of grid table data d draws its text, from the block's top-left: past the grid's lines, the columns
+  // Where cell (r, c) of grid table data d draws its text, x from the text column's left and y from the block's top:
+  // from the grid's left edge (gridLeft), past the grid's lines, the columns
   // before it and its padding (cellTextLeft), less the grid's pan, under the rows above it as measured, else estimated;
   // as wide as its text box; the header's text at its own advance. `rows`: the rows the estimate wraps `drawn` to (the
   // field reports none).
   cellBox(d, r, c, drawn) {
     const g = d.grid, advance = this.calOf(r === 0 ? "head" : "cell").advance, w = g.boxes[r][c] || g.widths[c] - 2 * GRID.padX;
     return {
-      x: d.depth * INDENT + this.cellTextLeft(g, r, c) - this.panOf(d), y: d.space + gridRowTop(this.gridHeights(d), r) + GRID.padY,
+      x: d.gridLeft + this.cellTextLeft(g, r, c) - this.panOf(d), y: d.space + gridRowTop(this.gridHeights(d), r) + GRID.padY,
       w, row: d.row, advance, rows: drawn === undefined ? undefined : this.wrapOf(drawn, w, advance).rows.length,
     };
   }
@@ -4025,7 +4030,7 @@ export class Editor {
   openPressed(b, x, y, cx, opts = {}) {
     const d = this.data.get(b.key);
     if (!d.grid) return this.activate(b.key, this.pressCaret(b, x, y), cx, opts);
-    const { r, c, caret } = this.gridPress(b, d, x - d.depth * INDENT + this.panOf(d), y - d.space);
+    const { r, c, caret } = this.gridPress(b, d, x - d.gridLeft + this.panOf(d), y - d.space);
     return this.activate(b.key, caret, cx, { ...opts, cell: { r, c } });
   }
 
@@ -4165,7 +4170,7 @@ export class Editor {
   // or the last row's under x, or with x null the first or the last cell. -> { r, c, caret }
   gridArrival(b, d, dir, x) {
     const t = tableOf(this.doc, b), r = dir > 0 ? 0 : t.rows.length - 1;
-    const c = x === null ? (dir > 0 ? 0 : t.columns - 1) : gridAt(this.gridHeights(d), d.grid.widths, x - d.depth * INDENT + this.panOf(d), 0).column;
+    const c = x === null ? (dir > 0 ? 0 : t.columns - 1) : gridAt(this.gridHeights(d), d.grid.widths, x - d.gridLeft + this.panOf(d), 0).column;
     return { r, c, caret: this.cellCaret(b, d, t, r, c, dir, x) };
   }
 
@@ -5641,7 +5646,8 @@ export class Editor {
     if (i === undefined || !d || this.sums.length !== this.blocks.length + 1) return null;
     const viewW = this.viewport?.width ?? this.size?.width ?? 900, viewH = this.viewport?.height ?? UNSIZED_VIEW_H;
     const top = COLUMN.padTop + (card ? this.cellTop(i, d, card) : this.sums[i] + d.space) - this.offset;
-    return popoverPlace({ firstTop: top, lastTop: top, rowH: 0, size: NOTE_BOX, viewW, viewH, x: columnLeft(viewW, this.margin) + d.depth * INDENT });
+    const left = d.grid ? d.gridLeft : d.depth * INDENT;
+    return popoverPlace({ firstTop: top, lastTop: top, rowH: 0, size: NOTE_BOX, viewW, viewH, x: columnLeft(viewW, this.margin) + left });
   }
 
   // A box over the page that holds the keyboard: the comment box (a block's comment being written or edited included),
