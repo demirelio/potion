@@ -3,11 +3,12 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, home, props, shared, setShared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
 import { FIND_SCRIPT, basename, dirname, fileKey, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
 import { MOD, PANES, RECENT, openMarkdown } from "./open.js";
+import { withAlpha } from "./colors.js";
 
 // A picker that opens closes the one named here, so one is open at a time; the cmd-shift-m mod reads it to close the
 // picker it opened itself. Shared state is persisted, so a name left by a quit is of an overlay Herdr no longer has.
 const OPEN_PICKER = "potion.picker";
-const ROW_H = 30, ROWS_BEFORE_MEASURED = 8, FIELD_H = 32;
+const ROW_H = 30, ROWS_BEFORE_MEASURED = 8, FIELD_H = 32, MAKER_H = 38;
 const KEYS = {
   pane: [["↑↓", "move"], ["↵", "open beside"], ["esc", "close"]],
   tab: [["↑↓", "move"], ["↵", "open in a new tab"], ["esc", "close"]],
@@ -134,15 +135,23 @@ export class Picker {
     return this.cache;
   }
 
+  // One row that makes a file comes first: New note with nothing typed, Create for a name no listed file has; none for
+  // a name that is listed or can't be used.
   rows() {
     const { list } = this.entries(), query = this.query, c = this.shown;
     if (c && c.list === list && c.query === query) return c.rows;
-    const rows = [{ id: "mdp-new", kind: "new" }];
+    const named = query.trim() ? newFileName(query) : null, rows = [];
+    if (!named) rows.push({ id: "mdp-new", kind: "new" });
+    else if (named.name && !list.some(e => e.inside && e.path.toLowerCase() === named.name.toLowerCase())) rows.push({ id: "mdp-create", kind: "create", name: named.name });
     filterFiles(list, query).forEach((entry, i) => rows.push({ id: `mdp-file-${i}`, kind: "file", entry }));
-    const named = query.trim() ? newFileName(query) : null;
-    if (named?.name && !list.some(e => e.inside && e.path.toLowerCase() === named.name.toLowerCase())) rows.push({ id: "mdp-create", kind: "create", name: named.name });
     this.shown = { list, query, rows };
     return rows;
+  }
+
+  // The row that makes a file stays above the list: only the files scroll.
+  split(rows) {
+    const made = rows.length && rows[0].kind !== "file" ? 1 : 0;
+    return { made, files: rows.slice(made) };
   }
 
   // The files shown in the focused tab's Markdown panes. Choosing one only goes to its pane, so Enter skips them.
@@ -155,12 +164,12 @@ export class Picker {
     return this.openHere.has(fileKey(this.machine, file));
   }
 
-  // Until the person moves it: the best file not already on screen (so Enter opens it), else any file, else Create,
-  // else New note.
+  // Until the person moves it: the best file not already on screen (so Enter opens it), else any file, else the row
+  // that makes one.
   cursor(rows) {
     const files = rows.flatMap((r, i) => (r.kind === "file" ? [i] : []));
-    const first = files.find(i => !this.isOpenHere(rows[i].entry.file)) ?? files[0] ?? -1, create = rows.findIndex(r => r.kind === "create");
-    return clamp(this.at ?? (first >= 0 ? first : Math.max(create, 0)), 0, rows.length - 1);
+    const first = files.find(i => !this.isOpenHere(rows[i].entry.file)) ?? files[0] ?? 0;
+    return clamp(this.at ?? first, 0, Math.max(0, rows.length - 1));
   }
 
   status() {
@@ -219,23 +228,19 @@ export class Picker {
   }
 
   move(step) {
-    const rows = this.rows(), at = (this.cursor(rows) + step + rows.length) % rows.length, room = this.room();
+    const rows = this.rows();
+    if (!rows.length) return;
+    const at = (this.cursor(rows) + step + rows.length) % rows.length, room = this.room(), k = at - this.split(rows).made;
     let top = Math.floor(this.scroll / ROW_H);
-    if (at < top) top = at;
-    else if (at >= top + room) top = at - room + 1;
+    if (k >= 0 && k < top) top = k;
+    else if (k >= top + room) top = k - room + 1;
     this.at = at;
     this.scroll = top * ROW_H;
   }
 
-  row(t, row, on) {
-    const off = this.disabled(row), file = row.kind === "file";
-    const name = file ? basename(row.entry.path) : row.kind === "new" ? "New note" : `Create ${row.name}`;
-    const dir = file && row.entry.path.includes("/") ? dirname(row.entry.path) : "";
-    const hint = off ? `Creating files on ${this.machine} isn't supported yet` : row.kind === "new" ? uniqueName(this.entries().taken) : dir;
-    const open = file && this.isOpenHere(row.entry.file), tag = open ? "open" : file && row.entry.recent ? "recent" : null;
-    return h_flex().id(row.id).h(ROW_H).flex_none().px(10).gap(9).items_center().rounded(7).text_size(12.8).text_color(off ? t.dim : t.foreground)
-      .when(on, el => el.bg(t.selected))
-      .when(!off, el => el.cursor_pointer().on_click((_e, cx) => this.choose(row, cx)))
+  pressable(el, row) {
+    const off = this.disabled(row);
+    return el.when(!off, el => el.cursor_pointer().on_click((_e, cx) => this.choose(row, cx)))
       .when(off, el => el.cursor_default())
       // Hover only counts when the mouse moves: a list that scrolls under a still mouse must not take the highlight.
       .on_mouse_move((_e, cx) => {
@@ -243,10 +248,30 @@ export class Picker {
         if (i < 0 || i === this.cursor(rows)) return;
         this.at = i;
         cx.notify();
-      })
-      .child(svg(file ? ICON("markdown") : ICON("file-plus")).size(14).flex_none().text_color(on ? t.foreground : t.muted))
+      });
+  }
+
+  // New note, with the name it will get, or Create with the name typed.
+  maker(t, row, on) {
+    const off = this.disabled(row), create = row.kind === "create";
+    return this.pressable(h_flex().id(row.id).h(MAKER_H).flex_none().mx(8).px(8).gap(10).items_center().rounded(8).text_size(12.8)
+      .text_color(off ? t.dim : t.foreground).when(on, el => el.bg(t.selected)), row)
+      .child(div().size(24).flex_none().flex().items_center().justify_center().rounded(6).bg(off ? t.raised : withAlpha(t.accent, 0.16))
+        .child(svg(ICON("file-plus")).size(14).flex_none().text_color(off ? t.dim : t.accent)))
+      .child(div().flex_none().font_medium().child(create ? "Create" : "New note"))
+      .when(create, el => el.child(div().flex_none().max_w(280).truncate().font_semibold().text_color(off ? t.dim : t.accent).child(row.name)))
+      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim)
+        .child(off ? `Creating files on ${this.machine} isn't supported yet` : create ? "" : uniqueName(this.entries().taken)));
+  }
+
+  row(t, row, on) {
+    const name = basename(row.entry.path), dir = row.entry.path.includes("/") ? dirname(row.entry.path) : "";
+    const open = this.isOpenHere(row.entry.file), tag = open ? "open" : row.entry.recent ? "recent" : null;
+    return this.pressable(h_flex().id(row.id).h(ROW_H).flex_none().px(10).gap(9).items_center().rounded(7).text_size(12.8).text_color(t.foreground)
+      .when(on, el => el.bg(t.selected)), row)
+      .child(image(ICON("file-markdown")).w(15).h(15).flex_none())
       .child(div().flex_none().max_w(300).truncate().font_medium().child(name))
-      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(hint))
+      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(dir))
       .when(Boolean(tag), el => el.child(div().flex_none().h(18).px(7).flex().items_center().rounded_full().text_size(10.5).font_medium()
         .when(open, el => el.border_1().border_color(t.accent).text_color(t.accent))
         .when(!open, el => el.bg(t.raised).text_color(t.muted))
@@ -287,8 +312,8 @@ export class Picker {
   }
 
   render() {
-    const t = theme(), rows = this.rows(), at = this.cursor(rows), status = this.status(), room = this.room();
-    this.scroll = clamp(this.scroll, 0, Math.max(0, rows.length - room) * ROW_H);
+    const t = theme(), rows = this.rows(), at = this.cursor(rows), status = this.status(), room = this.room(), { made, files } = this.split(rows);
+    this.scroll = clamp(this.scroll, 0, Math.max(0, files.length - room) * ROW_H);
     const top = Math.floor(this.scroll / ROW_H);
     // A name that can't be used is only worth a word when nothing matches the query either.
     const named = this.query.trim() && !rows.some(r => r.kind === "file") ? newFileName(this.query).error : null;
@@ -305,6 +330,7 @@ export class Picker {
       .child(this.header(t))
       .child(this.search(t))
       .when(Boolean(note), el => el.child(div().id("mdp-note").flex_none().px(16).pb(4).text_size(12).text_color(this.problem ? t.blocked : t.dim).child(note)))
+      .when(made > 0, el => el.child(this.maker(t, rows[0], at === 0)).child(div().h(1).flex_none().mx(14).mt(4).bg(t.border)))
       .child(v_flex().id("mdp-list").flex_1().min_h(0).mx(8).my(4).overflow_hidden()
         .on_size_change((size, cx) => {
           const height = size.height / settings().zoom;
@@ -313,10 +339,10 @@ export class Picker {
           cx.notify();
         })
         .on_scroll_wheel((e, cx) => {
-          this.scroll = clamp(this.scroll - e.delta.y, 0, Math.max(0, this.rows().length - this.room()) * ROW_H);
+          this.scroll = clamp(this.scroll - e.delta.y, 0, Math.max(0, this.split(this.rows()).files.length - this.room()) * ROW_H);
           cx.notify();
         })
-        .children(rows.slice(top, top + room).map((row, i) => this.row(t, row, top + i === at)))
+        .children(files.slice(top, top + room).map((row, i) => this.row(t, row, made + top + i === at)))
         .when(Boolean(status), el => el.child(div().id("mdp-status").h(ROW_H).flex_none().px(10).flex().items_center().text_size(12).text_color(status.bad ? t.blocked : t.dim).child(status.text))))
       .child(this.footer(t));
   }

@@ -27,7 +27,7 @@ function named() {
 
 test("every icon a source of the mod names is in the mod folder", () => {
   const icons = named();
-  assert.ok(icons.has("markdown.svg") && icons.has("file-markdown.svg") && icons.has("spinner.svg") && icons.has("heading-1.svg"), `found ${[...icons]}`);
+  assert.ok(icons.has("file-plus.svg") && icons.has("file-markdown.svg") && icons.has("spinner.svg") && icons.has("heading-1.svg"), `found ${[...icons]}`);
   for (const name of icons) assert.ok(existsSync(join(modDir, name)), `${name} is named in a source but missing`);
 });
 

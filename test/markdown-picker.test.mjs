@@ -2,12 +2,13 @@ import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { state, calls, reset } from "./mocks/herdr.mjs";
+import { state, calls, reset, theme } from "./mocks/herdr.mjs";
 import { find, all, ids, textOf, fire } from "./mocks/element.mjs";
 import { makeCx, fire_timers, space, must } from "./helpers.mjs";
 
 const { Picker } = await import("../mods/potion/picker.js");
 const { fileKey } = await import("../mods/potion/lib.js");
+const { withAlpha } = await import("../mods/potion/colors.js");
 const { FIND_SCRIPT } = await import("../mods/potion/lib.js");
 
 const FOLDER = "/home/user/Projects/herdr";
@@ -208,6 +209,17 @@ test("the header names Potion Markdown and the folder with ~; the footer has the
   assert.equal(calls.exec[0].options.cwd, FOLDER, "a trailing slash is dropped");
 });
 
+test("a file's row shows the Markdown icon; the row that makes one shows file-plus on an accent tile, Create's name in accent", async () => {
+  const { view, tree } = await mount();
+  const icon = id => all(must(tree(), id), n => n.kind === "image" || n.kind === "svg").map(n => n.path ?? n.src ?? n.kind)[0];
+  assert.equal(icon("mdp-file-0"), "mods/potion/file-markdown.svg");
+  const tile = must(tree(), "mdp-new").kids[0];
+  assert.equal(tile.style.bg, withAlpha(theme().accent, 0.16));
+  type(view, "fresh");
+  const name = all(must(tree(), "mdp-create"), n => n.kind === "div" && textOf(n).trim() === "fresh.md")[0];
+  assert.equal(name.style.text_color, "accent");
+});
+
 test("typing lights the search field and shows its clear button, which empties the field", async () => {
   const { cx, tree, view } = await mount();
   assert.equal(find(tree(), "mdp-clear"), null);
@@ -373,10 +385,10 @@ test("the highlight starts on the first file so Enter opens it; New note is abov
   assert.deepEqual(highlighted(tree()), ["mdp-file-0"]);
 });
 
-test("typing filters by the path, best match first, and Create appears for a name that is not listed", async () => {
+test("typing filters by the path, best match first, and New note becomes Create for a name that is not listed", async () => {
   const { view, tree } = await mount();
   type(view, "plan");
-  assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0", "mdp-create"]);
+  assert.deepEqual(rowIds(tree()), ["mdp-create", "mdp-file-0"]);
   assert.equal(row(tree(), "mdp-file-0"), "plan.md docs");
   assert.equal(row(tree(), "mdp-create"), "Create plan.md");
   assert.deepEqual(highlighted(tree()), ["mdp-file-0"]);
@@ -388,7 +400,7 @@ test("typing filters by the path, best match first, and Create appears for a nam
   assert.equal(row(tree(), "mdp-file-0"), "README.md");
 
   type(view, "zzz");
-  assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-create"]);
+  assert.deepEqual(rowIds(tree()), ["mdp-create"]);
   assert.deepEqual(highlighted(tree()), ["mdp-create"], "with no file to open the highlight is on Create");
 });
 
@@ -422,9 +434,9 @@ test("a recent file outside the folder does not count as the listed file a Creat
 
 test("Down and Up move the highlight and wrap around, stopping the key", async () => {
   const { view, tree } = await mount();
-  type(view, "md"); // four files match, and "md" is not a listed name, so Create is last
+  type(view, "md"); // four files match, and "md" is not a listed name, so Create is first
   const rows = rowIds(tree());
-  assert.deepEqual(rows, ["mdp-new", "mdp-file-0", "mdp-file-1", "mdp-file-2", "mdp-file-3", "mdp-create"]);
+  assert.deepEqual(rows, ["mdp-create", "mdp-file-0", "mdp-file-1", "mdp-file-2", "mdp-file-3"]);
   const start = rows.indexOf(highlighted(tree())[0]);
   const cx = press(tree(), "down");
   assert.equal(cx.stopped, 1);
@@ -432,7 +444,7 @@ test("Down and Up move the highlight and wrap around, stopping the key", async (
   for (let i = start + 1; i < rows.length - 1; i++) press(tree(), "down");
   assert.deepEqual(highlighted(tree()), [rows.at(-1)]);
   press(tree(), "down");
-  assert.deepEqual(highlighted(tree()), [rows[0]], "past the last row it wraps to New note");
+  assert.deepEqual(highlighted(tree()), [rows[0]], "past the last row it wraps to Create");
   press(tree(), "up");
   assert.deepEqual(highlighted(tree()), [rows.at(-1)], "and back");
   press(tree(), "up");
@@ -807,51 +819,48 @@ test("another machine whose home cannot be asked still lists a folder it was giv
   assert.ok(textOf(must(tree(), "mdp-folder")).endsWith("devbox: /srv/docs"));
 });
 
-test("only the rows that fit are drawn; the keys and the wheel move the window", async () => {
+test("New note stays above the list; only the files that fit are drawn, and the keys and the wheel move the window", async () => {
   state.exec = fakeExec({ git: Array.from({ length: 30 }, (_, i) => `n${String(i).padStart(2, "0")}.md`) });
   const { cx, tree } = await mount();
-  assert.equal(rowIds(tree()).length, 8, "eight rows before the list has measured itself");
-  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 *5 }, cx);
-  assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0", "mdp-file-1", "mdp-file-2", "mdp-file-3"], "five rows of 30");
+  assert.equal(rowIds(tree()).length, 9, "New note and eight files before the list has measured itself");
+  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 * 5 }, cx);
+  assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-0", "mdp-file-1", "mdp-file-2", "mdp-file-3", "mdp-file-4"], "five files of 30");
   const again = makeCx();
-  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 *5 }, again);
+  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 * 5 }, again);
   assert.equal(again.notified, 0, "the same size is not a change");
 
-  for (let i = 0; i < 4; i++) press(tree(), "down");
-  assert.deepEqual(rowIds(tree()), ["mdp-file-0", "mdp-file-1", "mdp-file-2", "mdp-file-3", "mdp-file-4"], "the window follows the highlight");
-  assert.deepEqual(highlighted(tree()), ["mdp-file-4"]);
+  for (let i = 0; i < 5; i++) press(tree(), "down");
+  assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-1", "mdp-file-2", "mdp-file-3", "mdp-file-4", "mdp-file-5"], "the window follows the highlight");
+  assert.deepEqual(highlighted(tree()), ["mdp-file-5"]);
 
-  press(tree(), "up");
-  press(tree(), "up");
-  press(tree(), "up");
-  press(tree(), "up");
-  press(tree(), "up");
+  for (let i = 0; i < 6; i++) press(tree(), "up");
   assert.deepEqual(highlighted(tree()), ["mdp-new"]);
+  assert.deepEqual(rowIds(tree()).slice(0, 2), ["mdp-new", "mdp-file-0"]);
   press(tree(), "up");
   assert.deepEqual(highlighted(tree()), ["mdp-file-29"], "Up from the first row wraps to the last");
-  assert.deepEqual(rowIds(tree()), ["mdp-file-25", "mdp-file-26", "mdp-file-27", "mdp-file-28", "mdp-file-29"]);
+  assert.deepEqual(rowIds(tree()), ["mdp-new", "mdp-file-25", "mdp-file-26", "mdp-file-27", "mdp-file-28", "mdp-file-29"]);
 
   // delta.y is negative when the content moves up.
-  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 30 *10 } }, cx);
-  assert.deepEqual(rowIds(tree()).slice(0, 1), ["mdp-file-15"]);
+  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 30 * 10 } }, cx);
+  assert.deepEqual(rowIds(tree()).slice(0, 2), ["mdp-new", "mdp-file-15"]);
   assert.deepEqual(highlighted(tree()), [], "the highlighted row is out of the window now");
-  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: -30 *1000 } }, cx);
+  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: -30 * 1000 } }, cx);
   assert.equal(rowIds(tree()).at(-1), "mdp-file-29", "it stops at the end");
-  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 30 *1000 } }, cx);
-  assert.equal(rowIds(tree())[0], "mdp-new", "and at the start");
+  fire(must(tree(), "mdp-list"), "on_scroll_wheel", { delta: { x: 0, y: 30 * 1000 } }, cx);
+  assert.equal(rowIds(tree())[1], "mdp-file-0", "and at the start");
 });
 
-test("the status line takes one of the rows", async () => {
+test("the status line takes one of the list's rows", async () => {
   let finish;
   state.exec = () => new Promise(resolve => { finish = resolve; });
   state.shared["potion.recent"] = Array.from({ length: 6 }, (_, i) => ({ machine: null, path: `${FOLDER}/r${i}.md` }));
   const { cx, tree } = await mount({ settle: false });
-  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 *4 }, cx);
-  assert.equal(rowIds(tree()).length, 3, "four rows of height, one of them is 'Looking for markdown files…'");
+  fire(must(tree(), "mdp-list"), "on_size_change", { width: 500, height: 30 * 4 }, cx);
+  assert.equal(rowIds(tree()).length, 4, "New note, then four rows of height, one of them 'Looking for markdown files…'");
   assert.ok(find(tree(), "mdp-status"));
   finish({ code: 0, stdout: NUL(["a.md"]), stderr: "" });
   await cx.settle();
-  assert.equal(rowIds(tree()).length, 4);
+  assert.equal(rowIds(tree()).length, 5);
   assert.equal(find(tree(), "mdp-status"), null);
 });
 

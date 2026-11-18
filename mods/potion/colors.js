@@ -35,6 +35,12 @@ export const highlightColor = t => ochreOver(t, OCHRE_SHARE);
 // The comment being looked at, edited or written: the same ochre, deeper.
 export const deepHighlightColor = t => ochreOver(t, DEEP_SHARE);
 
+// `color` at `alpha` (0 to 1) as #rrggbbaa; a colour that is not hex comes back as it is.
+export function withAlpha(color, alpha) {
+  const rgb = channels(color);
+  return rgb ? `${hexOf(rgb)}${Math.round(alpha * 255).toString(16).padStart(2, "0")}` : color;
+}
+
 // What a text colour `name` draws in: one of TEXT_COLORS from theme `t`, or a hex colour as it is; null for any other.
 export function textColor(t, name) {
   const value = String(name ?? "");

@@ -6,15 +6,14 @@
 
 The line icons in `mods/potion/` are Lucide icons (https://lucide.dev) reduced to a bare `<svg>` element:
 `bold`, `check`, `chevron-down`, `code`, `copy`, `external-link`, `file-plus`, `folder`, `heading`, `heading-1`,
-`heading-2`, `heading-3`, `image`, `image-up`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `markdown`
-(Lucide's `file-text`), `message-square`, `message-square-plus`, `minus`, `palette`, `pencil`, `plus`, `search`,
-`strikethrough`, `table`, `text-quote`, `trash-2`, `type`, `underline`, `unlink`, `workflow` and `x`. `bold`, `code`,
-`folder`, `heading-1` to `heading-3`, `image`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `message-square`,
-`message-square-plus`, `minus`, `search`, `strikethrough`, `table`, `text-quote`, `type`, `workflow` and `x` were taken
-from lucide-static 1.69.0;
-`chevron-down`, `copy`, `external-link`, `heading`, `image-up`, `palette`, `pencil`, `trash-2`, `underline` and
-`unlink` from lucide-static 1.73.0. `check`, `file-plus`, `markdown` and `plus` have the path data of the current
-Lucide icons; the release they were copied from was not recorded.
+`heading-2`, `heading-3`, `image`, `image-up`, `italic`, `link`, `list`, `list-ordered`, `list-todo`,
+`message-square`, `message-square-plus`, `minus`, `palette`, `pencil`, `plus`, `search`, `strikethrough`, `table`,
+`text-quote`, `trash-2`, `type`, `underline`, `unlink`, `workflow` and `x`. `bold`, `code`, `folder`, `heading-1` to
+`heading-3`, `image`, `italic`, `link`, `list`, `list-ordered`, `list-todo`, `message-square`, `message-square-plus`,
+`minus`, `search`, `strikethrough`, `table`, `text-quote`, `type`, `workflow` and `x` were taken from lucide-static
+1.69.0; `chevron-down`, `copy`, `external-link`, `heading`, `image-up`, `palette`, `pencil`, `trash-2`, `underline` and
+`unlink` from lucide-static 1.73.0. `check`, `file-plus` and `plus` have the path data of the current Lucide icons; the
+release they were copied from was not recorded.
 
 `check`, `chevron-down`, `code`, `external-link`, `italic`, `link`, `minus`, `plus`, `search`, `trash-2`, `type` and `x`
 are among the Lucide icons derived from Feather (as lucide-static 1.73.0's license lists them), which is under the MIT

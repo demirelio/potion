@@ -50,3 +50,10 @@ test("the active comment's highlight is the same ochre, deeper: further from the
     assert.ok(distance(deep, page) > distance(colors.highlightColor(t), page) + 40, `${page}: ${deep} stands out more than the highlight`);
   }
 });
+
+test("a hex colour takes an alpha as #rrggbbaa, its own alpha replaced; any other colour comes back as it is", () => {
+  assert.equal(colors.withAlpha("#336699", 0.16), "#33669929");
+  assert.equal(colors.withAlpha("#369", 1), "#336699ff");
+  assert.equal(colors.withAlpha("#33669980", 0), "#33669900");
+  assert.equal(colors.withAlpha("accent", 0.5), "accent");
+});
