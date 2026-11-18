@@ -277,10 +277,13 @@ fewer, as hand-written ones do, gets its widths from its text; the first resize 
 width as it looked. A table whose source is padded to line up has longer dashes, so it shows at about the widths of
 its text.
 
-A table wider than the page starts at the page's left edge and scrolls sideways inside it: a sideways swipe on the
-trackpad, or Shift with the mouse wheel, over the table moves it, while up and down still scroll the page. A soft
-shadow at an edge shows there is more of the table that way. Moving the caret into a cell off to the side scrolls the
-table to show that cell, and the format bar and link popovers stay over the cell.
+A table wider than the page starts at the page's left edge and spreads out to the right, past the text, as far as the
+pane's edge (when comments show as cards beside the page, as far as the cards); you click, type in and resize its cells
+out there as anywhere else. Only a table wider than that scrolls sideways: a sideways swipe on the trackpad, or Shift
+with the mouse wheel, over the table moves it, while up and down still scroll the page. A soft shadow at an edge shows
+there is more of the table that way. In a pane with no room beside the page, a wide table scrolls inside the page.
+Moving the caret into a cell off to the side scrolls the table to show that cell, and the format bar and link popovers
+stay over the cell.
 
 ### Code languages
 

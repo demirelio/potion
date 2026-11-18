@@ -8,7 +8,7 @@ import {
   barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
   CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, TABLE_VIEW, tablePress, tableRowTop, GRID, columnWidths, gridRowHeights,
-  gridAt, gridRowTop, DASHES, dashWidth, dashesFor, dashesAtLeast, isSized, lineX, lineNear, revealSpan,
+  gridAt, gridRowTop, DASHES, dashWidth, dashesFor, dashesAtLeast, isSized, lineX, lineNear, revealSpan, tableRoom,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
@@ -698,6 +698,17 @@ test("the margin layout: a page column of at least 520 px and a card column besi
   const m = marginLayout(1401);
   assert.equal(m.pageLeft, 168, "whole pixels");
   assert.ok(m.cardLeft + m.cardW <= 1401 - MARGIN.edge);
+});
+
+test("a table's room runs from the text column's left edge to the pane's right edge less the page's padding, in the margin layout to MARGIN.gap short of the cards, and is never narrower than the text column", () => {
+  assert.equal(tableRoom(1400, null, 716), 1400 - COLUMN.padX - columnLeft(1400), "a wide pane: 1026 px");
+  assert.equal(tableRoom(900, null, 716), 776, "60 px right of the text column in a 900 px pane");
+  const margin = marginLayout(1400);
+  assert.equal(columnLeft(1400, margin) + tableRoom(1400, margin, 716), margin.cardLeft - MARGIN.gap, "short of the cards");
+  assert.equal(tableRoom(1400, margin, 716), 716 + COLUMN.padX, "the page's right padding");
+  assert.equal(tableRoom(700, null, 636), 636, "a narrow pane: the text column");
+  assert.equal(tableRoom(600, null, 716), 716, "never narrower than the text column");
+  assert.equal(tableRoom(1001, null, 716), Math.floor(1001 - COLUMN.padX - columnLeft(1001)), "whole pixels");
 });
 
 test("the column's left edge follows the margin layout, and the slash menu keeps to it", () => {

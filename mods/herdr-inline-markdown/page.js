@@ -189,10 +189,11 @@ const frontBox = (t, inner) => div().w_full().rounded(8).bg(t.surface).border_1(
 // A table as its grid (block data d's `grid`, grid.js gridOf): the header row on the surface, each row reporting its
 // height, each cell's text drawn by a field of its own near the page (owner.cellField), else by a TextView. Gpui clips
 // to the box, not to its rounded corners, so the header rounds its own top corners inside the 1 px line. A grid wider
-// than the page column is clipped to it and panned, a shade at each edge with more of it that way.
+// than its room is clipped to it and panned, a shade at each edge with more of it that way. The line's strip lies
+// outside the clip, so that the grid's right edge can be grabbed from beyond it.
 function tableGrid(owner, d, t) {
   const g = d.grid, last = g.texts.length - 1, looks = [{ ...d, style: "head" }, d];
-  const pan = owner.panOf(d), line = owner.lineOf(d), more = g.w - owner.gridRoom(d) - pan;
+  const pan = owner.panOf(d), line = owner.lineOf(d), shown = owner.gridShownW(d), more = g.w - owner.gridRoom(d) - pan;
   const grid = v_flex().id(`md-table-${d.key}`).w(g.w).flex_none().border_1().border_color(t.border).rounded(GRID.radius).overflow_hidden()
     .when(pan > 0, el => el.ml(-pan))
     .children(g.texts.map((cells, r) => h_flex().id(`md-row-${d.key}-${r}`).w_full().items_stretch()
@@ -200,7 +201,8 @@ function tableGrid(owner, d, t) {
       .when(r < last, el => el.border_b(GRID.line).border_color(t.border))
       .on_size_change((size, cx) => owner.rowSized(d.key, r, size, cx))
       .children(cells.map((text, c) => gridCell(owner, d, t, r, c, text, looks[r === 0 ? 0 : 1])))));
-  return div().id(`md-table-box-${d.key}`).w_full().relative().overflow_hidden().child(grid)
+  return div().id(`md-table-box-${d.key}`).w(shown).flex_none().relative()
+    .child(div().id(`md-table-clip-${d.key}`).w_full().overflow_hidden().child(grid))
     .when(pan > 0, el => el.child(edgeShade(d.key, "left")))
     .when(more > 0, el => el.child(edgeShade(d.key, "right")))
     .when(line >= 0, el => el.child(resizeLine(d.key, lineX(g.widths, line) - pan, t)));
@@ -323,10 +325,12 @@ export function renderBlock(owner, d) {
       .child(div().w(QUOTE_BAR).flex_none().rounded(2).bg(t.input))
       .child(div().flex_1().min_w(0).pl(QUOTE_PAD).child(body));
   }
-  // A diagram's frame and each picture draw their own selection tint: a picture can be opaque.
+  // A diagram's frame and each picture draw their own selection tint: a picture can be opaque. A table's block reaches
+  // as far as its grid shows, past the text column, so that its tint covers it.
   const shown = d.mode === "rendered", diagram = shown && d.look === "diagram", picture = shown && d.look === "picture";
   const button = owner.blockButtonIn(d);
   return div().id(`md-block-${d.key}`).w_full().pt(d.space).pl(d.depth * INDENT)
+    .when(Boolean(d.grid), el => el.min_w(d.depth * INDENT + owner.gridShownW(d)))
     .when(diagram, el => el.cursor_pointer())
     .when(picture, el => el.cursor_default())
     .when(!diagram && !picture, el => el.cursor_text())

@@ -331,6 +331,14 @@ export function marginLayout(viewW) {
 export const columnLeft =(viewportW, margin = null) => (margin ? margin.pageLeft : Math.max(0, (viewportW - COLUMN.maxWidth) / 2)) + COLUMN.padX;
 // `localX` is a pointer x in md-viewport coordinates.
 export const columnX = (localX, viewportW, margin = null) => localX - columnLeft(viewportW, margin);
+
+// How far right of the text column's left edge a table may reach: to the pane's right edge less the page's padding, or
+// in the margin layout `gap` short of the cards; never less than the text column, `textW` px.
+export function tableRoom(viewW, margin, textW) {
+  const right = margin ? margin.cardLeft - MARGIN.gap : viewW - COLUMN.padX;
+  return Math.max(textW, Math.floor(right - columnLeft(viewW, margin)));
+}
+
 export const maxOffset = (contentH, viewportH) => Math.max(0, contentH - viewportH);
 export const clampOffset = (offset, contentH, viewportH) => clamp(offset, 0, maxOffset(contentH, viewportH));
 

@@ -7,7 +7,7 @@ import { makeCx, must } from "./helpers.mjs";
 
 const { parse } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
-const { CODE_HEAD, NOTES } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { CODE_HEAD, NOTES, RESIZE, lineX } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { BOX, CALIBRATED, FRONT_BOX, Block, Column, STYLES, displayText, lookOf, markerOf, newOwnerId, owners, renderBlock, spaceBefore } = await import("../mods/herdr-inline-markdown/page.js");
 const { gridOf } = await import("../mods/herdr-inline-markdown/grid.js");
 const { TextareaState } = await import("./mocks/gpui-base.mjs");
@@ -128,6 +128,21 @@ test("the frame of a table's active comment lies over its grid", () => {
   const { el, d } = drawnGrid({ framed: "active" }), frame = must(el, `md-comment-frame-${d.key}`);
   assert.deepEqual([frame.style.absolute, frame.style.left, frame.style.top, frame.style.w, frame.style.bottom, frame.style.rounded], [true, 0, d.space, d.grid.w, 0, 6]);
   assert.equal(frame.style.right, undefined, "as wide as the grid, not the column");
+});
+
+test("a table's box is as wide as the part of its grid that shows, wider than the column or not, and clips the grid inside it; the strip of a line out there reaches past the box; the block is at least as wide as its indent and that part, so nothing clips it and its selection tint covers it", () => {
+  const shown = 120, pan = 30, also = { gridRoom: () => shown, gridShownW: () => shown, panOf: () => pan, lineOf: () => 2 };
+  const { el, d } = drawnGrid({ selected: true }, also), key = d.key, box = must(el, `md-table-box-${key}`);
+  assert.ok(d.grid.w > shown + pan, "more of it right of what shows");
+  assert.deepEqual([box.style.w, box.style.flex_none, box.style.relative, box.style.w_full, box.style.overflow_hidden], [shown, true, true, undefined, undefined]);
+  const clip = box.kids[0];
+  assert.deepEqual([clip.id, clip.style.w_full, clip.style.overflow_hidden, clip.kids[0].id, clip.kids[0].style.ml], [`md-table-clip-${key}`, true, true, `md-table-${key}`, -pan]);
+  assert.deepEqual(box.kids.slice(1).map(k => k.id), [`md-table-shade-left-${key}`, `md-table-shade-right-${key}`, `md-resize-${key}`], "the shades and the line over the clip, not in it");
+  assert.equal(must(el, `md-resize-${key}`).style.left, lineX(d.grid.widths, 2) - pan - RESIZE.grab);
+  const root = must(el, `md-block-${key}`);
+  assert.deepEqual([root.style.min_w, root.style.w_full, root.style.bg], [shown, true, "selection"], "the block reaches past the column with the grid");
+  const narrow = drawnGrid({}, { gridShownW: d => d.grid.w }), nk = narrow.d.key;
+  assert.deepEqual([must(narrow.el, `md-table-box-${nk}`).style.w, must(narrow.el, `md-block-${nk}`).style.min_w], [narrow.d.grid.w, narrow.d.grid.w], "a grid that shows whole");
 });
 
 test("space above a block: 0 first, 32 / 28 / 24 / 20 above headings, 8 after one, 6 inside a list, 14 otherwise", () => {
