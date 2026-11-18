@@ -5,9 +5,9 @@ import { v_flex, h_flex, Input, InputState, Textarea, TextareaState, TextView, E
 import { theme, settings, home, appHome, window, focused, panes, layout, shared, setShared, exec, readTextFile, writeTextFile, watchFolder, nextCommand, notify } from "herdr";
 import { MODES, basename, dirname, docToSource, eolOf, fileKey, isPictureName, modeOf, pictureMarkdown, pictureName, pictureSource, pictureWithAddress, pictureWithAlt, picturesOf, resolveLink, sourceSplice, sourceToDoc, stats, tildePath, toSource, toggleMode, touches, trimMap, writtenAddress } from "./lib.js";
 import { applySplice, closeFence, diff, docToField, fenceGuard, field as fieldOf, fieldToDoc, indent, insertAfter, insertAt, insertBefore, insertLines, isCode, isText, lengthenFence, loneMarker, mergeIntoPrevious, mergeNext, move, nest, opensBlock, outdent, parse, parseInSteps, paste, pasteLines, picturesIn, remove, removePicture, removeRange, reparse, retype, sameDefs, separators, setLanguage, shortcut, split, toParagraph, toggleTask, type, unnest } from "./blocks.js";
-import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, GRID, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, decideAxis, estimateHeight, frameBox, frameTool, gridAt, gridRowTop, isOneRow, languageMenuH, languageMenuPlace, lineOffsets, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, sharpScale, slashX, stackCards, startView, startsGesture, tablePress, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
-import { drawsGrid, gridOf } from "./grid.js";
-import { cellText, cellWritten, insertRow, rowAt, tableOf, writeCell } from "./tables.js";
+import { BAR, BAR_MENU, BLOCK_BUTTON, CARD, CARDS, CHIP, CODE_HEAD, COLUMN, FRAME, GRID, LANG_MENU, LINK_BOX, LINK_POP, MENU, NOTES, NOTE_BOX, RESIZE, anchorBlock, barLayout, barMenuH, barMenuPlace, barPlace, blockAt, canZoom, cardLook, cardPlace, chipW, clampOffset, clampView, columnLeft, columnX, dashWidth, dashesAtLeast, dashesFor, decideAxis, estimateHeight, frameBox, frameTool, gridAt, gridRowTop, isOneRow, languageMenuH, languageMenuPlace, lineNear, lineOffsets, lineX, linkPopoverSize, marginLayout, maxOffset, menuPlace, nextCell, notesPlace, overflows, pageStep, passThrough, pictureLayout, popoverPlace, popoverSize, prefixSums, pressToField, revealAt, revealOffset as keepInView, revealSpan, sharpScale, slashX, stackCards, startView, startsGesture, tablePress, tableRowTop, toolsTop, topDown, wrapPlace, wrapRows, zoomAround, zoomStep } from "./geometry.js";
+import { alignBoxes, drawsGrid, gridOf } from "./grid.js";
+import { cellText, cellWritten, insertRow, rowAt, tableOf, writeCell, writeDashes } from "./tables.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
 import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
@@ -42,6 +42,8 @@ const SANS = ".SystemUIFont";
 const ARROW_STEP = 48;
 const MOVES = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 const CLICK_SLOP = 4;
+// The room kept either side of the caret when a table pans to a cell wider than the page column.
+const REVEAL_X = 24;
 const REVEAL_AT = 1 / 3;
 const UNUSUAL = "Read-only: unusual characters";
 const RULE_H = 24, DIAGRAM_H = 120;
@@ -565,6 +567,10 @@ export class Editor {
     // table under the pointer, which shows its Comment button.
     this.frames = new Map(); this.pan = null; this.hoverFrame = null; this.hoverTop = null; this.gesture = null;
     this.zoomed = new Set(); this.settleTimer = null; this.hoverBox = null;
+    // Grid tables: `tablePans` how far each one wider than its room is panned sideways; `hoverLine` the column ({ key,
+    // column }) whose line the pointer is on, which a press drags (`resize`: the column, where the press was, the grid
+    // and pan it began with, the dashes and grid it is at, whether it moved).
+    this.tablePans = new Map(); this.hoverLine = null; this.resize = null;
 
     // Every text block near the viewport is drawn by a field of its own (`blockFields`: key -> { state, and what its
     // value and tokens were made from }; `fieldKeys` the other way), edited or not, so a press lands in it natively and
@@ -1168,6 +1174,7 @@ export class Editor {
     this.dropLanguages(cx);
     this.endBlockNote(cx);
     this.closeBlockAdd(cx);
+    if (this.resize) this.cancelResize(cx);
     this.pointer = null;
     this.updateHover(cx);
     let at = null;
@@ -1222,6 +1229,7 @@ export class Editor {
     const k = e.keystroke;
     if (k === "cmd-s") { cx.stop_propagation(); this.saveNow(cx); return; }
     if (k === "cmd-e") { cx.stop_propagation(); this.toggle(cx); return; }
+    if (k === "escape" && this.resize) { cx.stop_propagation(); this.cancelResize(cx); return; }
     if (k === "escape" && this.card) { cx.stop_propagation(); this.closeCard(cx); return; }
     // Keys typed into a picture's box, the language menu or a block's comment reach this root too, and one stopped here
     // never reaches the box's field.
@@ -1260,6 +1268,7 @@ export class Editor {
       return this.linkBoxOpen() ? this.applyLinkBox(cx) : this.saveNote(cx);
     }
     if (LANG_ACTIONS.has(name)) return this.languageKey(name, cx);
+    if (name === "mdb-escape" && this.resize) return this.cancelResize(cx);
     if (name === "mdb-escape" && this.blockNote) return this.endBlockNote(cx);
     if (this.mode !== "reading" || !this.activeKey || !this.editable()) return;
     this.syncField(cx);
@@ -1507,7 +1516,9 @@ export class Editor {
   forget(key) {
     const e = this.entities.get(key);
     if (e) { try { e.release(); } catch { /* already gone */ } }
-    for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames, this.cardMemo, this.cellMemo, this.grids, this.rowHeights]) m.delete(key);
+    for (const m of [this.entities, this.data, this.heights, this.shown, this.good, this.pictures, this.gens, this.frames, this.cardMemo, this.cellMemo, this.grids, this.rowHeights, this.tablePans]) m.delete(key);
+    if (this.hoverLine?.key === key) this.hoverLine = null;
+    if (this.resize?.key === key) this.resize = null;
     this.zoomed.delete(key);
     this.releaseField(this.disown(key));
     this.releaseCells(key);
@@ -2039,10 +2050,12 @@ export class Editor {
     try { this.entities.set(key, cx.new(Block, { owner: this.id, key })); } catch { this.inline = true; }
   }
 
-  // A table is drawn as a grid unless its source is what the edited field shows (a table kept as source). `cells` says
-  // which of its cells have fields, `cell` which one is edited.
+  // A table is drawn as a grid unless its source is what the edited field shows (a table kept as source); while a
+  // column of it is resized, at the widths dragged to. `cells` says which of its cells have fields, `cell` which one is
+  // edited.
   dataFor(blocks, i, width) {
-    const b = blocks[i], source = b.key === this.activeKey && !this.cell, grid = b.kind === "table" && !source ? this.gridNow(b, width) : null;
+    const b = blocks[i], source = b.key === this.activeKey && !this.cell, dragged = this.resize?.key === b.key ? this.resize.grid : null;
+    const grid = b.kind === "table" && !source ? dragged ?? this.gridNow(b, width) : null;
     const cell = grid && b.key === this.activeKey ? `${this.cell.r}:${this.cell.c}` : "";
     const look = lookOf(b, Boolean(grid)), cal = this.calOf(look.style), marker = markerOf(b);
     const text = grid ? "" : look.look === "text" ? displayText(b, this.highlight) : b.kind === "table" ? this.tableText(b) : look.look === "boxed" ? b.render : b.content;
@@ -2111,7 +2124,7 @@ export class Editor {
     if (!this.blockButtonShown(d)) return null;
     const B = BLOCK_BUTTON, chip = d.chipW ? this.chipIn(d) : null;
     const own = chip ? { x: chip.x - B.gap - B.size, y: chip.y }
-      : d.grid ? { x: d.depth * INDENT + d.grid.w + B.gap, y: d.space + B.inset } : { x: this.textWidth() - B.inset - B.size, y: d.space + B.inset };
+      : d.grid ? { x: d.depth * INDENT + this.gridShownW(d) + B.gap, y: d.space + B.inset } : { x: this.textWidth() - B.inset - B.size, y: d.space + B.inset };
     const box = { ...own, w: B.size, h: B.size }, count = d.notes ? { x: d.notesX, y: d.notesY, w: NOTES.w, h: NOTES.h } : null;
     return count && overlap(box, count) ? { ...box, x: count.x - B.gap - B.size, y: count.y + (NOTES.h - B.size) / 2 } : box;
   }
@@ -2156,6 +2169,34 @@ export class Editor {
     rows[r] = h;
     this.rowHeights.set(key, rows);
     this.wake();
+  }
+
+  // The px grid table data d may take in the page column; a grid wider than that pans sideways in it.
+  gridRoom(d) {
+    return this.textWidth() - d.depth * INDENT;
+  }
+
+  // How much of table data d's grid shows across the page column.
+  gridShownW(d) {
+    return Math.min(d.grid.w, this.gridRoom(d));
+  }
+
+  // How far table data d's grid is panned: 0 while it fits its room, and never past showing its right edge.
+  panOf(d) {
+    return d?.grid ? clamp(this.tablePans.get(d.key) ?? 0, 0, Math.max(0, d.grid.w - this.gridRoom(d))) : 0;
+  }
+
+  // Table `key` panned to x as far as it goes; the floats over its cells, which are only there while one of them is
+  // edited, go with it.
+  setPan(key, x, cx) {
+    const d = this.data.get(key), was = this.panOf(d);
+    this.tablePans.set(key, x);
+    const now = this.panOf(d);
+    this.tablePans.set(key, now);
+    if (now === was) return;
+    if (this.hoverLine?.key === key) this.hoverLine = null;
+    this.notifyBlocks([key], cx);
+    if (key === this.activeKey) cx?.notify();
   }
 
   // What Reading's TextView draws of a table kept as source: the comments in its cells highlighted as in text, the
@@ -2473,15 +2514,16 @@ export class Editor {
   }
 
   // A gesture keeps what it began as: with Cmd or Ctrl over a frame it zooms that frame; over a frame whose picture is
-  // wider than it, it pans the frame sideways once it shows it goes sideways; anything else scrolls the page.
+  // wider than it, or a table wider than the page column, it pans that sideways once it shows it goes sideways;
+  // anything else scrolls the page.
   wheel(e, cx) {
     this.closeSlash(cx);
     const z = zoom(), m = e?.modifiers ?? {}, phase = e?.touch_phase, now = Date.now(), p = this.point(e) ?? this.pointer;
     let dx = (Number(e?.delta?.x) || 0) / z, dy = (Number(e?.delta?.y) || 0) / z;
     if (startsGesture(this.gesture, phase, now)) {
-      const f = p ? this.frameAt(p) : null, v = f && this.viewOf(f.block.key);
-      const mode = !v ? "page" : m.platform || m.control ? "zoom" : overflows(boxOf(f.d), natOf(f.d), v.z).x ? "decide" : "page";
-      this.gesture = { mode, key: f?.block.key ?? null, sx: 0, sy: 0, ended: false };
+      const f = p ? this.frameAt(p) : null, v = f && this.viewOf(f.block.key), wide = !f && p ? this.wideGridAt(p) : null;
+      const mode = wide ? "decide" : !v ? "page" : m.platform || m.control ? "zoom" : overflows(boxOf(f.d), natOf(f.d), v.z).x ? "decide" : "page";
+      this.gesture = { mode, key: f?.block.key ?? wide?.key ?? null, table: Boolean(wide), sx: 0, sy: 0, ended: false };
     }
     const g = this.gesture;
     g.at = now;
@@ -2499,6 +2541,10 @@ export class Editor {
       if (!axis) return;
       g.mode = axis === "x" ? "x" : "page";
       [dx, dy] = [g.sx, g.sy];
+    }
+    if (g.mode === "x" && g.table) {
+      if (dx) this.setPan(g.key, this.panOf(this.data.get(g.key)) - dx, cx);
+      return;
     }
     if (g.mode === "x") {
       const v = this.viewOf(g.key);
@@ -2582,6 +2628,8 @@ export class Editor {
     const p = this.point(e), hit = p ? this.hit(p) : null;
     if (!this.onPicked(hit)) this.unpick(cx);
     if (this.lang && !(hit?.on === "chip" && hit.block.key === this.lang.key)) this.letLanguagesGo(cx);
+    const line = p && !e.modifiers?.shift ? this.lineAt(p) : null;
+    if (line) return this.startResize(line, e, cx);
     if (this.tookPress(e, "down")) { this.press = null; return; }
     this.fieldHeld = null;
     this.dragFrom = windowPoint(e);
@@ -2602,6 +2650,10 @@ export class Editor {
   // leaves the field the keyboard (keepKeyboard).
   viewportUp(e, cx) {
     if (this.endThumb(cx)) return this.keepKeyboard();
+    if (this.resize) {
+      this.endResize(e, cx);
+      return this.keepKeyboard();
+    }
     const down = this.press, held = this.fieldHeld, p = this.point(e), linked = this.linked, panned = this.endPan(cx);
     this.press = null; this.linked = false; this.fieldHeld = null;
     if (panned) return this.keepKeyboard();
@@ -2679,6 +2731,7 @@ export class Editor {
       return;
     }
     this.pointer = this.point(e);
+    if (this.resize) return this.dragLine(e, cx);
     if (this.pan) return this.panTo(e, cx);
     this.updateHover(cx);
     const held = this.press ? this.press.key : this.fieldHeld;
@@ -2693,10 +2746,12 @@ export class Editor {
     return true;
   }
 
+  // The pointer leaving the pane lets go of whatever it held: a column's line is let go there, as a mouse-up would.
   viewportHover(hovered, cx) {
     if (hovered) return;
     this.endThumb(cx);
     this.endPan(cx);
+    if (this.resize) this.endResize(null, cx);
     this.press = null; this.fieldHeld = null; this.pointer = null;
     this.updateHover(cx);
   }
@@ -2744,15 +2799,127 @@ export class Editor {
     return i === undefined || !d?.frameW || this.sums.length !== this.blocks.length + 1 ? FRAME.tools.top : toolsTop(d.frameH, this.frameTop(i, d));
   }
 
-  // The page moving under a resting pointer can change which frame, code block or table it is over, or where that
-  // frame's − % + group must sit to stay on the page. The blocks whose controls come, go or move draw again.
+  // The page moving under a resting pointer can change which frame, code block, table or column line it is over, or
+  // where that frame's − % + group must sit to stay on the page. The blocks whose controls come, go or move draw again.
+  // A line being dragged stays the one shown.
   updateHover(cx) {
     const p = this.pointer, frame = (p && this.frameAt(p)?.block.key) ?? null, top = frame ? this.toolsTopOf(frame) : null;
-    const box = p && !frame ? this.boxAt(p) : null;
-    if (frame === this.hoverFrame && top === this.hoverTop && box === this.hoverBox) return;
-    const was = [this.hoverFrame, this.hoverBox];
-    this.hoverFrame = frame; this.hoverTop = top; this.hoverBox = box;
-    this.notifyBlocks([...new Set([...was, frame, box])], cx);
+    const box = p && !frame ? this.boxAt(p) : null, line = this.resize ? this.hoverLine : p && !frame ? this.lineAt(p) : null;
+    const sameLine = line?.key === this.hoverLine?.key && line?.column === this.hoverLine?.column;
+    if (frame === this.hoverFrame && top === this.hoverTop && box === this.hoverBox && sameLine) return;
+    const was = [this.hoverFrame, this.hoverBox, this.hoverLine?.key];
+    this.hoverFrame = frame; this.hoverTop = top; this.hoverBox = box; this.hoverLine = line;
+    this.notifyBlocks([...new Set([...was, frame, box, line?.key])], cx);
+  }
+
+  // Viewport point p over a table's grid: the table's key, its data d and room, and p from the grid's top and from the
+  // left of the column's part it shows in; else null.
+  gridPoint(p) {
+    const blocks = this.blocks, n = blocks.length, y = p.y + this.offset - COLUMN.padTop;
+    if (!n || this.sums.length !== n + 1 || y < 0 || y >= this.sums[n]) return null;
+    const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key), gy = y - this.sums[i] - (d?.space ?? 0);
+    if (!d?.grid || gy < 0) return null;
+    const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin) - b.depth * INDENT;
+    return { key: b.key, d, room: this.gridRoom(d), x, y: gy };
+  }
+
+  // The table wider than its room whose shown part holds viewport point p, as gridPoint gives it; else null.
+  wideGridAt(p) {
+    const at = this.gridPoint(p);
+    return at && at.d.grid.w > at.room && at.x >= 0 && at.x < at.room ? at : null;
+  }
+
+  // The column ({ key, column }) of a table in a file that can be edited whose line, shown, is within RESIZE.grab px of
+  // viewport point p; else null.
+  lineAt(p) {
+    const at = this.editable() ? this.gridPoint(p) : null;
+    if (!at) return null;
+    const widths = at.d.grid.widths, pan = this.panOf(at.d), column = lineNear(widths, at.x + pan), x = lineX(widths, column) - pan;
+    return column >= 0 && x >= 0 && x < at.room ? { key: at.key, column } : null;
+  }
+
+  // The column of table data d whose line is drawn to be dragged, -1 for none.
+  lineOf(d) {
+    const line = this.hoverLine;
+    return line?.key === d.key ? line.column : -1;
+  }
+
+  // A press on a column's line holds it until the mouse-up, which endResize reads as a drag, a click or a double-click.
+  startResize({ key, column }, e, cx) {
+    const d = this.data.get(key);
+    this.press = null; this.fieldHeld = null; this.dragFrom = null;
+    this.resize = { key, column, from: windowPoint(e), base: d.grid, pan: this.panOf(d), dashes: null, grid: null, moved: false };
+    this.hoverLine = { key, column };
+    this.notifyBlocks([key], cx);
+    cx.notify();
+  }
+
+  // The held line follows the pointer: the column left of it as wide as the dashes nearest that width (never fewer than
+  // draw its minimum), every other at its own dashes; an automatic table's widths become the fewest dashes that keep
+  // them at the first move. Only the grid is drawn again, panned so that the line stays in view, and only when the
+  // dragged column's dashes change.
+  dragLine(e, cx) {
+    const r = this.resize, w = windowPoint(e);
+    if (!w || !r.from) return;
+    const dx = w.x - r.from.x;
+    if (!r.moved && Math.abs(dx) <= CLICK_SLOP) return;
+    r.moved = true;
+    const g = r.base, head = this.calOf("head"), body = this.calOf("cell"), d = this.data.get(r.key);
+    r.dashes ??= g.sized ? g.dashes.slice() : g.widths.map(x => dashesAtLeast(x, body.advance));
+    const dashes = dashesFor(g.widths[r.column] + dx, body.advance);
+    if (r.grid && dashes === r.dashes[r.column]) return;
+    r.dashes[r.column] = dashes;
+    const widths = r.dashes.map(n => dashWidth(n, body.advance)), boxed = g.aligns.some(a => a === "center" || a === "right");
+    const gridW = widths.reduce((a, x) => a + x, 0) + (widths.length + 1) * GRID.line;
+    r.grid = { ...g, widths, w: gridW, boxes: boxed ? alignBoxes(g.chars, g.aligns, widths, head, body) : g.boxes };
+    const room = this.gridRoom(d), at = lineX(widths, r.column);
+    this.tablePans.set(r.key, clamp(revealSpan(r.pan, room, at - RESIZE.grab, at + RESIZE.grab), 0, Math.max(0, gridW - room)));
+    this.redraw([r.key], cx);
+    if (this.cell && this.activeKey === r.key) cx.notify();
+  }
+
+  // Letting go of a dragged line writes its widths; a double-click on a line fits the column left of it to its text;
+  // a click is the press on the cell it would be without the line.
+  endResize(e, cx) {
+    const r = this.resize, p = e ? this.point(e) : null;
+    this.resize = null;
+    cx.notify();
+    if (r.moved) this.writeWidths(r.key, r.dashes, cx);
+    else if (e?.click_count >= 2) this.fitColumn(r.key, r.column, cx);
+    else if (p && e?.click_count >= 1) this.clickAt(p, cx, 1, Boolean(e.modifiers?.platform));
+    this.updateHover(cx);
+  }
+
+  // Escape during a drag: the widths and the pan it began with.
+  cancelResize(cx) {
+    const r = this.resize;
+    this.resize = null;
+    this.tablePans.set(r.key, r.pan);
+    this.redraw([r.key], cx);
+    this.notifyBlocks([r.key], cx);
+    cx.notify();
+  }
+
+  // Table `key`'s columns set to `dashes` in its delimiter row: one entry of the history, which puts back the caret of a
+  // block being edited (the cell taking its new width) and else opens nothing.
+  writeWidths(key, dashes, cx) {
+    this.commit(cx);
+    const b = this.blockByKey(key), s = b && this.gridOf(b) ? writeDashes(this.doc, b, dashes) : null;
+    if (!s) return this.redraw([key], cx);
+    const at = this.activeKey && !this.pending ? this.caretDoc() : null, grow = s.insert.length - (s.end - s.start);
+    this.change(s, cx, at === null ? { opensNothing: true } : { caretBefore: at, caretAfter: at >= s.end ? at + grow : at, column: this.cell?.c });
+  }
+
+  // Column c of table `key` as wide as its widest text and the padding, past the automatic widths' cap; the others as
+  // they are.
+  fitColumn(key, c, cx) {
+    const g = this.data.get(key)?.grid;
+    if (!g) return;
+    const head = this.calOf("head").advance, body = this.calOf("cell").advance;
+    const dashes = g.sized ? g.dashes.slice() : g.widths.map(x => dashesAtLeast(x, body));
+    const widest = Math.max(0, ...g.chars.map((row, r) => row[c] * (r === 0 ? head : body)));
+    dashes[c] = dashesAtLeast(Math.max(GRID.minW, Math.ceil(widest) + 2 * GRID.padX), body);
+    this.writeWidths(key, dashes, cx);
   }
 
   // The code block or table whose box holds viewport point p, a diagram's source being edited counting as code, and a
@@ -2763,7 +2930,7 @@ export class Editor {
     const i = blockAt(this.sums, y), b = blocks[i], d = this.data.get(b.key);
     if (!d || !(d.strip || d.kind === "table") || y < this.sums[i] + d.space) return null;
     const x = columnX(p.x, this.viewport?.width ?? this.size?.width ?? 0, this.margin);
-    const right = d.grid ? b.depth * INDENT + d.grid.w + BLOCK_BUTTON.gap + BLOCK_BUTTON.size : this.textWidth();
+    const right = d.grid ? b.depth * INDENT + this.gridShownW(d) + BLOCK_BUTTON.gap + BLOCK_BUTTON.size : this.textWidth();
     return x >= b.depth * INDENT && x < right ? b.key : null;
   }
 
@@ -3694,12 +3861,13 @@ export class Editor {
   }
 
   // Where cell (r, c) of grid table data d draws its text, from the block's top-left: past the grid's lines, the columns
-  // before it and its padding (cellTextLeft), under the rows above it as measured, else estimated; as wide as its text
-  // box; the header's text at its own advance. `rows`: the rows the estimate wraps `drawn` to (the field reports none).
+  // before it and its padding (cellTextLeft), less the grid's pan, under the rows above it as measured, else estimated;
+  // as wide as its text box; the header's text at its own advance. `rows`: the rows the estimate wraps `drawn` to (the
+  // field reports none).
   cellBox(d, r, c, drawn) {
     const g = d.grid, advance = this.calOf(r === 0 ? "head" : "cell").advance, w = g.boxes[r][c] || g.widths[c] - 2 * GRID.padX;
     return {
-      x: d.depth * INDENT + this.cellTextLeft(g, r, c), y: d.space + gridRowTop(this.gridHeights(d), r) + GRID.padY,
+      x: d.depth * INDENT + this.cellTextLeft(g, r, c) - this.panOf(d), y: d.space + gridRowTop(this.gridHeights(d), r) + GRID.padY,
       w, row: d.row, advance, rows: drawn === undefined ? undefined : this.wrapOf(drawn, w, advance).rows.length,
     };
   }
@@ -3791,6 +3959,7 @@ export class Editor {
   }
 
   revealCaret(cx) {
+    this.revealCell(cx);
     const i = this.at.get(this.activeKey), top = i === undefined ? null : this.caretTop(i);
     if (top === null || !this.viewport || this.sums.length !== this.blocks.length + 1) return;
     const d = this.data.get(this.activeKey), y = COLUMN.padTop + top;
@@ -3800,6 +3969,20 @@ export class Editor {
     this.updateHover(cx);
     if (cx) this.syncWindow(cx);
     cx?.notify();
+  }
+
+  // A table wider than its room is panned to show the edited cell whole, or its caret's place when the cell is wider.
+  revealCell(cx) {
+    const d = this.cell ? this.data.get(this.activeKey) : null, g = d?.grid;
+    if (!g) return;
+    const room = this.gridRoom(d), { r, c } = this.cell, right = lineX(g.widths, c);
+    if (g.w <= room) return;
+    let from = right - g.widths[c] - GRID.line, to = right + GRID.line;
+    if (to - from > room) {
+      const x = this.cellTextLeft(g, r, c) + this.wrapAt(caretOf(this.field)?.end ?? 0).x;
+      [from, to] = [x - REVEAL_X, x + REVEAL_X];
+    }
+    this.setPan(this.activeKey, revealSpan(this.panOf(d), room, from, to), cx);
   }
 
   // The clicked line stays under the pointer when the field shows front matter's dash line above it.
@@ -3815,7 +3998,7 @@ export class Editor {
   openPressed(b, x, y, cx, opts = {}) {
     const d = this.data.get(b.key);
     if (!d.grid) return this.activate(b.key, this.pressCaret(b, x, y), cx, opts);
-    const { r, c, caret } = this.gridPress(b, d, x - d.depth * INDENT, y - d.space);
+    const { r, c, caret } = this.gridPress(b, d, x - d.depth * INDENT + this.panOf(d), y - d.space);
     return this.activate(b.key, caret, cx, { ...opts, cell: { r, c } });
   }
 
@@ -3955,7 +4138,7 @@ export class Editor {
   // or the last row's under x, or with x null the first or the last cell. -> { r, c, caret }
   gridArrival(b, d, dir, x) {
     const t = tableOf(this.doc, b), r = dir > 0 ? 0 : t.rows.length - 1;
-    const c = x === null ? (dir > 0 ? 0 : t.columns - 1) : gridAt(this.gridHeights(d), d.grid.widths, x - d.depth * INDENT, 0).column;
+    const c = x === null ? (dir > 0 ? 0 : t.columns - 1) : gridAt(this.gridHeights(d), d.grid.widths, x - d.depth * INDENT + this.panOf(d), 0).column;
     return { r, c, caret: this.cellCaret(b, d, t, r, c, dir, x) };
   }
 
@@ -7093,7 +7276,16 @@ export class Editor {
       vp.child(this.calStrip(t));
       this.giveUpLater(cx);
     }
+    if (this.resize) vp.child(this.resizeCover());
     return vp;
+  }
+
+  // Over the fields too, which show their own text cursor, and over the cards and floats, which keep the pointer's moves
+  // and the release to themselves: a line let go over one would stay held.
+  resizeCover() {
+    return div().id("md-resizing").absolute().inset_0().cursor_col_resize()
+      .on_mouse_move((e, cx) => { cx.stop_propagation(); this.viewportMove(e, cx); })
+      .on_mouse_up("left", (e, cx) => { cx.stop_propagation(); this.viewportUp(e, cx); });
   }
 
   sourceBox(mono) {

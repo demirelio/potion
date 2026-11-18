@@ -5,7 +5,8 @@
 // backslash does not take with it (a backslash takes the next character, a backslash too).
 import { cellCount, parse } from "./blocks.js";
 
-const PIPE = 124, BSL = 92, SPACE = 32, TAB = 9, LOW_SURROGATE = 0xdc00, AFTER_SURROGATES = 0xe000;
+const PIPE = 124, BSL = 92, SPACE = 32, TAB = 9, DASH = 45, LOW_SURROGATE = 0xdc00, AFTER_SURROGATES = 0xe000;
+const DASH_RUN = /-+/;
 const WHITE = /\s/;
 const DELIM_CELL = /^[ \t]*(:?)-+(:?)[ \t]*$/;
 const LINE_BREAK = /\r\n|\r|\n/g;
@@ -67,9 +68,15 @@ const alignOf = (text, cell) => {
   return m[1] && m[2] ? "center" : m[1] ? "left" : m[2] ? "right" : null;
 };
 
+const dashCount = (text, cell) => {
+  let n = 0;
+  for (let i = cell.start; i < cell.end; i++) if (text.charCodeAt(i) === DASH) n++;
+  return n;
+};
+
 function parted(text, b) {
   const rows = [], s0 = b.start;
-  let columns = 0, aligns = [], aligned = true, irregular = false, firstPipes = null;
+  let columns = 0, aligns = [], dashes = [], aligned = true, irregular = false, firstPipes = null;
   for (let k = 0; k < b.lines.length; k++) {
     const L = b.lines[k], row = partRow(text, s0 + L.body, s0 + L.eol);
     if (firstPipes === null) firstPipes = row.pipes;
@@ -77,6 +84,7 @@ function parted(text, b) {
     if (k === 0) columns = row.cells.length;
     if (k === 1) {
       aligns = row.cells.map(cell => alignOf(text, cell));
+      dashes = row.cells.map(cell => dashCount(text, cell));
       continue;
     }
     if (row.cells.length > columns) irregular = true;
@@ -84,7 +92,7 @@ function parted(text, b) {
     while (cells.length < columns) cells.push(null);
     rows.push({ line: k, cells, lead: row.lead, trail: row.trail });
   }
-  return { rows, columns, aligns, aligned, irregular };
+  return { rows, columns, aligns, dashes, aligned, irregular };
 }
 
 const shifted = (t, by) => ({
@@ -105,11 +113,12 @@ function keptOf(doc, b) {
   return k;
 }
 
-// -> { rows, columns, aligns, aligned, irregular } for table block b of `doc`.
+// -> { rows, columns, aligns, dashes, aligned, irregular } for table block b of `doc`.
 // rows: the header first, the delimiter row left out; each { line (an index into b.lines), cells, lead, trail (a pipe at
 // either end) }. A cell is { start, end }, the document offsets of its text without the spaces around it (an empty
 // one has start === end inside its slot); a row with fewer cells than the header has null for each it lacks.
-// columns: the header's cell count; aligns[c]: "left", "center", "right" or null, from the delimiter row; aligned:
+// columns: the header's cell count; aligns[c]: "left", "center", "right" or null, from the delimiter row; dashes[c]:
+// the dashes of its delimiter cell; aligned:
 // every line has its pipes at the same columns (code points from the line's body); irregular: a row holds more cells
 // than the header, which GFM drops.
 export function tableOf(doc, b) {
@@ -193,6 +202,19 @@ export function insertRow(doc, b, t, after = t.rows.length - 1) {
   const pipes = t.aligned ? partRow(doc.text, b.start + header.body, b.start + header.eol).pipes : null;
   const row = emptyRow(t.columns, pipes), insert = `${doc.eol}${b.contPrefix}${row}`, from = at + insert.length - row.length;
   return { start: at, end: at, insert, cells: partRow(row, 0, row.length).cells.map(cell => from + cell.start) };
+}
+
+// -> the splice that gives each delimiter cell of table block b `dashes[c]` dashes, its colons, the row's pipes and its
+// spaces kept; null when the row has them already. Nothing but the delimiter row changes.
+export function writeDashes(doc, b, dashes) {
+  const L = b.lines[1], body = b.start + L.body, eol = b.start + L.eol, text = doc.text, { cells } = partRow(text, body, eol);
+  let line = "", at = body;
+  cells.forEach((cell, c) => {
+    line += text.slice(at, cell.start) + text.slice(cell.start, cell.end).replace(DASH_RUN, "-".repeat(dashes[c]));
+    at = cell.end;
+  });
+  line += text.slice(at, eol);
+  return line === text.slice(body, eol) ? null : { start: body, end: eol, insert: line };
 }
 
 // -> the splice that writes `next` as the text of cell (r, c) of table t (tableOf(doc, b)), the table keeping its shape:

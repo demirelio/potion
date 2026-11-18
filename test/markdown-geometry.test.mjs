@@ -8,7 +8,7 @@ import {
   barMenuPlace, popoverPlace, LINK_POP, LINK_BOX, linkPopoverSize, popoverSize, PICTURE, pictureLayout,
   NOTE_BOX, NOTES, CARD, notesPlace, cardPlace, MARGIN, marginLayout, CARDS, cardLook, stackCards,
   CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, languageMenuPlace, TABLE_VIEW, tablePress, tableRowTop, GRID, columnWidths, gridRowHeights,
-  gridAt, gridRowTop,
+  gridAt, gridRowTop, DASHES, dashWidth, dashesFor, dashesAtLeast, isSized, lineX, lineNear, revealSpan,
 } from "../mods/herdr-inline-markdown/geometry.js";
 import { parse, field } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
@@ -93,14 +93,66 @@ test("column widths: natural ones (the widest text and the padding, 64 to 360 px
   assert.deepEqual(columnWidths([30, 900], 600), [64, 360], "nor over 360");
 });
 
-test("column widths that don't fit: a column that fits an equal share of what is left keeps its width, the others share the rest; equal shares when 64 px each doesn't fit", () => {
+test("column widths that don't fit: a column that fits an equal share of what is left keeps its width, the others share the rest", () => {
   assert.deepEqual(columnWidths([30, 800], 300), [64, 236], "one wide column shrinks");
   assert.deepEqual(columnWidths([30, 800, 800], 400), [64, 168, 168], "two wide ones share");
   assert.deepEqual(columnWidths([30, 90, 800], 300), [64, 110, 126], "a share that grows as narrower columns keep theirs");
   assert.deepEqual(columnWidths([100, 100, 120, 800], 400), [100, 100, 100, 100], "none fits a share");
   assert.deepEqual(columnWidths([200, 200, 200, 200, 200], 330), [66, 66, 66, 66, 66], "all share, each over 64");
-  assert.deepEqual(columnWidths(Array(10).fill(30), 500), Array(10).fill(50), "too many columns for 64 px each: equal shares");
-  assert.ok(columnWidths([333, 77, 512, 64], 451).reduce((a, b) => a + b) <= 451, "never wider than the room");
+  assert.ok(columnWidths([333, 77, 512, 64], 451).reduce((a, b) => a + b) <= 451, "never wider than the room while 64 px each fits");
+});
+
+test("column widths when 64 px each doesn't fit the room: 64 px each, the grid wider than the room", () => {
+  assert.deepEqual(columnWidths(Array(10).fill(30), 500), Array(10).fill(64));
+  assert.deepEqual(columnWidths([5, 900, 40], 150), [64, 64, 64]);
+});
+
+test("a column's set width: its dashes, at least three, at the cell style's advance, and its padding, never under 64 px nor capped; a width as dashes the other way, never fewer than draw 64 px", () => {
+  assert.equal(DASHES.min, 3);
+  assert.equal(dashWidth(11, 6.5), Math.ceil(11 * 6.5) + 2 * GRID.padX);
+  assert.equal(dashWidth(100, 6.5), 670, "no 360 px cap");
+  assert.equal(dashWidth(3, 6.5), GRID.minW, "under 64 px: 64");
+  assert.equal(dashWidth(1, 6.5), GRID.minW);
+  assert.equal(dashesFor(dashWidth(40, 6.58), 6.58), 40, "the dashes a set width came from");
+  assert.equal(dashesFor(200, 6.58), Math.round(180 / 6.58));
+  assert.equal(dashesFor(10, 6.58), 7, "the fewest that draw 64 px or more");
+  assert.ok(dashWidth(dashesFor(10, 6.58), 6.58) >= GRID.minW);
+  assert.deepEqual([isSized([3, 3, 1]), isSized([3, 4]), isSized([8])], [false, true, true], "sized when a column has more than three");
+});
+
+test("a width a column must keep as dashes: the fewest whose column is at least that wide, never fewer than draw 64 px", () => {
+  assert.equal(dashesAtLeast(168, 6.58), 23, "148 px of text: 22 dashes would draw 165 px");
+  assert.equal(dashWidth(22, 6.58), 165);
+  assert.equal(dashesAtLeast(88, 6.58), 11, "68 px of text needs more than 10 dashes");
+  for (const advance of [6.58, 6.8, 7, 8.4]) {
+    for (let width = GRID.minW; width <= 400; width++) {
+      const n = dashesAtLeast(width, advance);
+      assert.ok(dashWidth(n, advance) >= width, `${n} dashes at ${advance} draw ${dashWidth(n, advance)} px, under ${width}`);
+      assert.ok(n === dashesFor(10, advance) || dashWidth(n - 1, advance) < width, `${n - 1} dashes at ${advance} hold ${width} px too`);
+    }
+    for (let n = dashesFor(10, advance); n < 60; n++) assert.equal(dashesAtLeast(dashWidth(n, advance), advance), n, "the dashes a set width came from");
+  }
+  assert.equal(dashesAtLeast(10, 6.58), 7, "the fewest that draw 64 px or more");
+});
+
+test("a grid's column lines: line c after column c, 1 px; a point within 4 px of one names it, the nearest", () => {
+  const widths = [100, 80, 64];
+  assert.deepEqual([0, 1, 2].map(c => lineX(widths, c)), [101, 182, 247], "the last is the grid's right edge");
+  assert.equal(lineNear(widths, 101), 0);
+  assert.equal(lineNear(widths, 97), 0, "4 px left of it");
+  assert.equal(lineNear(widths, 96), -1);
+  assert.equal(lineNear(widths, 106), 0, "4 px right of its pixel");
+  assert.equal(lineNear(widths, 107), -1);
+  assert.equal(lineNear(widths, 250), 2, "past the right edge");
+  assert.equal(lineNear(widths, 140), -1, "inside a cell");
+  assert.equal(lineNear(widths, 0), -1, "the left edge is no line to drag");
+});
+
+test("revealSpan: the least pan that shows [from, to] in a room `room` wide; a span wider than the room shows its start", () => {
+  assert.equal(revealSpan(0, 300, 50, 120), 0, "shown already");
+  assert.equal(revealSpan(0, 300, 400, 500), 200, "right of the room");
+  assert.equal(revealSpan(250, 300, 100, 200), 100, "left of it");
+  assert.equal(revealSpan(0, 300, 400, 800), 400, "wider than the room");
 });
 
 test("a grid's estimated rows: the tallest cell's wrapped rows times its style's row, the padding and the line under it but the last", () => {

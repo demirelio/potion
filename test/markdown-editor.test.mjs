@@ -18,7 +18,7 @@ const { parse, diff } = await import("../mods/herdr-inline-markdown/blocks.js");
 const { bigDocument } = await import("./markdown-corpus.mjs");
 const { TEXT, RAW, SOURCE, NOTE, LANG, INSTALLED, REBOUND, KEYS_SETTLE_MS } = await import("../mods/herdr-inline-markdown/keys.js");
 const { COMMANDS } = await import("../mods/herdr-inline-markdown/slash.js");
-const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths } = await import("../mods/herdr-inline-markdown/geometry.js");
+const { PICTURE, pictureLayout, BAR, BAR_MENU, barMenuH, NOTE_BOX, LINK_BOX, NOTES, CARD, CARDS, cardLook, columnLeft, marginLayout, CODE_HEAD, CHIP, chipW, LANG_MENU, languageMenuH, REVEAL, GRID, columnWidths, dashWidth, dashesFor, dashesAtLeast, lineX } = await import("../mods/herdr-inline-markdown/geometry.js");
 const { highlightColor, deepHighlightColor, textColor, TEXT_COLORS } = await import("../mods/herdr-inline-markdown/colors.js");
 const { POINT } = await import("../mods/herdr-inline-markdown/comments.js");
 
@@ -3147,14 +3147,15 @@ async function page(disk, sizes, viewH = 600, viewW = 900) {
 const NO_MODS = { shift: false, control: false, alt: false, platform: false };
 const keyUp =(m, key, modifiers = {}) => fire(must(m.tree(), `md-field-${m.view.activeKey}`), "on_key_up", { key, keystroke: key, modifiers: { ...NO_MODS, ...modifiers } }, m.cx);
 const hover = (m, p) => fire(must(m.tree(), "md-viewport"), "on_mouse_move", { position: p, local_position: p, modifiers: NO_MODS }, m.cx);
-// Every style measured as drawn by default: arming waits for the measurements.
-function calibrate(m) {
+// Every style measured as drawn by default, but a style `advances` names measured at that advance: arming waits for the
+// measurements.
+function calibrate(m, advances = {}) {
   const t = m.tree();
   for (const [name, st] of Object.entries(STYLES)) {
     if (!find(t, `md-cal-${name}-tv1`)) continue;
     const row = st.size * st.lh;
     for (const [part, h] of [["tv1", row], ["tv3", 3 * row], ["f1", row], ["f3", 3 * row]]) fire(must(t, `md-cal-${name}-${part}`), "on_size_change", { width: 600, height: h }, m.cx);
-    fire(must(t, `md-cal-${name}-adv`), "on_size_change", { width: 40 * st.size * (st.mono ? 0.6 : 0.47), height: row }, m.cx);
+    fire(must(t, `md-cal-${name}-adv`), "on_size_change", { width: 40 * (advances[name] ?? st.size * (st.mono ? 0.6 : 0.47)), height: row }, m.cx);
   }
   assert.equal(m.view.calibrating, false);
 }
@@ -13595,4 +13596,277 @@ test("in a cell Backspace at its start and forward Delete at its end change noth
   assert.ok(r > 5 && r < 30, `row ${r}`);
   assert.equal(p.view.field.value(), `r${r - 1}`);
   assert.ok(p.view.offset > 0, "the page moved");
+});
+
+// A sized table wider than the page column (716 px in a 900 px pane): 60, 40 and 50 dashes.
+const WIDE_DOC = `Intro\n\n| a | b | c |\n|${"-".repeat(60)}|${"-".repeat(40)}|${"-".repeat(50)}|\n| one | two | three |\n\nEnd\n`;
+const WIDE_SIZES = { 0: 24, 1: 14 + gridH(2), 2: 38 };
+const panNow = (m, key) => m.view.panOf(m.view.data.get(key));
+// The screen point on the line right of column c of grid table block i, `dx` px right of it, level with row 1.
+const lineOn = (m, i, c, dx = 0) => {
+  const d = m.view.data.get(keyAt(m, i));
+  return { x: leftOf(m) + d.depth * INDENT + lineX(d.grid.widths, c) - m.view.panOf(d) + dx, y: gridY(m, i, 1) + 8 };
+};
+
+test("a table whose dashes add up to more than the page column is drawn that wide from the column's left edge, clipped to the column; Shift+wheel and a sideways gesture over it pan it, a shade at each edge with more that way; up and down scroll the page", async () => {
+  const m = await page(WIDE_DOC, WIDE_SIZES, 100), table = keyAt(m, 1), d = m.view.data.get(table), adv = m.view.calOf("cell").advance;
+  const room = m.view.textWidth();
+  assert.deepEqual(d.grid.widths, [60, 40, 50].map(n => dashWidth(n, adv)));
+  assert.ok(d.grid.w > room, `${d.grid.w} px in ${room}`);
+  const box = must(m.tree(), `md-table-box-${table}`);
+  assert.deepEqual([box.style.w_full, box.style.overflow_hidden, gridOfKey(m, table).style.ml], [true, true, undefined], "from the column's left edge");
+  const shades = () => ["left", "right"].map(side => Boolean(find(m.tree(), `md-table-shade-${side}-${table}`)));
+  assert.deepEqual(shades(), [false, true], "more to the right");
+  const on = { x: leftOf(m) + 100, y: topOf(m, 1) + d.space + 10 };
+  scroll(m, on, 0, -40, { touch_phase: "started", modifiers: { shift: true } });
+  assert.equal(panNow(m, table), 40, "Shift+wheel");
+  assert.equal(gridOfKey(m, table).style.ml, -40);
+  assert.deepEqual(shades(), [true, true]);
+  scroll(m, on, -60, -2, { touch_phase: "started" });
+  assert.equal(panNow(m, table), 100, "a sideways gesture");
+  scroll(m, on, 0, -30, { touch_phase: "started" });
+  assert.deepEqual([panNow(m, table), m.view.offset], [100, 30], "up and down scroll the page");
+  scroll(m, { ...on, y: on.y - 30 }, -5000, 0, { touch_phase: "started" });
+  assert.equal(panNow(m, table), d.grid.w - room, "as far as its right edge");
+  assert.deepEqual(shades(), [true, false]);
+  scroll(m, { x: leftOf(m) + 100, y: 2 }, -40, 0, { touch_phase: "started" });
+  assert.equal(panNow(m, table), d.grid.w - room, "a gesture off the table leaves it");
+  reset();
+  const r = await mount({ machine: "devbox", disk: WIDE_DOC });
+  viewportOf(r);
+  await heights(r, WIDE_SIZES);
+  const rd = r.view.data.get(keyAt(r, 1));
+  assert.deepEqual(rd.grid.widths, d.grid.widths, "a file that can't be edited: its dashes too");
+  scroll(r, { x: leftOf(r) + 100, y: topOf(r, 1) + rd.space + 10 }, 0, -40, { touch_phase: "started", modifiers: { shift: true } });
+  assert.equal(panNow(r, keyAt(r, 1)), 40, "and pans");
+});
+
+test("the caret in a cell off to the side of a wide table pans it into view, the whole cell when it fits; the cell's box, which the bar and every float over it go by, follows the pan", async () => {
+  const m = await page(WIDE_DOC, WIDE_SIZES), table = keyAt(m, 1), d = m.view.data.get(table), room = m.view.textWidth();
+  await pressCell(m, table, 1, 0, 3);
+  assert.equal(panNow(m, table), 0);
+  act(m, "mdb-tab");
+  act(m, "mdb-tab");
+  assert.deepEqual(m.view.cell, { r: 1, c: 2 });
+  assert.equal(panNow(m, table), d.grid.w - room, "the third column's right edge at the column's");
+  const x = () => m.view.fieldInPane(1).x;
+  assert.equal(x(), leftOf(m) + lineX(d.grid.widths, 1) + GRID.line + GRID.padX - panNow(m, table), "the cell's box where it is drawn");
+  const was = x();
+  scroll(m, { x: leftOf(m) + 100, y: topOf(m, 1) + d.space + 10 }, 50, 0, { touch_phase: "started" });
+  assert.equal(x(), was + 50, "a pan moves it");
+  escape(m);
+  await clickAt(m, { x: leftOf(m) + lineX(d.grid.widths, 1) + GRID.line + 7 - panNow(m, table), y: gridY(m, 1, 1) + 8 });
+  assert.deepEqual([m.view.cell, m.view.field.selection], [{ r: 1, c: 2 }, at(0)], "a press on a panned cell's padding opens that cell");
+  act(m, "mdb-shift-tab");
+  act(m, "mdb-shift-tab");
+  assert.deepEqual([m.view.cell, panNow(m, table)], [{ r: 1, c: 0 }, 0], "back to the first column");
+});
+
+test("in a file that can be edited, the pointer within 4 px of a line between two columns, or of the grid's right edge, draws that line top to bottom, 2 px in the theme's yellow, under a resize cursor; nowhere else, and never in a file that can't be edited", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), yellow = textColor(theme(), "yellow");
+  const lineEl = () => find(m.tree(), `md-resize-${table}`);
+  assert.equal(lineEl(), null);
+  hover(m, lineOn(m, 1, 0));
+  const el = lineEl(), g = m.view.data.get(table).grid;
+  assert.ok(el, "on the line");
+  assert.deepEqual([el.style.cursor_col_resize, el.style.absolute, el.style.top, el.style.bottom, el.style.left, el.style.w], [true, true, 0, 0, lineX(g.widths, 0) - 4, 9], "the strip the pointer can grab");
+  const drawn = el.kids[0];
+  assert.deepEqual([drawn.style.bg, drawn.style.w, drawn.style.top, drawn.style.bottom], [yellow, 2, 0, 0], "2 px of yellow, top to bottom");
+  hover(m, lineOn(m, 1, 0, -4));
+  assert.ok(lineEl(), "4 px left of it");
+  hover(m, lineOn(m, 1, 0, -5));
+  assert.equal(lineEl(), null, "5 px left of it");
+  hover(m, lineOn(m, 1, 1, 3));
+  assert.equal(lineEl()?.style.left, lineX(g.widths, 1) - 4, "the grid's right edge, from outside the grid");
+  hover(m, lineOn(m, 1, 0, -30));
+  assert.equal(lineEl(), null, "inside a cell");
+  reset();
+  const r = await mount({ machine: "devbox", disk: CELLS_DOC });
+  viewportOf(r);
+  await heights(r, CELLS_SIZES);
+  hover(r, lineOn(r, 1, 0));
+  assert.equal(find(r.tree(), `md-resize-${keyAt(r, 1)}`), null, "a file that can't be edited");
+});
+
+test("dragging a column's line moves it: the column left of it wider or narrower, never under its minimum, the columns right of it as wide as they were; while dragging only the grid is drawn again, nothing parsed or written; letting go writes the delimiter row alone, every column of a table that had none set, one entry of the history", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), adv = m.view.calOf("cell").advance;
+  const g0 = m.view.data.get(table).grid, doc = m.view.doc, kept = m.view.grids.get(table).grid, from = lineOn(m, 1, 0);
+  const widths = () => m.view.data.get(table).grid.widths;
+  down(m, from);
+  hover(m, { x: from.x + 30, y: from.y });
+  hover(m, { x: from.x + 60, y: from.y + 5 });
+  const wider = [dashWidth(dashesFor(g0.widths[0] + 60, adv), adv), dashWidth(dashesAtLeast(g0.widths[1], adv), adv)];
+  assert.deepEqual(widths(), wider, "60 px wider, at whole dashes; the next column as it was, at its dashes");
+  assert.equal(must(m.tree(), `md-cell-${table}-1-0`).style.w, wider[0] + GRID.line, "drawn so");
+  assert.deepEqual([m.view.text, m.view.doc, m.view.grids.get(table).grid], [CELLS_DOC, doc, kept], "nothing written, parsed or worked out again");
+  assert.ok(find(m.tree(), `md-resize-${table}`), "the line stays yellow while dragged");
+  assert.equal(must(m.tree(), "md-resizing").style.cursor_col_resize, true, "the resize cursor wherever the pointer goes");
+  hover(m, { x: from.x - 300, y: from.y });
+  assert.ok(widths()[0] >= GRID.minW && widths()[0] < GRID.minW + adv, `${widths()[0]} px: not under its minimum`);
+  hover(m, { x: from.x + 60, y: from.y });
+  up(m, { x: from.x + 60, y: from.y }, { click_count: 0 });
+  await flush();
+  const dashes = [dashesFor(g0.widths[0] + 60, adv), dashesAtLeast(g0.widths[1], adv)];
+  assert.equal(m.view.text, CELLS_DOC.replace("|---|---|", `|${"-".repeat(dashes[0])}|${"-".repeat(dashes[1])}|`), "the delimiter row, every column");
+  assert.deepEqual([widths(), find(m.tree(), "md-resizing")], [wider, null], "the widths it was let go at");
+  assert.equal(m.view.history.entries.length, 1);
+  await m.key("cmd-z");
+  assert.deepEqual([m.view.text, widths(), m.view.activeKey], [CELLS_DOC, g0.widths, null], "one undo: the widths as they were, nothing opened");
+});
+
+test("Escape while dragging a column's line puts the widths back and writes nothing; a cell being edited stays edited", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), g0 = m.view.data.get(table).grid, from = lineOn(m, 1, 0);
+  const widths = () => m.view.data.get(table).grid.widths;
+  down(m, from);
+  hover(m, { x: from.x + 60, y: from.y });
+  assert.notDeepEqual(widths(), g0.widths);
+  await m.key("escape");
+  assert.deepEqual([widths(), find(m.tree(), "md-resizing")], [g0.widths, null], "put back");
+  hover(m, { x: from.x + 90, y: from.y });
+  up(m, { x: from.x + 90, y: from.y }, { click_count: 0 });
+  await flush();
+  assert.deepEqual([m.view.text, widths()], [CELLS_DOC, g0.widths], "the drag ended there");
+  await pressCell(m, table, 1, 1, 1);
+  down(m, from);
+  hover(m, { x: from.x + 60, y: from.y });
+  act(m, "mdb-escape");
+  up(m, { x: from.x + 60, y: from.y }, { click_count: 0 });
+  await flush();
+  assert.deepEqual([m.view.text, widths(), m.view.cell, m.view.field.selection], [CELLS_DOC, g0.widths, { r: 1, c: 1 }, at(1)], "the cell still edited");
+});
+
+test("a double-click on a column's line sets the column left of it to the width its text needs, written as dashes; the columns right of it keep theirs", async () => {
+  const doc = `Intro\n\n| Name | Size | Note |\n|${"-".repeat(40)}|-----|:${"-".repeat(20)}:|\n| apple **pie** | 12 | x |\n\nEnd\n`;
+  const m = await page(doc, { 0: 24, 1: 14 + gridH(2), 2: 38 }), table = keyAt(m, 1), adv = m.view.calOf("cell").advance;
+  const g0 = m.view.data.get(table).grid;
+  await doubleClickAt(m, lineOn(m, 1, 0));
+  const fit = dashesAtLeast(Math.ceil(9 * adv) + 2 * GRID.padX, adv);
+  assert.equal(m.view.text, doc.replace(`|${"-".repeat(40)}|`, `|${"-".repeat(fit)}|`), "apple pie: nine characters");
+  assert.deepEqual(m.view.data.get(table).grid.widths.slice(1), g0.widths.slice(1), "the others as they were");
+  assert.equal(m.view.history.entries.length, 1, "one entry");
+});
+
+test("a double-click fits a column to text wider than the automatic cap; a sideways pan lets the hovered line go; the Markdown view ends a drag", async () => {
+  const long = "word ".repeat(16).trim(), doc = `Intro\n\n| Name | Size |\n|${"-".repeat(10)}|${"-".repeat(100)}|\n| ${long} | 12 |\n\nEnd\n`;
+  const m = await page(doc, { 0: 24, 1: 14 + gridH(2), 2: 38 }), table = keyAt(m, 1), adv = m.view.calOf("cell").advance;
+  assert.ok(m.view.data.get(table).grid.widths[0] < GRID.maxW);
+  await doubleClickAt(m, lineOn(m, 1, 0));
+  const fit = m.view.data.get(table).grid.widths[0];
+  assert.ok(fit >= Math.ceil(long.length * adv) + 2 * GRID.padX && fit > GRID.maxW, `${fit} px: the text's width, past ${GRID.maxW}`);
+  hover(m, lineOn(m, 1, 0));
+  assert.ok(find(m.tree(), `md-resize-${table}`), "on the line");
+  m.view.setPan(table, 80, m.cx);
+  assert.equal(find(m.tree(), `md-resize-${table}`), null, "a pan moves the line away from the pointer");
+  m.view.setPan(table, 0, m.cx);
+  const from = lineOn(m, 1, 0);
+  down(m, from);
+  hover(m, { x: from.x - 40, y: from.y });
+  await m.click("md-markdown");
+  await m.click("md-markdown");
+  assert.deepEqual([m.view.resize, find(m.tree(), "md-resizing")], [null, null], "the drag ended with the Markdown view");
+});
+
+test("a cell being edited takes the new widths when a resize ends, its field still the edited one and as wide as its column; undo puts them back with the caret in that cell", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), adv = m.view.calOf("cell").advance, g0 = m.view.data.get(table).grid;
+  const field = await pressCell(m, table, 1, 0, 3), from = lineOn(m, 1, 0);
+  drag(m, from, { x: from.x + 60, y: from.y });
+  await flush();
+  const w = dashWidth(dashesFor(g0.widths[0] + 60, adv), adv), d = m.view.data.get(table);
+  assert.deepEqual([m.view.activeKey, m.view.cell, m.view.field, d.grid.widths[0]], [table, { r: 1, c: 0 }, field, w], "still the edited cell");
+  assert.equal(m.view.editedBox(d).w, w - 2 * GRID.padX, "its field as wide as its new column");
+  act(m, "mdb-undo");
+  assert.deepEqual([m.view.text, m.view.data.get(table).grid.widths, ...caretAt(m)], [CELLS_DOC, g0.widths, table, { r: 1, c: 0 }, at(3)]);
+});
+
+test("dragging the grid's right edge past the page column makes the table wider than the column, panned so that the line stays in view", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), room = m.view.textWidth(), from = lineOn(m, 1, 1);
+  drag(m, from, { x: from.x + 900, y: from.y });
+  await flush();
+  const d = m.view.data.get(table), pan = m.view.panOf(d);
+  assert.ok(d.grid.w > room, `${d.grid.w} px in ${room}`);
+  assert.ok(pan > 0 && lineX(d.grid.widths, 1) - pan < room, `the right edge at ${lineX(d.grid.widths, 1) - pan}`);
+});
+
+// Herdr hands a mouse event to the elements under the pointer, `ids` front to back, until one stops it: the id of the
+// one that stopped it, else null.
+function bubble(m, ids, name, p, more = {}) {
+  const t = m.tree();
+  for (const id of ids) {
+    const el = find(t, id), stopped = m.cx.stopped;
+    if (!el?.handlers[name]) continue;
+    fire(el, name, name === "on_mouse_move" ? { position: p, local_position: p, modifiers: NO_MODS } : press(p, more), m.cx);
+    if (m.cx.stopped > stopped) return id;
+  }
+  return null;
+}
+
+test("a column's line let go over a comment's card, past the page column, ends the drag there and writes the widths: while a line is held, the resize cursor's cover over every card and float hears the pointer's moves and its release first", async () => {
+  const doc = "A {==b==}{>>first<<} c.\n\n| Name | Size |\n|---|---|\n| apple | 12 |\n\nEnd\n";
+  const m = await widePage(doc, { 0: 24, 1: 14 + gridH(2), 2: 38 }), table = keyAt(m, 1), card = cardId(m, 0), adv = m.view.calOf("cell").advance;
+  const g0 = m.view.data.get(table).grid, from = lineOn(m, 1, 1), over = { x: WIDE.cardLeft + 20, y: from.y }, under = ["md-resizing", card, "md-viewport"];
+  assert.ok(must(m.tree(), card).handlers["on_mouse_up:left"], "the card keeps a release to itself");
+  down(m, from);
+  assert.equal(must(m.tree(), "md-viewport").kids.at(-1).id, "md-resizing", "the cover is drawn over every card and float");
+  const firstMove = bubble(m, under, "on_mouse_move", { x: from.x + 40, y: from.y });
+  bubble(m, under, "on_mouse_move", over);
+  const dragged = m.view.data.get(table).grid.widths;
+  assert.equal(dragged[1], dashWidth(dashesFor(g0.widths[1] + over.x - from.x, adv), adv), "the line under the pointer");
+  assert.equal(bubble(m, under, "on_mouse_up:left", over, { click_count: 0 }), "md-resizing", "the cover hears the release first");
+  await flush();
+  assert.deepEqual([m.view.resize, find(m.tree(), "md-resizing")], [null, null], "the drag is over");
+  const written = [dashesAtLeast(g0.widths[0], adv), dashesFor(g0.widths[1] + over.x - from.x, adv)];
+  assert.equal(m.view.text, doc.replace("|---|---|", `|${"-".repeat(written[0])}|${"-".repeat(written[1])}|`), "its widths written");
+  hover(m, { x: over.x + 60, y: over.y });
+  assert.deepEqual(m.view.data.get(table).grid.widths, dragged, "the line no longer follows the pointer");
+  assert.equal(firstMove, "md-resizing", "and the moves, which a float would keep to itself");
+});
+
+test("the widths a resize writes keep every other column at least as wide as it was, and a double-click gives a column at least the width its text needs, the header measured at its own wider advance", async () => {
+  const doc = `Intro\n\n| Ingredient | Size | Note |\n|---|---|---|\n| x | 12 | y |\n\nEnd\n`, sizes = { 0: 24, 1: 14 + gridH(2), 2: 38 };
+  const m = await page(doc, sizes), table = keyAt(m, 1);
+  calibrate(m, { head: 272 / 40 });
+  await flush();
+  const cell = m.view.calOf("cell").advance, need = Math.ceil(10 * m.view.calOf("head").advance) + 2 * GRID.padX, g0 = m.view.data.get(table).grid;
+  assert.equal(g0.widths[0], need, "Ingredient: ten letters of the header, at its advance");
+  assert.ok(dashWidth(dashesFor(need, cell), cell) < need, "the nearest dashes would draw it narrower");
+  const from = lineOn(m, 1, 1);
+  drag(m, from, { x: from.x + 40, y: from.y });
+  await flush();
+  const widths = m.view.data.get(table).grid.widths;
+  assert.ok(widths[0] >= g0.widths[0] && widths[2] >= g0.widths[2], `${widths} from ${g0.widths}: the others no narrower`);
+  assert.ok(m.view.text.includes(`| Ingredient | Size | Note |\n|${"-".repeat(dashesAtLeast(need, cell))}|`), "the first column's dashes hold its header");
+  reset();
+  const narrow = doc.replace("|---|---|---|", "|-------|-------|-------|"), n = await page(narrow, sizes), key = keyAt(n, 1);
+  calibrate(n, { head: 272 / 40 });
+  await flush();
+  assert.ok(n.view.data.get(key).grid.widths[0] < need, "set narrower than its header");
+  await doubleClickAt(n, lineOn(n, 1, 0));
+  assert.equal(n.view.text, narrow.replace("|-------|", `|${"-".repeat(dashesAtLeast(need, cell))}|`), "fitted");
+  assert.ok(n.view.data.get(key).grid.widths[0] >= need, `${n.view.data.get(key).grid.widths[0]} px for ${need} px of header`);
+});
+
+test("while a line is dragged, a move that changes no column's dashes builds and draws nothing, the editor not drawn again even with a cell of the table edited; a pan of a wide table draws the editor again only while one of its cells is edited", async () => {
+  const m = await page(CELLS_DOC, CELLS_SIZES), table = keyAt(m, 1), adv = m.view.calOf("cell").advance, w0 = m.view.data.get(table).grid.widths[0];
+  assert.deepEqual([31, 32].map(dx => dashesFor(w0 + dx, adv)), [dashesFor(w0 + 30, adv), dashesFor(w0 + 30, adv)], "30 to 32 px: the same dashes");
+  await pressCell(m, table, 1, 1, 1);
+  const from = lineOn(m, 1, 0);
+  down(m, from);
+  hover(m, { x: from.x + 30, y: from.y });
+  const grid = m.view.data.get(table).grid, notified = m.cx.notified, drawn = m.cx.notifiedEntities.length;
+  hover(m, { x: from.x + 31, y: from.y });
+  hover(m, { x: from.x + 32, y: from.y + 3 });
+  assert.deepEqual([m.view.data.get(table).grid === grid, m.cx.notified - notified, m.cx.notifiedEntities.length - drawn], [true, 0, 0], "nothing new");
+  hover(m, { x: from.x + 30 + 2 * adv, y: from.y });
+  assert.ok(m.view.data.get(table).grid !== grid && m.cx.notified > notified, "two dashes more: the grid and the edited cell's floats");
+  up(m, { x: from.x + 30 + 2 * adv, y: from.y }, { click_count: 0 });
+  await flush();
+  reset();
+  const w = await page(WIDE_DOC, WIDE_SIZES), wide = keyAt(w, 1), on = { x: leftOf(w) + 100, y: topOf(w, 1) + w.view.data.get(wide).space + 10 };
+  const before = w.cx.notified, blocks = w.cx.notifiedEntities.length;
+  scroll(w, on, 0, -40, { touch_phase: "started", modifiers: { shift: true } });
+  assert.deepEqual([panNow(w, wide), w.cx.notified - before, w.cx.notifiedEntities.at(-1) === w.view.entities.get(wide), w.cx.notifiedEntities.length - blocks], [40, 0, true, 1], "nothing edited: the table alone");
+  await pressCell(w, wide, 1, 1, 1);
+  const editing = w.cx.notified, pan = panNow(w, wide);
+  scroll(w, on, -30, 0, { touch_phase: "started" });
+  assert.ok(panNow(w, wide) === pan + 30 && w.cx.notified > editing, "a cell of it edited: the floats over it follow");
 });

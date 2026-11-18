@@ -165,8 +165,9 @@ where Reading draws it: its fences stay in the file, out of sight, its [language
 the top right, and a diagram is drawn again when you leave it. An indented code block (four spaces, no fence) shows
 without its indent and stays indented. A table is drawn as a grid of cells, with no pipe and no delimiter row: the
 header row first, in bold on a tinted background; lines round the table and between its rows and columns; each
-column as wide as its widest text (from 64 to 360 px, shared out when the page is narrower than the columns), and a
-column's text centred or at the right when its delimiter row's colons say so (`:-:`, `--:`). Each cell shows its text
+column as wide as its widest text (from 64 to 360 px, shared out when the page is narrower than the columns, and 64
+px each, the table wider than the page, when even that doesn't fit), or as wide as you [set it](#column-widths), and
+a column's text centred or at the right when its delimiter row's colons say so (`:-:`, `--:`). Each cell shows its text
 as a paragraph does: formatting, links (Cmd+click opens them; a click in a file you can't edit), comments highlighted.
 A click in a cell puts the caret where you click, and you type in the cell as in a paragraph: the format keys, typed
 `**bold**` and the like, copy and paste, the [format bar](#the-format-bar) over a selection (without Comment, Text style
@@ -181,10 +182,10 @@ its first and last cells and rows; into a table they come at the cell under the 
 Delete at its end do nothing, so cells never join. A new row is padded to the pipes of a table whose rows start and
 end with pipes that line up, else compact (`|  |  |`). One Cmd+Z takes an added row away. While the caret is in the
 table its columns keep their widths, however long a word you type; they are worked out again when you leave it or a
-row is added. A table whose rows hold more cells than its header, or of more than 1,000 cells, shows its source, as do
-an HTML block and front matter. A paragraph of pictures never shows its source: a click [picks a
-picture](#pictures). A hard-wrapped paragraph shows its line breaks as spaces, so it wraps as it did on the page, and
-keeps them in the file.
+row is added (a table whose widths you set keeps them). A table whose rows hold more cells than its header, or of more
+than 1,000 cells, shows its source, as do an HTML block and front matter. A paragraph of pictures never shows its
+source: a click [picks a picture](#pictures). A hard-wrapped paragraph shows its line breaks as spaces, so it wraps as
+it did on the page, and keeps them in the file.
 
 In code, typing stays as typed: no formatting, shortcut or slash menu. Enter starts the new line with the indent of
 the line the caret is on, and Tab and Shift+Tab indent (see the table). To leave a code block, press Enter three times
@@ -201,6 +202,8 @@ fences.
 | Cmd+click a link | Opens it, as described under [Links in Reading](#reading-and-markdown-views) |
 | Click beside the page / below the last block | Stops editing / starts a new paragraph at the end |
 | Double-click a diagram | Shows its source to edit, without its fences (a single click does nothing, so a drag or a stray click never opens it) |
+| Drag a table's column line | Resizes the column on its left; the line turns yellow under the pointer. A double-click on it fits the column to its text; Escape during the drag cancels it ([Column widths](#column-widths)) |
+| Shift+wheel or a sideways swipe over a wide table | Scrolls the table sideways |
 | Click a code block's language chip | Opens its [language menu](#code-languages), without opening the block; a second click closes it |
 | Click a picture | [Picks it](#pictures): a ring around it and its menu over it. A double-click or a right-click does the same, a linked picture included. A picture inside a line of text is selected whole with the same menu, and a second click puts the caret in its alt text |
 | Cmd+click a linked picture | Opens its link, as Cmd+click on a link in text does, also in a file you can't edit |
@@ -256,6 +259,28 @@ paragraph made of pictures is drawn), footnotes (a reference stays text, a defin
 jumping to `#anchor` links, and any button besides the one toggle, a diagram's zoom, the format bar, a link's popover,
 a picture's menu, a code block's language chip, the Comment button of code blocks, diagrams and tables, and the
 comments' cards.
+
+### Column widths
+
+Hold the pointer over the line between two columns of a table, or over its right edge, and the line turns yellow
+under a resize cursor: drag it to make the column on its left wider or narrower (never under 64 px); the columns on its
+right keep their widths and move with it, and the table grows or shrinks, wider than the page if it must. Nothing is
+written while you drag; letting go saves the widths, one Cmd+Z puts them back, and Escape during the drag cancels it.
+A double-click on the line sets the column on its left to the width its text needs. A cell you are typing in takes the
+new width at once. Files you can't edit show the widths but have no lines to drag.
+
+The widths are saved in the file as the dashes of the delimiter row, so it stays a plain table that other viewers draw
+as they always did: a column is as wide as its dashes at the table's text size, plus its padding (`|----------|---|`
+gives the first column about ten letters). Only the delimiter row changes; its colons, pipes and spaces stay, and the
+other rows are left as they are even when their pipes no longer line up. A table whose columns all have three dashes or
+fewer, as hand-written ones do, gets its widths from its text; the first resize of such a table saves every column's
+width as it looked. A table whose source is padded to line up has longer dashes, so it shows at about the widths of
+its text.
+
+A table wider than the page starts at the page's left edge and scrolls sideways inside it: a sideways swipe on the
+trackpad, or Shift with the mouse wheel, over the table moves it, while up and down still scroll the page. A soft
+shadow at an edge shows there is more of the table that way. Moving the caret into a cell off to the side scrolls the
+table to show that cell, and the format bar and link popovers stay over the cell.
 
 ### Code languages
 

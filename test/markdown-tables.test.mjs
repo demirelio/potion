@@ -4,7 +4,7 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { applySplice, cellCount, parse, reparse } from "../mods/herdr-inline-markdown/blocks.js";
 import { parseInline } from "../mods/herdr-inline-markdown/inline.js";
-import { cellEdit, cellText, insertRow, rowAt, tableOf, writeCell } from "../mods/herdr-inline-markdown/tables.js";
+import { cellEdit, cellText, insertRow, rowAt, tableOf, writeCell, writeDashes } from "../mods/herdr-inline-markdown/tables.js";
 import { originals } from "./markdown-corpus.mjs";
 
 const tableIn = text => {
@@ -55,6 +55,30 @@ test("tableOf: every delimiter form gives its alignment, spaces allowed around e
   assert.deepEqual(t.aligns, ["left", "center", "right", null]);
   const { t: bare } = tableIn("a|b|c\n:---|:---:|---:\n");
   assert.deepEqual(bare.aligns, ["left", "center", "right"]);
+});
+
+test("tableOf: each column's dash count in the delimiter row, its colons and spaces not counted", () => {
+  assert.deepEqual(tableIn("| a | b | c |\n|---|:----:|-----------:|\n").t.dashes, [3, 4, 11]);
+  assert.deepEqual(tableIn("a | b\n:-- | --\n").t.dashes, [2, 2], "a row without outer pipes");
+  assert.deepEqual(tableIn("| Name   | Value |\n|--------|-------|\n| apple  | 1     |\n").t.dashes, [8, 7], "a source padded to line up");
+  assert.deepEqual(tableIn("| a |\n| :-:  |\n").t.dashes, [1]);
+});
+
+test("writeDashes: the delimiter row alone changes, each cell to the dashes given, its colons, pipes and spaces kept; null when nothing would change", () => {
+  const text = "Intro\n\n| a | b | c |\n| :--- | :-: | ---: |\n| 1 | 2 | 3 |\n\nEnd\n";
+  let { doc, b } = tableIn(text);
+  let s = writeDashes(doc, b, [5, 7, 10]);
+  assert.equal(applySplice(text, s), text.replace("| :--- | :-: | ---: |", "| :----- | :-------: | ----------: |"));
+  assert.equal(writeDashes(doc, b, [3, 1, 3]), null, "the counts it has");
+  ({ doc, b } = tableIn("a | b\n--- | ---\nc | d\n"));
+  assert.equal(applySplice(doc.text, writeDashes(doc, b, [4, 6])), "a | b\n---- | ------\nc | d\n", "no outer pipes");
+  ({ doc, b } = tableIn("|a|b|\n|-|-|\n|c|d|\n"));
+  assert.equal(applySplice(doc.text, writeDashes(doc, b, [9, 3])), "|a|b|\n|---------|---|\n|c|d|\n", "no spaces");
+  const listed = "- item\r\n\r\n  | a | b |\r\n  |---|---|\r\n  | c | d |\r\n";
+  ({ doc, b } = tableIn(listed));
+  s = writeDashes(doc, b, [5, 3]);
+  assert.equal(applySplice(listed, s), listed.replace("  |---|---|", "  |-----|---|"), "in a list item, CRLF");
+  assert.ok(s.start >= b.start + b.lines[1].body && s.end <= b.start + b.lines[1].eol, "inside the delimiter line's body");
 });
 
 test("tableOf: aligned when every line, the delimiter row too, has its pipes at the same columns, counted in code points", () => {

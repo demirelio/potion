@@ -3,7 +3,7 @@
 // comments' colours change, never in a draw. No herdr or gpui imports.
 import { defsFor } from "./blocks.js";
 import { showComments } from "./comments.js";
-import { GRID, columnWidths, gridRowHeights } from "./geometry.js";
+import { GRID, columnWidths, dashWidth, gridRowHeights, isSized } from "./geometry.js";
 import { asText, coloredMarks, parseInline } from "./inline.js";
 import { cellText, columnsOf, isIrregular, tableOf } from "./tables.js";
 
@@ -56,18 +56,23 @@ function readCells(kept, doc, b, defs) {
   if (!drawsGrid(doc, b)) return;
   const t = tableOf(doc, b), sources = t.rows.map((row, r) => row.cells.map((_, c) => cellText(doc, t, r, c)));
   const shown = sources.map(row => row.map(s => shownText(s, defs.map)));
-  Object.assign(kept, { aligns: t.aligns, sources, shown, chars: shown.map(row => row.map(codePoints)) });
+  Object.assign(kept, { aligns: t.aligns, dashes: t.dashes, byDashes: isSized(t.dashes), sources, shown, chars: shown.map(row => row.map(codePoints)) });
 }
 
 const sameWidths = (a, b) => Boolean(a) && Boolean(b) && a.length === b.length && a.every((w, i) => w === b[i]);
 
-// The header's text is measured at its own style's advance. `held`: the widths to keep instead.
+// A centred or right-aligned cell's text box is as wide as its text and one advance more; 0 for a cell it fills.
+export function alignBoxes(chars, aligns, widths, head, body) {
+  return chars.map((row, r) => row.map((n, c) => (aligns[c] === "center" || aligns[c] === "right"
+    ? Math.max(1, Math.min(widths[c] - 2 * GRID.padX, (n + 1) * (r === 0 ? head : body).advance)) : 0)));
+}
+
 function sizeCells(kept, room, head, body, held) {
   const columns = kept.aligns.length, advance = r => (r === 0 ? head : body).advance;
-  const widest = kept.aligns.map((_, c) => Math.max(0, ...kept.chars.map((row, r) => row[c] * advance(r))));
-  const natural = held ?? columnWidths(widest, room - (columns + 1) * GRID.line), widths = sameWidths(natural, kept.widths) ? kept.widths : natural;
-  const boxes = kept.chars.map((row, r) => row.map((n, c) => (kept.aligns[c] === "center" || kept.aligns[c] === "right"
-    ? Math.max(1, Math.min(widths[c] - 2 * GRID.padX, (n + 1) * advance(r))) : 0)));
+  const widest = () => kept.aligns.map((_, c) => Math.max(0, ...kept.chars.map((row, r) => row[c] * advance(r))));
+  const natural = kept.byDashes ? kept.dashes.map(n => dashWidth(n, body.advance)) : held ?? columnWidths(widest(), room - (columns + 1) * GRID.line);
+  const widths = sameWidths(natural, kept.widths) ? kept.widths : natural;
+  const boxes = alignBoxes(kept.chars, kept.aligns, widths, head, body);
   const heights = gridRowHeights(kept.shown, widths, head, body);
   Object.assign(kept, { widths, boxes, heights, rowPx: [head.row, body.row], grid: null });
 }
@@ -84,9 +89,10 @@ function drawCells(kept, color, deep) {
 // `kept`: the caller's memo for the table; `room`: the px the grid may take; `head`, `body`: the calibrated { row,
 // advance } of the header's and the cells' styles; `deep`: a cell's active comment ({ row, column, at (in the cell's
 // text), color }) or null; `defs`: the doc's definitions as { map }, one object while they read the same; `widths`:
-// column widths to keep whatever the text holds (null: worked out from it), taken while they have a column each.
-// The answer: { texts (each cell's markdown), aligns, widths (padding in, lines out), boxes (a centred or right cell's
-// box width, 0 for the whole cell), heights (estimated; a row's line under it but the last's), rowPx, w, h }.
+// column widths to keep, while they have a column each, for a table not sized by its dashes (null: from its text).
+// The answer: { texts (each cell's markdown), aligns, dashes, sized (by its dashes), chars (shown code points), widths
+// (padding in, lines out), boxes (a centred or right cell's box width, 0 for the whole cell), heights (estimated; a
+// row's line under it but the last's), rowPx, w (may pass `room`), h }.
 export function gridOf(kept, doc, b, { room, head, body, color, deep, defs, widths = null }) {
   if (kept.content !== b.content || kept.defs !== defs) readCells(kept, doc, b, defs);
   if (!kept.sources) return null;
@@ -98,7 +104,8 @@ export function gridOf(kept, doc, b, { room, head, body, color, deep, defs, widt
   kept.held = held;
   if (!kept.texts || kept.color !== color || kept.deepKey !== deepKeyOf(deep)) drawCells(kept, color, deep);
   kept.grid ??= {
-    texts: kept.texts, aligns: kept.aligns, widths: kept.widths, boxes: kept.boxes, heights: kept.heights, rowPx: kept.rowPx,
+    texts: kept.texts, aligns: kept.aligns, dashes: kept.dashes, sized: kept.byDashes, chars: kept.chars,
+    widths: kept.widths, boxes: kept.boxes, heights: kept.heights, rowPx: kept.rowPx,
     w: sum(kept.widths) + (kept.widths.length + 1) * GRID.line, h: sum(kept.heights) + 2 * GRID.line,
   };
   return kept.grid;

@@ -128,17 +128,19 @@ export function tablePress(t, x, y) {
 }
 
 // A table drawn as a grid of cells: `padX` and `padY` inside each cell, `line` px between rows, between columns and
-// round the grid, its corners rounded `radius`; a column `minW` to `maxW` px wide.
+// round the grid, its corners rounded `radius`; a column at least `minW` px wide, at most `maxW` unless dashes set it.
 export const GRID = { padX: 10, padY: 6, line: 1, minW: 64, maxW: 360, radius: 6 };
 
+export const naturalWidth = widest => clamp(Math.ceil(widest) + 2 * GRID.padX, GRID.minW, GRID.maxW);
+
 // -> the width of each column, its padding in and its lines out: `widest[c]` is the px width of column c's widest text.
-// The natural widths (the text and the padding, minW to maxW) when they fit `room`. Else a column whose natural width
-// fits an equal share of what is left keeps it, again until no more do, and the others share the rest equally; when
-// not even minW each fits, every column gets an equal share.
+// The natural widths when they fit `room`. Else a column whose natural width fits an equal share of what is left keeps
+// it, again until no more do, and the others share the rest equally; when not even minW each fits, every column gets
+// minW and the grid is wider than the room.
 export function columnWidths(widest, room) {
-  const n = widest.length, natural = widest.map(w => clamp(Math.ceil(w) + 2 * GRID.padX, GRID.minW, GRID.maxW));
+  const n = widest.length, natural = widest.map(naturalWidth);
   if (natural.reduce((a, b) => a + b, 0) <= room) return natural;
-  if (n * GRID.minW > room) return natural.map(() => Math.floor(room / n));
+  if (n * GRID.minW > room) return natural.map(() => GRID.minW);
   const widths = new Array(n).fill(0);
   let left = room, free = n, kept = true;
   while (kept && free > 0) {
@@ -181,6 +183,52 @@ export function gridAt(heights, widths, x, y) {
   for (let top = GRID.line; row < heights.length - 1 && y >= top + heights[row]; row++) top += heights[row];
   for (let left = GRID.line; column < widths.length - 1 && x > left + widths[column]; column++) left += widths[column] + GRID.line;
   return { row, column };
+}
+
+// Column widths are saved as the delimiter row's dashes; a table with a column of more than `min` dashes is sized by them.
+export const DASHES = { min: 3 };
+export const isSized = dashes => dashes.some(n => n > DASHES.min);
+export const dashWidth = (dashes, advance) => Math.max(GRID.minW, Math.ceil(Math.max(DASHES.min, dashes) * advance) + 2 * GRID.padX);
+
+const fewestDashes = advance => Math.max(DASHES.min + 1, Math.ceil((GRID.minW - 2 * GRID.padX) / advance));
+
+// The dashes nearest a column `width` px wide, for a width the pointer sets.
+export function dashesFor(width, advance) {
+  return Math.max(fewestDashes(advance), Math.round((width - 2 * GRID.padX) / advance));
+}
+
+// The fewest dashes whose column is at least `width` px wide, for a width a column has or its text needs.
+export function dashesAtLeast(width, advance) {
+  const n = Math.max(fewestDashes(advance), Math.floor((width - 2 * GRID.padX) / advance));
+  return dashWidth(n, advance) >= width ? n : n + 1;
+}
+
+// A column's line is grabbed `grab` px either side of it and drawn `line` px wide while it can be dragged.
+export const RESIZE = { grab: 4, line: 2 };
+
+// From the grid's left edge; the last column's line is the grid's right edge.
+export function lineX(widths, c) {
+  let x = GRID.line;
+  for (let k = 0; k <= c; k++) x += widths[k] + (k < c ? GRID.line : 0);
+  return x;
+}
+
+// The column whose right line is within RESIZE.grab px of x (from the grid's left edge), the nearest; -1 for none.
+export function lineNear(widths, x) {
+  let best = -1, far = Infinity;
+  for (let c = 0, at = GRID.line; c < widths.length; c++) {
+    at += widths[c];
+    const off = x < at ? at - x : x - at - GRID.line;
+    if (off <= RESIZE.grab && off < far) { best = c; far = off; }
+    at += GRID.line;
+  }
+  return best;
+}
+
+// The least move from `pan` that shows [from, to] in a strip `room` px wide; a span wider than the room shows its start.
+export function revealSpan(pan, room, from, to) {
+  if (to - from > room || from < pan) return from;
+  return to > pan + room ? to - room : pan;
 }
 
 // How Herdr's TextView draws a table (gpui-kit text/node.rs render_table, render_table_rows): a 1 px frame round its

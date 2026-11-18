@@ -8,7 +8,7 @@ import { RAW, TEXT } from "./keys.js";
 import { showComments } from "./comments.js";
 import { deepHighlightColor, highlightColor, textColor } from "./colors.js";
 import { asText, coloredMarks } from "./inline.js";
-import { CHIP, CODE_HEAD, GRID, NOTES } from "./geometry.js";
+import { CHIP, CODE_HEAD, GRID, NOTES, RESIZE, lineX } from "./geometry.js";
 
 export const owners = new Map();
 let owned = 0;
@@ -188,15 +188,36 @@ const frontBox = (t, inner) => div().w_full().rounded(8).bg(t.surface).border_1(
 
 // A table as its grid (block data d's `grid`, grid.js gridOf): the header row on the surface, each row reporting its
 // height, each cell's text drawn by a field of its own near the page (owner.cellField), else by a TextView. Gpui clips
-// to the box, not to its rounded corners, so the header rounds its own top corners inside the 1 px line.
+// to the box, not to its rounded corners, so the header rounds its own top corners inside the 1 px line. A grid wider
+// than the page column is clipped to it and panned, a shade at each edge with more of it that way.
 function tableGrid(owner, d, t) {
   const g = d.grid, last = g.texts.length - 1, looks = [{ ...d, style: "head" }, d];
-  return v_flex().id(`md-table-${d.key}`).w(g.w).flex_none().border_1().border_color(t.border).rounded(GRID.radius).overflow_hidden()
+  const pan = owner.panOf(d), line = owner.lineOf(d), more = g.w - owner.gridRoom(d) - pan;
+  const grid = v_flex().id(`md-table-${d.key}`).w(g.w).flex_none().border_1().border_color(t.border).rounded(GRID.radius).overflow_hidden()
+    .when(pan > 0, el => el.ml(-pan))
     .children(g.texts.map((cells, r) => h_flex().id(`md-row-${d.key}-${r}`).w_full().items_stretch()
       .when(r === 0, el => el.bg(t.surface).rounded_t(GRID.radius - GRID.line))
       .when(r < last, el => el.border_b(GRID.line).border_color(t.border))
       .on_size_change((size, cx) => owner.rowSized(d.key, r, size, cx))
       .children(cells.map((text, c) => gridCell(owner, d, t, r, c, text, looks[r === 0 ? 0 : 1])))));
+  return div().id(`md-table-box-${d.key}`).w_full().relative().overflow_hidden().child(grid)
+    .when(pan > 0, el => el.child(edgeShade(d.key, "left")))
+    .when(more > 0, el => el.child(edgeShade(d.key, "right")))
+    .when(line >= 0, el => el.child(resizeLine(d.key, lineX(g.widths, line) - pan, t)));
+}
+
+const SHADE =["#00000026", "#00000018", "#0000000e", "#00000006"], SHADE_STEP = 3;
+
+function edgeShade(key, side) {
+  const strips = SHADE.map(color => div().w(SHADE_STEP).flex_none().bg(color));
+  const shade = h_flex().id(`md-table-shade-${side}-${key}`).absolute().top(0).bottom(0).items_stretch();
+  return side === "left" ? shade.left(0).children(strips) : shade.right(0).children(strips.reverse());
+}
+
+// The strip the pointer grabs around the line at x, wider than the line, carries the resize cursor.
+function resizeLine(key, x, t) {
+  return div().id(`md-resize-${key}`).absolute().top(0).bottom(0).left(x - RESIZE.grab).w(2 * RESIZE.grab + GRID.line).cursor_col_resize()
+    .child(div().absolute().top(0).bottom(0).left(RESIZE.grab + (GRID.line - RESIZE.line) / 2).w(RESIZE.line).bg(textColor(t, "yellow")));
 }
 
 // A centred or right-aligned column's text sits in its box (`boxes`), left-aligned inside it: a field, which edits a
@@ -312,18 +333,18 @@ export function renderBlock(owner, d) {
     .when(d.selected && !d.frameW && !picture, el => el.bg(t.selection).rounded(4))
     .on_size_change((size, cx) => owner.blockSized(d.key, size, cx))
     .child(body)
-    .when(Boolean(d.framed), el => el.relative().child(commentFrame(d, t)))
+    .when(Boolean(d.framed), el => el.relative().child(commentFrame(owner, d, t)))
     .when(Boolean(button), el => el.relative().child(blockButton(owner, d, button, t)))
     .when(d.notes > 0, el => el.relative().child(commentCount(d, t)));
 }
 
 // The frame of a code block, diagram or table whose comment is active (the deeper ochre) or being written (the
-// highlight colour): an overlay on its box, or on its diagram's frame, so that nothing under it moves.
-function commentFrame(d, t) {
+// highlight colour): an overlay on its box, its diagram's frame or its grid's shown part, so that nothing under it moves.
+function commentFrame(owner, d, t) {
   const color = d.framed === FRAMED.adding ? highlightColor(t) : deepHighlightColor(t);
   const frame = div().id(`md-comment-frame-${d.key}`).absolute().border_2().border_color(color);
   if (d.frameW) return frame.rounded(8).left(d.depth * INDENT + d.frameMl).bottom(0).w(d.frameW).h(d.frameH);
-  if (d.grid) return frame.rounded(GRID.radius).left(d.depth * INDENT).top(d.space).w(d.grid.w).bottom(0);
+  if (d.grid) return frame.rounded(GRID.radius).left(d.depth * INDENT).top(d.space).w(owner.gridShownW(d)).bottom(0);
   return frame.rounded(8).left(d.depth * INDENT).right(0).top(d.space).bottom(0);
 }
 

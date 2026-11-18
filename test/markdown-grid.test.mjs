@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parse, reparse } from "../mods/herdr-inline-markdown/blocks.js";
 import { POINT } from "../mods/herdr-inline-markdown/comments.js";
-import { GRID, columnWidths } from "../mods/herdr-inline-markdown/geometry.js";
+import { GRID, columnWidths, dashWidth } from "../mods/herdr-inline-markdown/geometry.js";
 import { MAX_GRID_CELLS, cellMarkdown, drawsGrid, gridOf } from "../mods/herdr-inline-markdown/grid.js";
 import { tableOf } from "../mods/herdr-inline-markdown/tables.js";
 
@@ -58,7 +58,7 @@ test("the grid of a table: each cell's markdown (\"\" for one its row lacks), th
 });
 
 test("the grid is the same object while its table's text, the definitions, the room, the calibration and the comments' colours stay; its widths while what they come from stays", () => {
-  const text = "Intro\n\n| a | b |\n|---|---|\n| {==c==}{>>n<<} | d |\n";
+  const text = `Intro\n\n| a | b |\n|---|---|\n| {==c==}{>>n<<} | ${"d".repeat(30)} |\n`;
   const { doc, b } = tableIn(text), kept = {}, opts = optsOf(doc);
   const g = gridOf(kept, doc, b, opts);
   const moved = parse(`More ${text}`), mb = moved.blocks.find(x => x.kind === "table");
@@ -67,9 +67,9 @@ test("the grid is the same object while its table's text, the definitions, the r
   assert.notEqual(deep, g);
   assert.equal(deep.widths, g.widths, "an active comment changes what a cell draws, not the widths");
   assert.ok(deep.texts[1][0].includes(DEEP));
-  const narrow = gridOf(kept, moved, mb, { ...opts, room: 100 });
+  const narrow = gridOf(kept, moved, mb, { ...opts, room: 200 });
   assert.notEqual(narrow.widths, g.widths);
-  assert.notEqual(gridOf(kept, moved, mb, { ...opts, room: 100, body: { row: 22, advance: 6.5 } }), narrow, "a calibration");
+  assert.notEqual(gridOf(kept, moved, mb, { ...opts, room: 200, body: { row: 22, advance: 6.5 } }), narrow, "a calibration");
 });
 
 test("typing above a table moves none of its cells for the grid: the grid stays what it kept", () => {
@@ -80,6 +80,26 @@ test("typing above a table moves none of its cells for the grid: the grid stays 
   assert.equal(mb.lines, b.lines, "the re-parse left the table alone");
   assert.equal(gridOf(kept, moved, mb, opts), g);
   assert.equal(tableOf(doc, b), t, "its cells still at the offsets they were asked for");
+});
+
+test("a sized table's columns are its dashes at the cell style's advance and the padding, whatever the room, the text or the widths held; a table of three dashes or fewer a column keeps its widths from the text", () => {
+  const { doc, b } = tableIn(`| Name | Note |\n|${"-".repeat(62)}|:---:|\n| a | b |\n`);
+  const held = [100, 100], g = gridOf({}, doc, b, optsOf(doc, { room: 300, widths: held }));
+  assert.deepEqual(g.widths, [dashWidth(62, 6.5), GRID.minW], "62 dashes; three draw 64 px");
+  assert.equal(g.sized, true);
+  assert.ok(g.w > 300, `${g.w} px: wider than the room`);
+  assert.ok(g.widths[0] > GRID.maxW, "no 360 px cap");
+  assert.deepEqual(g.boxes[1], [0, Math.min(GRID.minW - 2 * GRID.padX, 2 * 6.5)], "a centred cell's box in its set width");
+  const padded = tableIn("| Name   | Value |\n|--------|-------|\n| apple  | 1     |\n");
+  assert.deepEqual(gridOf({}, padded.doc, padded.b, optsOf(padded.doc)).widths, [dashWidth(8, 6.5), dashWidth(7, 6.5)], "a source padded to line up reads at its dashes");
+  const auto = tableIn("| Name | Value |\n|---|:-:|\n| apple | 1 |\n"), ga = gridOf({}, auto.doc, auto.b, optsOf(auto.doc));
+  assert.deepEqual([ga.sized, ga.widths], [false, columnWidths([5 * 6.5, 5 * 7], 716 - 3)], "three dashes or fewer: from the text");
+});
+
+test("an automatic table whose columns can't all get 64 px keeps them at 64 px and grows wider than the room", () => {
+  const { doc, b } = tableIn(`${"| x ".repeat(8)}|\n${"|---".repeat(8)}|\n`), g = gridOf({}, doc, b, optsOf(doc, { room: 400 }));
+  assert.deepEqual(g.widths, Array(8).fill(GRID.minW));
+  assert.equal(g.w, 8 * GRID.minW + 9 * GRID.line);
 });
 
 test("a table kept as source: irregular, or more than 1,000 cells", () => {

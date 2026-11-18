@@ -11,7 +11,7 @@ const STYLES = new Set(`size size_full w h min_w min_h max_w max_h w_full h_full
 for (const name of `whitespace_normal line_through flex_wrap italic text_ellipsis overflow_x_hidden overflow_y_hidden cursor_default
   self_center self_start items_baseline flex_shrink_0 justify_start text_left content_center gap_x gap_y flex_row items_stretch`.split(/\s+/)) STYLES.add(name);
 // More the Markdown reader draws with (declared in gpui-kit.d.ts as well). Mods that need another builder append its name here.
-for (const name of `mx_auto ml w_1_2 flex_basis flex_grow max_w_full border_dashed shadow_sm shadow_lg text_xs text_sm font_normal cursor_grab cursor_grabbing rounded_t`.split(/\s+/)) STYLES.add(name);
+for (const name of `mx_auto ml w_1_2 flex_basis flex_grow max_w_full border_dashed shadow_sm shadow_lg text_xs text_sm font_normal cursor_grab cursor_grabbing rounded_t cursor_col_resize`.split(/\s+/)) STYLES.add(name);
 const HANDLERS = new Set(["on_click", "on_key_down", "on_key_up", "on_hover", "on_scroll_wheel", "on_size_change", "on_drop", "on_mouse_move", "on_mouse_down_out", "on_action", "on_modifiers_changed"]);
 // Herdr drops the handlers written on these (gpui-kit.d.ts, on_key_down): a mod has to put them on a wrapper.
 const NO_HANDLERS = new Set(["textarea", "textview", "editor"]);
