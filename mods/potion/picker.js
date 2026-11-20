@@ -2,7 +2,7 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, home, props, shared, setShared, settings, theme, readTextFile, writeTextFile, closeOverlay, focused, panes, spaces } from "herdr";
 import { EXISTING_SCRIPT, FIND_SCRIPT, basename, dirname, existingFrom, fileKey, filterFiles, joinPath, markdownPathsFromFind, markdownPathsFromGit, newFileName, normalizePath, tildePath, uniqueName } from "./lib.js";
-import { MOD, PANES, RECENT, openMarkdown } from "./open.js";
+import { MOD, PANES, RECENT, besideAt, openMarkdown } from "./open.js";
 import { withAlpha } from "./colors.js";
 
 // A picker that opens closes the one named here, so one is open at a time; the cmd-shift-m mod reads it to close the
@@ -30,6 +30,7 @@ export class Picker {
     this.takeOver();
     this.place = p.place === "pane" ? "pane" : "tab";
     this.anchor = focused()?.pane ?? null;
+    this.spot = null;
     this.space = p.space ?? spaces().find(s => s.active)?.id;
     const start = p.folder ? { folder: p.folder, machine: p.machine || null } : p.machine ? { folder: "", machine: p.machine } : this.around();
     this.machine = start.machine;
@@ -59,6 +60,7 @@ export class Picker {
       done();
       if (!this.closed) cx.notify();
     })));
+    if (this.place === "pane") cx.timer.after(0, cx => cx.spawn(async () => { this.spot = await besideAt(this.anchor); }));
   }
 
   typed(cx) {
@@ -218,7 +220,7 @@ export class Picker {
   // The dialog goes first: the file's pane or tab is what the person looks at next.
   open(file) {
     closeOverlay(this.overlay);
-    openMarkdown({ file, machine: this.machine, place: this.place, space: this.space, pane: this.anchor });
+    openMarkdown({ file, machine: this.machine, place: this.place, space: this.space, pane: this.anchor, at: this.spot });
   }
 
   make(name, cx) {

@@ -10,7 +10,7 @@ import { alignBoxes, drawsGrid, gridOf } from "./grid.js";
 import { cellText, cellWritten, insertRow, rowAt, tableOf, writeCell, writeDashes } from "./tables.js";
 import { COMMANDS, follow, opensAt, step, track } from "./slash.js";
 import { createHistory, mergeChange } from "./history.js";
-import { openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
+import { besideAt, openMarkdown, paneOf, registerPane, rememberRecent } from "./open.js";
 import { Diagrams } from "./diagrams.js";
 import { Images } from "./images.js";
 import { DialogUnavailable, PictureDialog, altNames, imageStart, placePictures } from "./pick.js";
@@ -1319,7 +1319,10 @@ export class Editor {
     if (!this.file) return;
     const r = resolveLink(url, this.file);
     if (r.kind === "web") this.web(r.url, cx);
-    else if (r.kind === "markdown") openMarkdown({ file: r.path, machine: this.machine, place: "pane", pane: this.claimed ?? undefined, space: focused()?.space });
+    else if (r.kind === "markdown") {
+      const open = { file: r.path, machine: this.machine, place: "pane", pane: this.claimed ?? undefined, space: focused()?.space };
+      cx.spawn(async () => openMarkdown({ ...open, at: await besideAt(open.pane) }));
+    }
     else if (r.kind === "file") notify({ title: `Can't open ${basename(r.path)} here`, level: "info" });
   }
 

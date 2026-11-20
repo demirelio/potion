@@ -1554,10 +1554,13 @@ test("links: web pages go to the browser, markdown files open beside this pane, 
   assert.deepEqual(m.cx.opened, ["https://example.com/x?y=1#z", "HTTP://example.com/upper"], "the browser opens web pages only");
   const splits = () => calls.run.filter(([n]) => n === "pane.split");
   go("other.md");
+  await flush();
   assert.deepEqual(splits().at(-1), split("p-tb2", "/n/docs/other.md"), "relative to this file, to the right of this pane");
   go("../up/It%20Is.md#part");
+  await flush();
   assert.deepEqual(splits().at(-1)[1].props, { file: "/n/up/It Is.md", machine: null });
   go("file:///abs/path.markdown");
+  await flush();
   assert.equal(splits().at(-1)[1].props.file, "/abs/path.markdown");
   assert.equal(calls.run.every(([n]) => n === "pane.split"), true, "never a tab");
   const before = [m.cx.opened.length, splits().length];
@@ -1577,7 +1580,21 @@ test("a link opens beside the pane this copy is drawn in, even when another pane
   farFocus("tb1", "p1");
   const m = await mount({ disk: CELL_LINK });
   fire(viewAt(m, 0), "on_link_click", "other.md", m.cx);
+  await flush();
   assert.deepEqual(calls.run, [split("pa", "/n/docs/other.md")]);
+});
+
+test("a link opens in the tab's newest corner, as read from herdr-core, not just right of this pane", async () => {
+  state.spaces = [space("s1", "docs", { tabs: [tabOf("tb1", "Main")] })];
+  state.panes = [shellPane, mdPane("pa", "tb1")];
+  farFocus("tb1", "p1");
+  const tree = { type: "row", id: "tb1", children: [{ type: "block", id: "p1" }, { type: "block", id: "pa" }] };
+  const core = `${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { version: 1, value: { spaces: [{ id: "s1", tabs: [{ id: "tb1", root: tree }] }] } } })}\n`;
+  state.exec = async (command, args) => (args?.[1]?.includes("hc connect") ? { code: 0, stdout: core, stderr: "" } : { code: 1, stdout: "", stderr: "" });
+  const m = await mount({ disk: CELL_LINK });
+  fire(viewAt(m, 0), "on_link_click", "other.md", m.cx);
+  await flush();
+  assert.deepEqual(calls.run, [["pane.split", { direction: "down", pane: "pa", mod: "potion", props: { file: "/n/docs/other.md", machine: null } }]]);
 });
 
 test("a link to a file that another pane of the tab already shows moves the focus there", async () => {
@@ -1587,6 +1604,7 @@ test("a link to a file that another pane of the tab already shows moves the focu
   farFocus("tb1", "p1");
   const m = await mount({ disk: CELL_LINK });
   fire(viewAt(m, 0), "on_link_click", "other.md", m.cx);
+  await flush();
   assert.deepEqual(calls.run, [["pane.focus", { pane: "pb" }]]);
 });
 
@@ -1596,6 +1614,7 @@ test("a link before the copy knows its pane opens beside the focused pane", asyn
   farFocus("tb1", "p1");
   const m = await mount({ disk: CELL_LINK });
   fire(viewAt(m, 0), "on_link_click", "other.md", m.cx);
+  await flush();
   assert.equal(m.view.claimed, null, "two Markdown panes that nobody has filed yet");
   assert.deepEqual(calls.run, [split("p1", "/n/docs/other.md")]);
 });
@@ -1603,10 +1622,12 @@ test("a link before the copy knows its pane opens beside the focused pane", asyn
 test("a link with no pane to open beside opens a tab, in the space being looked at", async () => {
   const m = await mount({ disk: CELL_LINK });
   fire(viewAt(m, 0), "on_link_click", "next.md", m.cx);
+  await flush();
   assert.deepEqual(calls.run, [["tab.new", { name: "next.md", mod: "potion", props: { file: "/n/docs/next.md", machine: null } }]], "no space when none is focused");
   calls.run.length = 0;
   state.focused = { space: "s7", tab: "t", pane: null, terminal: null, shown: null, agent: null, cwd: null };
   fire(viewAt(m, 0), "on_link_click", "next.md", m.cx);
+  await flush();
   assert.deepEqual(calls.run.map(c => [c[0], c[1].space]), [["tab.new", "s7"]]);
 });
 
@@ -1654,6 +1675,7 @@ test("a link to a markdown file from a file on another machine opens it on that 
   farFocus("tb1");
   const m = await mount({ machine: "devbox" });
   fire(viewAt(m, 0), "on_link_click", "sibling.md", m.cx);
+  await flush();
   assert.deepEqual(calls.run, [split("pa", "/n/docs/sibling.md", "devbox")]);
 });
 

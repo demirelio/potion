@@ -217,8 +217,11 @@ press on one goes no further, so the text under it keeps its selection.
   picker open closes it.
 - **Where a file opens.** For a new tab (`cmd-m`): the tab that already shows the file in Markdown panes only, in any
   space, is selected; else a tab named after the file opens in the active space. Beside (`cmd-shift-m`, a link in a
-  note, the file panel's click): the pane of that tab already showing the file gets the focus, else that pane splits
-  to the right; with no pane to split it opens a tab.
+  note, the file panel's click): the pane of that tab already showing the file gets the focus; else, for
+  `cmd-shift-m` and links, the tab's newest corner splits: the last pane down the tab's split tree, across its row or
+  column, so panes spiral inward and the first keeps its half. `beside.js` reads that tree from herdr-core's
+  `herdr-app` document, which Herdr does not document; when it can't, and for the file panel's click, the pane splits
+  to the right. With no pane to split it opens a tab.
 - **Reading is the editor.** Each file opens in the view it was last in (Reading the first time); a new or empty note
   opens with the caret in an empty paragraph. A click puts the caret where you click and nothing on the page moves:
   the text blocks near the view are drawn by text fields whether edited or not, each formatted word one token that

@@ -40,7 +40,8 @@ The release {==ships on Friday==}{>>2026-11-16 20:51 | too early? QA needs a day
 ### Open or make a note from anywhere
 
 Cmd+M lists the markdown files of the folder you are working in, recent ones first. Type a new name to create that file.
-Cmd+Shift+M opens the file beside your current pane instead of in a new tab.
+Cmd+Shift+M opens the file in your current tab instead of a new one. Each file opened there goes to the tab's newest
+corner, so your first pane keeps half the tab and the rest spiral in beside it, instead of squeezing into one row.
 
 ![The Cmd+M file picker: a search field, the New note row above the list of notes, one note highlighted, and the folder as a chip](docs/media/picker.png)
 
@@ -128,7 +129,7 @@ with no restart.
 | Keys | What it does |
 |---|---|
 | `cmd-m` | Opens or makes a note in a new tab |
-| `cmd-shift-m` | The same, beside your current pane |
+| `cmd-shift-m` | The same, in your current tab's newest corner |
 | Cmd+E | The page or its markdown source |
 | Cmd+Alt+M | Comments on the selection |
 | Cmd+K | Links the selection |

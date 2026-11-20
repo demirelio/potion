@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { state, calls, reset } from "./mocks/herdr.mjs";
 import { space, pane } from "./helpers.mjs";
 
-const { openMarkdown, registerPane, paneOf, rememberRecent } = await import("../mods/potion/open.js");
+const { openMarkdown, besideAt, registerPane, paneOf, rememberRecent } = await import("../mods/potion/open.js");
+const { spiralSpot } = await import("../mods/potion/beside.js");
 
 const PANES = "potion.panes", RECENT = "potion.recent";
 const tab = (id, more = {}) => ({ id, name: id, active: false, zoomed: false, status: null, ...more });
@@ -22,6 +23,50 @@ test("place pane: the file opens to the right of the given pane, with the mod an
   state.panes = [shell("p1", "tb1"), shell("p2", "tb1")];
   openMarkdown({ file: "/home/user/notes/plan.md", machine: null, place: "pane", space: "s1", pane: "p2" });
   assert.deepEqual(calls.run, [split("p2", "/home/user/notes/plan.md")]);
+});
+
+const block = id => ({ type: "block", id });
+const row = (...children) => ({ type: "row", id: "r", children });
+const column = (...children) => ({ type: "column", id: "c", children });
+const coreAnswers = tabs => async (command, args) => {
+  if (!args?.[1]?.includes("hc connect")) throw new Error(`unexpected ${command}`);
+  return { code: 0, stdout: `${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { version: 1, value: { spaces: [{ id: "s1", tabs }] } } })}\n`, stderr: "" };
+};
+
+test("panes opened beside, one after another, spiral inward: the first keeps its half, each new one halves the newest", () => {
+  const along = (node, target, direction, id) => {
+    if (node.type === "block") return node;
+    const kind = direction === "right" ? "row" : "column", at = node.children.findIndex(c => c.id === target);
+    if (at < 0) return { ...node, children: node.children.map(c => along(c, target, direction, id)) };
+    const children = [...node.children];
+    if (node.type === kind) children.splice(at + 1, 0, block(id));
+    else children[at] = { type: kind, id: `n-${id}`, children: [children[at], block(id)] };
+    return { ...node, children };
+  };
+  const shape = n => (n.type === "block" ? n.id : `${n.type}(${n.children.map(shape).join(", ")})`);
+  let root = row(block("a"));
+  for (const id of ["b", "c", "d"]) { const s = spiralSpot(root); root = along(root, s.pane, s.direction, id); }
+  assert.equal(shape(root), "row(a, column(b, row(c, d)))");
+  assert.deepEqual(spiralSpot(column(block("a"), block("b"))), { pane: "b", direction: "right" });
+  assert.equal(spiralSpot(row()), null);
+});
+
+test("besideAt reads the anchor's tab from herdr-core; openMarkdown splits there while that pane is in the anchor's tab", async () => {
+  state.spaces = [inSpace("s1", "tb1", "tb2")];
+  state.panes = [shell("p1", "tb1"), shell("p2", "tb1"), shell("p9", "tb2")];
+  state.exec = coreAnswers([{ id: "tb1", root: row(block("p1"), block("p2")) }]);
+  const at = await besideAt("p1");
+  assert.deepEqual(at, { pane: "p2", direction: "down" });
+  assert.deepEqual(JSON.parse(calls.exec[0].args[3]).params, { name: "herdr-app", on: null });
+  openMarkdown({ file: "/n/a.md", place: "pane", pane: "p1", at });
+  assert.deepEqual(calls.run.at(-1), ["pane.split", { direction: "down", pane: "p2", mod: "potion", props: { file: "/n/a.md", machine: null } }]);
+  openMarkdown({ file: "/n/b.md", place: "pane", pane: "p9", at });
+  assert.deepEqual(calls.run.at(-1), split("p9", "/n/b.md"), "a spot in another tab is not used");
+  state.exec = async () => { throw new Error("hc: no core"); };
+  assert.deepEqual(await besideAt("p1"), { pane: "p1", direction: "right" }, "no tree: right of the anchor");
+  state.panes = [];
+  state.focused = null;
+  assert.equal(await besideAt("p1"), null, "no pane to open beside");
 });
 
 test("place pane: without a pane argument, or with one that is not listed, it opens beside the focused pane", () => {
