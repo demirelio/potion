@@ -566,6 +566,26 @@ test("place pane: Enter closes the dialog, then opens the file in a pane to the 
   assert.deepEqual(calls.setShared[0], ["potion.recent", [{ machine: null, path: `${FOLDER}/README.md` }]]);
 });
 
+test("place pane: from its own timer the dialog reads the tab's split tree, and a file chosen opens in the tab's newest corner", async () => {
+  state.panes = [termPane("p1", FOLDER), termPane("p2", FOLDER)];
+  focusPane("p1", FOLDER);
+  const split = { type: "row", id: "s1-tab", children: [{ type: "block", id: "p1" }, { type: "block", id: "p2" }] };
+  const core = `${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { version: 1, value: { spaces: [{ id: "s1", tabs: [{ id: "s1-tab", root: split }] }] } } })}\n`;
+  const files = fakeExec({ git: FILES });
+  state.exec = async (command, args, options) => (args?.[1]?.includes("hc connect") ? { code: 0, stdout: core, stderr: "" } : files(command, args, options));
+  state.props = { action: "open", place: "pane", space: "s1", folder: FOLDER, machine: null, overlay: "ov-1" };
+  const cx = makeCx(), view = new Picker();
+  view.init(state.props, cx);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(calls.exec, [], "nothing asked of Herdr while the dialog is made");
+  await fire_timers(cx, { ms: 0 });
+  await cx.settle();
+  view.input.submit(cx);
+  assert.deepEqual(calls.run, [["pane.split", { direction: "down", pane: "p2", mod: "potion", props: { file: `${FOLDER}/README.md`, machine: null } }]]);
+  assert.deepEqual(calls.closeOverlay, ["ov-1"]);
+});
+
 test("place pane: the anchor is the pane focused when the dialog opened, not the one focused when a file is chosen", async () => {
   state.panes = [termPane("p1", FOLDER), termPane("p2", FOLDER)];
   focusPane("p1", FOLDER);

@@ -3,26 +3,39 @@
 // openMarkdown (test/integrations.test.mjs checks that the copy acts alike).
 import { spaces, panes, focused, machines, shared, setShared, run } from "herdr";
 import { basename, fileKey, remember } from "./lib.js";
+import { besideSpot } from "./beside.js";
 
 export const MOD = "potion", PANES = "potion.panes", RECENT = "potion.recent";
 const RECENT_MAX = 30;
 
-// place "pane" focuses the pane already showing the file in that tab, else splits right of `pane` (default: the focused
-// one, else the tab's first); with no pane to open beside it falls through to a tab. place "tab" selects the file's own
-// tab in any space, else opens one in `space`.
+const anchorOf = (all, pane) => {
+  const f = focused();
+  return all.find(p => p.pane === pane) ?? all.find(p => p.pane === f?.pane) ?? all.find(p => p.tab === f?.tab);
+};
+
+// Where a pane beside `pane` goes: its tab's newest corner (beside.js). It is read from herdr-core, so a dialog asks
+// while it is open: work a dialog starts is cancelled when it closes.
+export async function besideAt(pane) {
+  const anchor = anchorOf(panes(), pane);
+  return anchor ? besideSpot(anchor) : null;
+}
+
+// place "pane" focuses the pane already showing the file in that tab, else splits at `at` (besideAt's spot, while it is
+// in that tab) or right of `pane` (default: the focused one, else the tab's first); with no pane to open beside it falls
+// through to a tab. place "tab" selects the file's own tab in any space, else opens one in `space`.
 // A tab restored in the background is not in the registry yet: it is found by its name when all its panes are unknown
 // and it is the only such tab.
-export function openMarkdown({ file, machine = null, place = "tab", space, pane }) {
+export function openMarkdown({ file, machine = null, place = "tab", space, pane, at = null }) {
   const key = fileKey(machine, file), known = shared(PANES) ?? {}, all = panes();
   const mine = all.filter(p => p.mod === MOD);
   const spaceOf = tab => spaces().find(s => s.tabs.some(c => c.id === tab));
   if (place === "pane") {
-    const f = focused();
-    const anchor = all.find(p => p.pane === pane) ?? all.find(p => p.pane === f?.pane) ?? all.find(p => p.tab === f?.tab);
+    const anchor = anchorOf(all, pane);
     if (anchor) {
       const hit = mine.find(p => p.tab === anchor.tab && known[p.pane] === key);
+      const spot = at && all.some(p => p.pane === at.pane && p.tab === anchor.tab) ? at : { pane: anchor.pane, direction: "right" };
       if (hit) run("pane.focus", { pane: hit.pane });
-      else run("pane.split", { direction: "right", pane: anchor.pane, mod: MOD, props: { file, machine } });
+      else run("pane.split", { direction: spot.direction, pane: spot.pane, mod: MOD, props: { file, machine } });
       rememberRecent(file, machine);
       return;
     }
